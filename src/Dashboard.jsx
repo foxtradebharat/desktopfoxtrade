@@ -213,24 +213,24 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       window.history.pushState(null, '', newPath);
     }
     const tabTitles = {
-      'journal': 'Trading Journal',
+      'journal': 'Journal',
       'analytics': 'Analytics',
-      'stock-charts': selectedChartSymbol ? `${selectedChartSymbol} Chart` : 'Stock Charts',
-      'symbol-deep-dive': deepDiveConfig?.symbol ? `${deepDiveConfig.symbol} Deep Dive` : 'Symbol Deep Dive',
-      'playbook': 'Trading Playbook',
-      'tax-analytics': 'Tax & Brokerage',
+      'stock-charts': 'Stock Charts',
+      'symbol-deep-dive': 'Symbol Deep Dive',
+      'playbook': 'Playbook',
+      'tax-analytics': 'Tax Analytics',
       'fund-management': 'Fund Management',
       'fundManagement': 'Fund Management',
       'deep-analytics': 'Deep Analytics',
-      'expiry-tracker': 'F&O Expiry Tracker',
-      'milestones': 'Milestones & Goals',
-      'community': 'Trader Community',
-      'ai-coach': 'AI Trading Coach',
-      'notes': 'Trading Notes'
+      'expiry-tracker': 'Expiry Tracker',
+      'milestones': 'Milestones',
+      'community': 'Community',
+      'ai-coach': 'AI Coach',
+      'notes': 'Notes'
     };
-    const title = tabTitles[activeTab] || 'Trading Journal';
+    const title = tabTitles[activeTab] || 'Journal';
     document.title = `${title} · FoxTrade`;
-  }, [activeTab, selectedChartSymbol, deepDiveConfig]);
+  }, [activeTab]);
 
   useEffect(() => {
     const handlePopState = () => {
