@@ -479,16 +479,18 @@ export default function LoginPage({ onGoogleLogin, isLoading, authError, user, o
         }}>
           By continuing, you acknowledge that you understand and agree to the{' '}
           <a 
-            href="#terms" 
-            onClick={(e) => { e.preventDefault(); showToast("Your data stays private in your personal Google Drive account."); }}
+            href="https://foxtrade.in/terms" 
+            target="_blank"
+            rel="noopener noreferrer"
             style={{ color: 'var(--text-secondary, #787774)', textDecoration: 'underline' }}
           >
             Terms &amp; Conditions
           </a>
           {' '}and{' '}
           <a 
-            href="#privacy" 
-            onClick={(e) => { e.preventDefault(); showToast("FoxTrade never stores or reads your private trade data on external servers."); }}
+            href="https://foxtrade.in/privacy" 
+            target="_blank"
+            rel="noopener noreferrer"
             style={{ color: 'var(--text-secondary, #787774)', textDecoration: 'underline' }}
           >
             Privacy Policy
