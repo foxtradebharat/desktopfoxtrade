@@ -1,12 +1,13 @@
-import React, { useState, useEffect, Component } from 'react';
+import React, { useState, useEffect, Component, Suspense, lazy } from 'react';
 import LoginPage from './pages/LoginPage';
-import LandingPage from './pages/LandingPage';
-import Dashboard from './Dashboard';
 import DashboardSkeleton from './components/DashboardSkeleton';
 import { loginWithGoogle, logoutUser, subscribeToAuth } from './services/firebase';
 import { storeDirectToken, clearTokens } from './db/tokenManager';
 import { setSyncError } from './db/index';
 import { clearAllLocalTrades } from './services/dbService';
+
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const Dashboard = lazy(() => import('./Dashboard'));
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -105,14 +106,26 @@ export default function App() {
 
   const [authChecking, setAuthChecking] = useState(() => {
     try {
+      // If directly visiting /login or root without saved session, load login immediately with 0 delay!
+      if (typeof window !== 'undefined' && (window.location.pathname === '/login' || window.location.pathname === '/')) {
+        return false;
+      }
       const saved = localStorage.getItem('tradeontip_user');
-      return !saved; // false if already cached in localStorage
+      return !saved ? false : false;
     } catch {
-      return true;
+      return false;
     }
   });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
+
+  // Background prefetch Dashboard chunk once login page is displayed
+  useEffect(() => {
+    const prefetchTimer = setTimeout(() => {
+      import('./Dashboard').catch(() => {});
+    }, 1000);
+    return () => clearTimeout(prefetchTimer);
+  }, []);
 
   // Check if landing page is explicitly requested via query param or path
   const [showLanding, setShowLanding] = useState(() => {
@@ -161,7 +174,7 @@ export default function App() {
 
     const timeout = setTimeout(() => {
       setAuthChecking(false);
-    }, 1000);
+    }, 150);
 
     return () => {
       unsubscribe();
@@ -255,21 +268,23 @@ export default function App() {
   if (showLanding) {
     return (
       <ErrorBoundary>
-        <LandingPage
-          onGoogleLogin={handleGoogleLogin}
-          isLoading={authLoading}
-          authError={authError}
-          user={user}
-          onGoToDashboard={() => {
-            window.history.pushState({}, '', '/');
-            setShowLanding(false);
-          }}
-        />
+        <Suspense fallback={<DashboardSkeleton />}>
+          <LandingPage
+            onGoogleLogin={handleGoogleLogin}
+            isLoading={authLoading}
+            authError={authError}
+            user={user}
+            onGoToDashboard={() => {
+              window.history.pushState({}, '', '/');
+              setShowLanding(false);
+            }}
+          />
+        </Suspense>
       </ErrorBoundary>
     );
   }
 
-  // ── 3. Show Notion-style Login Page if unauthenticated ───────────────────
+  // ── 3. Show Notion-style Login Page if unauthenticated (Loaded Instantly) ──
   if (!user) {
     return (
       <ErrorBoundary>
@@ -287,15 +302,17 @@ export default function App() {
     );
   }
 
-  // ── 3. Render Dashboard for authenticated user ───────────────────────────
+  // ── 4. Render Dashboard for authenticated user ───────────────────────────
   return (
     <ErrorBoundary>
-      <Dashboard 
-        user={user} 
-        accessToken={accessToken}
-        onLogout={handleLogout} 
-        onGoogleLogin={handleGoogleLogin}
-      />
+      <Suspense fallback={<DashboardSkeleton />}>
+        <Dashboard 
+          user={user} 
+          accessToken={accessToken}
+          onLogout={handleLogout} 
+          onGoogleLogin={handleGoogleLogin}
+        />
+      </Suspense>
     </ErrorBoundary>
   );
 }
