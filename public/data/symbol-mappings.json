@@ -1,0 +1,692 @@
+[
+  {
+    "from": "ZOMATO",
+    "to": "ETERNAL",
+    "reason": "Rebranded from Zomato Ltd to Eternal Ltd on NSE/BSE",
+    "discovered": "2025-04-09"
+  },
+  {
+    "from": "Zomato Ltd",
+    "to": "ETERNAL",
+    "reason": "Company name rebranded to Eternal Ltd",
+    "discovered": "2025-04-09"
+  },
+  {
+    "from": "TATAMOTORS",
+    "to": "TMCV",
+    "reason": "Demerged into Commercial Vehicles (TMCV) and Passenger Vehicles (TMPV)",
+    "discovered": "2025-01-01"
+  },
+  {
+    "from": "MINDTREE",
+    "to": "LTIM",
+    "reason": "Merged with LTI into LTIMindtree Ltd",
+    "discovered": "2022-11-24"
+  },
+  {
+    "from": "LTI",
+    "to": "LTIM",
+    "reason": "Merged with Mindtree into LTIMindtree Ltd",
+    "discovered": "2022-11-24"
+  },
+  {
+    "from": "DIAMINES",
+    "to": "DIAMINESQ",
+    "reason": "Canonicalize the legacy exchange symbol",
+    "discovered": "2026-08-01"
+  },
+  {
+    "from": "Groww: Billionbrains Garage Ventures",
+    "to": "GROWW",
+    "reason": "Standardize company name with Groww prefix to NSE symbol",
+    "discovered": "2026-02-02"
+  },
+  {
+    "from": "Billionbrains Garage Ventures",
+    "to": "GROWW",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2026-02-02"
+  },
+  {
+    "from": "Billionbrains Garage Ventures Limited",
+    "to": "GROWW",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2026-02-02"
+  },
+  {
+    "from": "MON100",
+    "to": "Motilal Oswal Nasdaq 100 ETF",
+    "reason": "Normalize MON100 ticker to Motilal Oswal Nasdaq 100 ETF display name",
+    "discovered": "2026-03-27"
+  },
+  {
+    "from": "SILVERBETA",
+    "to": "UTI SILVER ETF",
+    "reason": "Normalize SILVERBETA ticker to UTI SILVER ETF display name",
+    "discovered": "2026-03-27"
+  },
+  {
+    "from": "GOLDBETA",
+    "to": "UTI GOLD ETF",
+    "reason": "Normalize GOLDBETA ticker to UTI GOLD ETF display name",
+    "discovered": "2026-01-30"
+  },
+  {
+    "from": "METAL",
+    "to": "Mirae Asset Nifty Metal ETF",
+    "reason": "Force mapping for Mirae Asset Nifty Metal ETF as requested by user",
+    "discovered": "2026-01-29"
+  },
+  {
+    "from": "SHAILY ENGINEERING PLASTICS",
+    "to": "SHAILY ENG PLASTICS LTD",
+    "reason": "Full company name vs abbreviated with LTD",
+    "discovered": "2024-12-31"
+  },
+  {
+    "from": "PONDY OXIDES AND CHEMICALS LTD",
+    "to": "POCL",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDES & CHEMICAL",
+    "to": "POCL",
+    "reason": "Standardize company name with ampersand to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDES & CHEMICAL LTD",
+    "to": "POCL",
+    "reason": "Standardize company name with ampersand and LTD to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDES AND CHEMICAL",
+    "to": "POCL",
+    "reason": "Standardize company name with AND to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDYOXIDES",
+    "to": "POCL",
+    "reason": "Standardize compact company name to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDES",
+    "to": "POCL",
+    "reason": "Standardize short company name to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDE",
+    "to": "POCL",
+    "reason": "Standardize common misspelling to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDYOXIDE",
+    "to": "POCL",
+    "reason": "Standardize compact misspelling to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "PONDY OXIDES CHEMICAL",
+    "to": "POCL",
+    "reason": "Standardize name without conjunction to NSE symbol",
+    "discovered": "2025-09-27"
+  },
+  {
+    "from": "QUALITY POWER ELECTRICAL EQUIPMENTS LTD",
+    "to": "QPOWER",
+    "reason": "Standardize company name with LTD to NSE symbol",
+    "discovered": "2025-01-01"
+  },
+  {
+    "from": "QUALITY POWER ELECTRICAL EQUIPMENTS LIMITED",
+    "to": "QPOWER",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-01-01"
+  },
+  {
+    "from": "QUALITY POWER ELECTRICAL EQUIPMENTS",
+    "to": "QPOWER",
+    "reason": "Standardize company name without LIMITED to NSE symbol",
+    "discovered": "2025-01-01"
+  },
+  {
+    "from": "GARDEN REACH SHIPBUILDERS",
+    "to": "GRSE",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GARDEN REACH SHIPBUILDERS & ENGINEERS",
+    "to": "GRSE",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GARDEN REACH SHIPBUILDERS & ENGINEERS LTD",
+    "to": "GRSE",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GARDEN REACH SHIPBUILDERS & ENGINEERS LIMITED",
+    "to": "GRSE",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "SYRMA SGS",
+    "to": "SYRMA",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "SYRMA SGS TECHNOLOGY",
+    "to": "SYRMA",
+    "reason": "Standardize company name with TECHNOLOGY to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "SYRMA SGS TECHNOLOGY LTD",
+    "to": "SYRMA",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "SYRMA SGS TECHNOLOGY LIMITED",
+    "to": "SYRMA",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "BANCO PRODUCTS",
+    "to": "BANCOINDIA",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "BANCO PRODUCTS (I)",
+    "to": "BANCOINDIA",
+    "reason": "Standardize company name with (I) to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "BANCO PRODUCTS (I) LTD",
+    "to": "BANCOINDIA",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "BANCO PRODUCTS (I) LIMITED",
+    "to": "BANCOINDIA",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "BANCO PRODUCTS INDIA",
+    "to": "BANCOINDIA",
+    "reason": "Standardize company name with INDIA to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "PROTEAN E-GOV TECHNOLOGIES",
+    "to": "PROTEAN",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "PROTEAN EGOV TECHNOLOGIES",
+    "to": "PROTEAN",
+    "reason": "Standardize company name without hyphen to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "PROTEAN E-GOV TECHNOLOGIES LTD",
+    "to": "PROTEAN",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "PROTEAN E-GOV TECHNOLOGIES LIMITED",
+    "to": "PROTEAN",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "PROTEAN EGOV TECHNOLOGIES LTD",
+    "to": "PROTEAN",
+    "reason": "Standardize full company name without hyphen to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TATVA CHINTAN PHARM",
+    "to": "TATVA",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TATVA CHINTAN PHARMA",
+    "to": "TATVA",
+    "reason": "Standardize company name with PHARMA to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TATVA CHINTAN PHARMA CHEM",
+    "to": "TATVA",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TATVA CHINTAN PHARMA CHEM LTD",
+    "to": "TATVA",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TATVA CHINTAN PHARMA CHEM LIMITED",
+    "to": "TATVA",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GLAXOSMITHKLINE PHARMACEUTICALS",
+    "to": "GLAXO",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GSK GLAXOSMITHKLINE PHARMACEUTICALS",
+    "to": "GLAXO",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GSK GLAXOSMITHKLINE PHARMACEUTICALS LTD",
+    "to": "GLAXO",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GSK GLAXOSMITHKLINE PHARMACEUTICALS LIMITED",
+    "to": "GLAXO",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GLAXOSMITHKLINE PHARMACEUTICALS LTD",
+    "to": "GLAXO",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "GLAXOSMITHKLINE PHARMACEUTICALS LIMITED",
+    "to": "GLAXO",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HAL HINDUSTAN AERONAUTICS",
+    "to": "HAL",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HAL HINDUSTAN AERONAUTICS LTD",
+    "to": "HAL",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HAL HINDUSTAN AERONAUTICS LIMITED",
+    "to": "HAL",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HINDUSTAN AERONAUTICS",
+    "to": "HAL",
+    "reason": "Standardize company name without HAL prefix to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HINDUSTAN AERONAUTICS LTD",
+    "to": "HAL",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HINDUSTAN AERONAUTICS LIMITED",
+    "to": "HAL",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTI / LARSEN & TOUBRO INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize company name with slash to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTI LARSEN & TOUBRO INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize company name without slash to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTI LARSEN AND TOUBRO INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize company name with AND to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LARSEN & TOUBRO INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize company name without LTI prefix to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LARSEN AND TOUBRO INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize company name with AND to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "L&T INFOTECH",
+    "to": "LTIM",
+    "reason": "Standardize abbreviated company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTIMINDTREE",
+    "to": "LTIM",
+    "reason": "Standardize merged company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTIMINDTREE LTD",
+    "to": "LTIM",
+    "reason": "Standardize merged company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "LTIMINDTREE LIMITED",
+    "to": "LTIM",
+    "reason": "Standardize merged company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH WAGONS",
+    "to": "TITAGARH",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH WAGONS LTD",
+    "to": "TITAGARH",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH WAGONS LIMITED",
+    "to": "TITAGARH",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH RAIL SYSTEMS",
+    "to": "TITAGARH",
+    "reason": "Standardize rebranded company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH RAIL SYSTEMS LTD",
+    "to": "TITAGARH",
+    "reason": "Standardize rebranded company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TITAGARH RAIL SYSTEMS LIMITED",
+    "to": "TITAGARH",
+    "reason": "Standardize rebranded company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL POWER SYSTEMS",
+    "to": "HBLENGINE",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL POWER SYSTEMS LTD",
+    "to": "HBLENGINE",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL POWER SYSTEMS LIMITED",
+    "to": "HBLENGINE",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL ENGINEERING",
+    "to": "HBLENGINE",
+    "reason": "Standardize alternate company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL ENGINEERING LTD",
+    "to": "HBLENGINE",
+    "reason": "Standardize alternate company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "HBL ENGINEERING LIMITED",
+    "to": "HBLENGINE",
+    "reason": "Standardize alternate company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINES",
+    "to": "TRITURBINE",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINES LTD",
+    "to": "TRITURBINE",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINES LIMITED",
+    "to": "TRITURBINE",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINE",
+    "to": "TRITURBINE",
+    "reason": "Standardize singular company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINE LTD",
+    "to": "TRITURBINE",
+    "reason": "Standardize singular company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "TRIVENI TURBINE LIMITED",
+    "to": "TRITURBINE",
+    "reason": "Standardize singular company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INDIGO INTERGLOBE AVIATION",
+    "to": "INDIGO",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INDIGO INTERGLOBE AVIATION LTD",
+    "to": "INDIGO",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INDIGO INTERGLOBE AVIATION LIMITED",
+    "to": "INDIGO",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INTERGLOBE AVIATION",
+    "to": "INDIGO",
+    "reason": "Standardize company name without brand to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INTERGLOBE AVIATION LTD",
+    "to": "INDIGO",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "INTERGLOBE AVIATION LIMITED",
+    "to": "INDIGO",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE-STAR BUS FIN LTD",
+    "to": "FIVESTAR",
+    "reason": "Standardize abbreviated company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE-STAR BUS FIN",
+    "to": "FIVESTAR",
+    "reason": "Standardize abbreviated company name without LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE-STAR BUSINESS FINANCE",
+    "to": "FIVESTAR",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE-STAR BUSINESS FINANCE LTD",
+    "to": "FIVESTAR",
+    "reason": "Standardize full company name with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE-STAR BUSINESS FINANCE LIMITED",
+    "to": "FIVESTAR",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE STAR BUS FIN LTD",
+    "to": "FIVESTAR",
+    "reason": "Standardize company name without hyphen to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVE STAR BUSINESS FINANCE",
+    "to": "FIVESTAR",
+    "reason": "Standardize full company name without hyphen to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "FIVESTAR BUSINESS FINANCE",
+    "to": "FIVESTAR",
+    "reason": "Standardize compact company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS & MOBILITY",
+    "to": "WARDINMOBI",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS & MOBILITY LTD",
+    "to": "WARDINMOBI",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS & MOBILITY LIMITED",
+    "to": "WARDINMOBI",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS AND MOBILITY",
+    "to": "WARDINMOBI",
+    "reason": "Standardize company name with AND to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS AND MOBILITY LTD",
+    "to": "WARDINMOBI",
+    "reason": "Standardize full company name with AND and LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS AND MOBILITY LIMITED",
+    "to": "WARDINMOBI",
+    "reason": "Standardize full company name with AND and LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS MOBILITY",
+    "to": "WARDINMOBI",
+    "reason": "Standardize company name without conjunction to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS MOBILITY LTD",
+    "to": "WARDINMOBI",
+    "reason": "Standardize company name without conjunction and with LTD to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "WARDWIZARD INNOVATIONS MOBILITY LIMITED",
+    "to": "WARDINMOBI",
+    "reason": "Standardize company name without conjunction and with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "ARCHIT ORGANOSYS",
+    "to": "ARCHITORG",
+    "reason": "Standardize company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "ARCHIT ORGANOSYS LTD",
+    "to": "ARCHITORG",
+    "reason": "Standardize full company name to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "ARCHIT ORGANOSYS LIMITED",
+    "to": "ARCHITORG",
+    "reason": "Standardize full company name with LIMITED to NSE symbol",
+    "discovered": "2025-10-14"
+  },
+  {
+    "from": "SATHLOKHAR SYNER",
+    "to": "SSEGL",
+    "reason": "Normalize Sathlokhar Synergys E&C Global Limited to ticker SSEGL",
+    "discovered": "2026-05-17"
+  }
+]

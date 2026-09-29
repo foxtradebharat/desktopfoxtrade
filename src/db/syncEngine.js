@@ -1,0 +1,669 @@
+/**
+ * syncEngine.js
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Google Drive sync engine with CRDT merge.
+ *
+ * Architecture:
+ *   - Google Drive is the user's personal cloud backup (they own it, not us)
+ *   - Every write is stored locally in IDB first (instant, offline-safe)
+ *   - This engine syncs IDB → Drive in the background (15s debounce)
+ *   - On conflict (another device changed Drive): CRDT merge resolves it
+ *   - On page hide / tab close: immediate flush (no data loss on close)
+ *
+ * Drive file structure (user's Google Drive):
+ *   FoxTrade Backups/
+ *     foxtrade-journal-{portfolioId}.json.gz   ← main backup (metadata + trades)
+ *     charts/
+ *       {portfolioId}/
+ *         {tradeId}-beforeEntry.webp           ← images as separate binary files
+ *         {tradeId}-afterExit.webp
+ *
+ * Backup format (v3.0):
+ *   {
+ *     version: '3.0',
+ *     schemaVersion: 2,
+ *     portfolioId: string,
+ *     deviceId: string,
+ *     exportedAt: ISO string,
+ *     trades: Trade[],          ← ALL trades incl. soft-deleted (tombstones)
+ *     metadata: {
+ *       tradeCount: number,
+ *       lastTradeUpdatedAt: number
+ *     }
+ *   }
+ *
+ * CRDT Merge Strategy (Last-Write-Wins per trade):
+ *   - Compare by clientUpdatedAt timestamp
+ *   - Deletion (deletedAt set) always wins over edit
+ *   - Trades only in local → keep (new trade from this device)
+ *   - Trades only in remote → keep (new trade from another device)
+ *   - Trade in both → take whichever has higher clientUpdatedAt
+ */
+
+import { idbGet, idbPut, STORES } from './foxtradeDB.js';
+import { getDeviceId } from './configStore.js';
+import { clearDoneOps } from './operationsQueue.js';
+import { syncPendingImages } from './imageStore.js';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const FOLDER_NAME         = 'FoxTrade Backups';
+const BACKUP_VERSION      = '3.0';
+const SCHEMA_VERSION      = 2;
+const DRIVE_API           = 'https://www.googleapis.com/drive/v3/files';
+const DRIVE_UPLOAD_API    = 'https://www.googleapis.com/upload/drive/v3/files';
+const AUTO_SYNC_DEBOUNCE  = 15_000; // 15 seconds (was 30s in old code)
+
+// In-memory debounce timer & live syncing status
+let _syncTimer    = null;
+let _syncActive   = false;
+let _isSyncing    = false;
+const _syncListeners = new Set();
+let _lastSyncError = null;
+const _syncErrorListeners = new Set();
+
+/**
+ * Subscribe to live syncing state changes (for UI cloud icon animation).
+ * @param {(isSyncing: boolean) => void} callback
+ * @returns {() => void} unsubscribe function
+ */
+export function subscribeToSyncStatus(callback) {
+  _syncListeners.add(callback);
+  callback(_isSyncing);
+  return () => _syncListeners.delete(callback);
+}
+
+function setSyncingState(syncing) {
+  _isSyncing = !!syncing;
+  _syncListeners.forEach(cb => {
+    try { cb(_isSyncing); } catch (_) {}
+  });
+}
+
+/**
+ * Subscribe to Drive sync errors.
+ * @param {(error: string|null) => void} callback
+ * @returns {() => void} unsubscribe function
+ */
+export function subscribeToSyncError(callback) {
+  _syncErrorListeners.add(callback);
+  callback(_lastSyncError);
+  return () => _syncErrorListeners.delete(callback);
+}
+
+export function setSyncError(error) {
+  _lastSyncError = error || null;
+  _syncErrorListeners.forEach(cb => {
+    try { cb(_lastSyncError); } catch (_) {}
+  });
+}
+
+export function getLastSyncError() {
+  return _lastSyncError;
+}
+
+// ── Compression helpers ───────────────────────────────────────────────────────
+
+async function compressJSON(data) {
+  const json = JSON.stringify(data);
+  if (typeof CompressionStream === 'undefined') {
+    return new TextEncoder().encode(json); // fallback: uncompressed
+  }
+  const stream = new CompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(new TextEncoder().encode(json));
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total  = chunks.reduce((s, c) => s + c.length, 0);
+  const result = new Uint8Array(total);
+  let   offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+  return result;
+}
+
+async function decompressBuffer(buffer) {
+  try {
+    if (typeof DecompressionStream !== 'undefined') {
+      const stream = new DecompressionStream('gzip');
+      const writer = stream.writable.getWriter();
+      writer.write(new Uint8Array(buffer));
+      writer.close();
+      const chunks = [];
+      const reader = stream.readable.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const total  = chunks.reduce((s, c) => s + c.length, 0);
+      const merged = new Uint8Array(total);
+      let   offset = 0;
+      for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.length; }
+      return new TextDecoder().decode(merged);
+    }
+  } catch { /* not gzip — try as plain text */ }
+  return new TextDecoder().decode(new Uint8Array(buffer));
+}
+
+// ── Drive error parser ────────────────────────────────────────────────────────
+
+async function parseDriveResponseError(resp, actionName) {
+  let detail = `${resp.status}`;
+  try {
+    const data = await resp.json();
+    if (data?.error?.message) {
+      const msg = data.error.message;
+      if (
+        msg.includes('Google Drive API has not been used') ||
+        msg.includes('disabled') ||
+        data?.error?.details?.some?.(d => d.reason === 'SERVICE_DISABLED')
+      ) {
+        return 'Google Drive API is disabled in your Google Cloud Project. Please enable "Google Drive API" in Google Cloud Console.';
+      }
+      if (
+        resp.status === 401 ||
+        msg.includes('invalid authentication credentials') ||
+        msg.includes('OAuth 2') ||
+        msg.includes('invalid_token')
+      ) {
+        return 'Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.';
+      }
+      return msg;
+    }
+  } catch {}
+  if (resp.status === 401) {
+    return 'Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.';
+  }
+  return `${actionName} failed: ${detail}`;
+}
+
+// ── Drive folder helpers ──────────────────────────────────────────────────────
+
+async function getOrCreateFolder(accessToken, name, parentId = null) {
+  const parentQ = parentId ? ` and '${parentId}' in parents` : '';
+  const q       = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
+  const search  = await fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!search.ok) {
+    const errorMsg = await parseDriveResponseError(search, 'Drive folder search');
+    throw new Error(errorMsg);
+  }
+  const { files } = await search.json();
+  if (files?.[0]?.id) return files[0].id;
+
+  const body = { name, mimeType: 'application/vnd.google-apps.folder' };
+  if (parentId) body.parents = [parentId];
+  const create = await fetch(DRIVE_API, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+  if (!create.ok) {
+    const errorMsg = await parseDriveResponseError(create, 'Drive folder create');
+    throw new Error(errorMsg);
+  }
+  const folder = await create.json();
+  return folder.id;
+}
+
+async function findBackupFile(accessToken, fileName) {
+  const q    = `name='${fileName}' and trashed=false`;
+  const resp = await fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id,size,modifiedTime)&pageSize=1`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) return null;
+  const { files } = await resp.json();
+  return files?.[0] || null;
+}
+
+// ── CRDT Merge ────────────────────────────────────────────────────────────────
+
+/**
+ * Merge local and remote trade arrays using Last-Write-Wins CRDT.
+ *
+ * Rules:
+ *   1. If trade exists only in local  → include (new trade from this device)
+ *   2. If trade exists only in remote → include (new trade from other device)
+ *   3. If trade exists in both        → take whichever has higher clientUpdatedAt
+ *   4. If deletedAt is set on either  → deletion wins (tombstone propagation)
+ *
+ * @param {object[]} local  — trades from IDB (including soft-deleted)
+ * @param {object[]} remote — trades from Drive backup
+ * @returns {object[]} merged trade array
+ */
+export function mergeTradeArrays(local, remote) {
+  const map = new Map();
+
+  // Seed with local
+  for (const t of local) map.set(t.id, t);
+
+  // Merge remote
+  for (const remoteTrade of remote) {
+    const localTrade = map.get(remoteTrade.id);
+
+    if (!localTrade) {
+      // New trade from other device — include it
+      map.set(remoteTrade.id, remoteTrade);
+      continue;
+    }
+
+    const localTs  = localTrade.clientUpdatedAt  || localTrade.updatedAt  || 0;
+    const remoteTs = remoteTrade.clientUpdatedAt || remoteTrade.updatedAt || 0;
+
+    // Deletion always wins (tombstone propagation)
+    const winner = (remoteTrade.deletedAt && !localTrade.deletedAt)
+      ? { ...localTrade, deletedAt: remoteTrade.deletedAt }
+      : (localTrade.deletedAt && !remoteTrade.deletedAt)
+        ? localTrade
+        : remoteTs > localTs
+          ? remoteTrade
+          : localTrade;
+
+    map.set(remoteTrade.id, winner);
+  }
+
+  return Array.from(map.values());
+}
+
+// ── Build / Parse backup payload ──────────────────────────────────────────────
+
+/**
+ * Build a compressed gzip backup payload.
+ * @param {string} portfolioId
+ * @param {object[]} trades  — ALL trades including soft-deleted
+ * @param {string} deviceId
+ * @returns {Promise<Uint8Array>}
+ */
+export async function buildDrivePayload(portfolioId, trades, deviceId) {
+  let notes = null;
+  let independentNotes = null;
+  try {
+    const rawNotes = localStorage.getItem('foxtrade_notes_v2');
+    if (rawNotes) notes = JSON.parse(rawNotes);
+    const rawInd = localStorage.getItem('foxtrade_independent_notes_v2');
+    if (rawInd) independentNotes = JSON.parse(rawInd);
+  } catch {}
+
+  const payload = {
+    version:       BACKUP_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+    portfolioId,
+    deviceId,
+    exportedAt:    new Date().toISOString(),
+    trades,
+    ...(notes ? { notes } : {}),
+    ...(independentNotes ? { independentNotes } : {}),
+    metadata: {
+      tradeCount:          trades.filter(t => !t.deletedAt).length,
+      lastTradeUpdatedAt:  Math.max(0, ...trades.map(t => t.clientUpdatedAt || 0)),
+    },
+  };
+  return compressJSON(payload);
+}
+
+/**
+ * Parse a Drive backup payload (handles both gzip and plain JSON).
+ * @param {ArrayBuffer} buffer
+ * @returns {Promise<object|null>}
+ */
+export async function parseDrivePayload(buffer) {
+  try {
+    const text = await decompressBuffer(buffer);
+    const data = JSON.parse(text);
+    // Normalise: handle old v2.0 format (has data.trades)
+    if (Array.isArray(data.trades)) return data;
+    if (Array.isArray(data))        return { trades: data };
+    return null;
+  } catch (err) {
+    console.error('[SyncEngine] Failed to parse Drive payload:', err.message);
+    return null;
+  }
+}
+
+// ── Core sync operations ──────────────────────────────────────────────────────
+
+/**
+ * Save all trades for a portfolio to Google Drive with CRDT merge.
+ *
+ * Steps:
+ *   1. Get or create FoxTrade Backups folder
+ *   2. Check if remote file exists and get its current state
+ *   3. If remote changed since last sync → download, merge, then upload merged
+ *   4. If no conflict → upload directly
+ *   5. Update sync cursor in IDB
+ *
+ * @param {string} portfolioId
+ * @param {object[]} trades  — ALL trades including soft-deleted
+ * @param {string} accessToken
+ * @returns {Promise<{success: boolean, merged: boolean, tradeCount: number, error?: string}>}
+ */
+export async function saveToDrive(portfolioId, trades, accessToken, forceOverwrite = false) {
+  if (!accessToken || accessToken === 'demo-token') return { success: true, mode: 'local' };
+
+  setSyncingState(true);
+  try {
+    const deviceId = await getDeviceId();
+    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
+    const folderId = await getOrCreateFolder(accessToken, FOLDER_NAME);
+    const existing = await findBackupFile(accessToken, fileName);
+
+    // Read sync cursor — tells us what we last synced
+    const cursor   = await idbGet(STORES.SYNC_CURSORS, portfolioId);
+    const lastETag = cursor?.lastDriveETag || null;
+
+    let finalTrades = trades;
+    let merged      = false;
+
+    // ── Conflict check: did another device update Drive since our last sync? ──
+    // Only merge if not forcing overwrite AND local has trades (never resurrect onto empty slate)
+    if (!forceOverwrite && trades && trades.length > 0 && existing && lastETag && existing.modifiedTime !== lastETag) {
+      console.log('[SyncEngine] Remote changed since last sync — merging...');
+      const remoteTrades = await loadFromDrive(portfolioId, accessToken);
+      if (remoteTrades.length > 0) {
+        finalTrades = mergeTradeArrays(trades, remoteTrades);
+        merged      = true;
+        console.log(`[SyncEngine] Merged: local=${trades.length} remote=${remoteTrades.length} result=${finalTrades.length}`);
+      }
+    }
+
+    // ── Upload ────────────────────────────────────────────────────────────────
+    const compressed = await buildDrivePayload(portfolioId, finalTrades, deviceId);
+    const blob       = new Blob([compressed], { type: 'application/gzip' });
+    const metadata   = { name: fileName, ...(existing ? {} : { parents: [folderId] }) };
+    const form       = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', blob);
+
+    const uploadUrl = existing
+      ? `${DRIVE_UPLOAD_API}/${existing.id}?uploadType=multipart&fields=id,modifiedTime`
+      : `${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id,modifiedTime`;
+    const method = existing ? 'PATCH' : 'POST';
+
+    const uploadResp = await fetch(uploadUrl, {
+      method,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+    });
+
+    if (!uploadResp.ok) {
+      const errorMsg = await parseDriveResponseError(uploadResp, 'Drive upload');
+      throw new Error(errorMsg);
+    }
+
+    const uploadedFile = await uploadResp.json();
+
+    // ── Update sync cursor ────────────────────────────────────────────────────
+    await idbPut(STORES.SYNC_CURSORS, {
+      portfolioId,
+      lastSyncedAt:    Date.now(),
+      lastDriveETag:   uploadedFile.modifiedTime || new Date().toISOString(),
+      lastDriveFileId: uploadedFile.id || existing?.id,
+    });
+
+    // Clean up done operations from queue
+    await clearDoneOps().catch(() => {});
+
+    // Sync pending chart images to Drive charts folder
+    syncPendingImages(accessToken, portfolioId).catch((err) => {
+      console.warn('[SyncEngine] Background image sync notice:', err.message);
+    });
+
+    console.log(`[SyncEngine] ✓ Synced ${finalTrades.filter(t => !t.deletedAt).length} trades, notes & charts to Drive`);
+    setSyncError(null);
+    return { success: true, merged, tradeCount: finalTrades.filter(t => !t.deletedAt).length };
+
+  } catch (err) {
+    console.error('[SyncEngine] Save to Drive failed:', err.message);
+    setSyncError(err.message);
+    return { success: false, merged: false, tradeCount: 0, error: err.message };
+  } finally {
+    setSyncingState(false);
+  }
+}
+
+/**
+ * Download and parse backup from Google Drive.
+ * Returns empty array on any error (fail-safe, never throws).
+ *
+ * @param {string} portfolioId
+ * @param {string} accessToken
+ * @returns {Promise<object[]>} trade array
+ */
+export async function loadFromDrive(portfolioId, accessToken) {
+  if (!accessToken) return [];
+
+  try {
+    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
+    const existing = await findBackupFile(accessToken, fileName);
+    if (!existing) {
+      // Try legacy filename from old driveService.js
+      const legacy = await findBackupFile(accessToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
+      if (!legacy) return [];
+      existing.id = legacy.id; // reuse download logic
+    }
+
+    const resp = await fetch(`${DRIVE_API}/${existing.id}?alt=media`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!resp.ok) return [];
+
+    const buffer  = await resp.arrayBuffer();
+    const payload = await parseDrivePayload(buffer);
+    if (!payload) return [];
+
+    // Restore notebook and independent notes if present in Drive backup
+    if (payload.notes && typeof payload.notes === 'object') {
+      try {
+        localStorage.setItem('foxtrade_notes_v2', JSON.stringify(payload.notes));
+      } catch {}
+    }
+    if (Array.isArray(payload.independentNotes)) {
+      try {
+        localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify(payload.independentNotes));
+      } catch {}
+    }
+
+    return Array.isArray(payload.trades) ? payload.trades : [];
+  } catch (err) {
+    console.warn('[SyncEngine] Load from Drive failed:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Get sync status for a portfolio.
+ * @param {string} portfolioId
+ * @returns {Promise<{lastSyncedAt: number|null, lastDriveFileId: string|null}>}
+ */
+export async function getSyncStatus(portfolioId) {
+  const cursor = await idbGet(STORES.SYNC_CURSORS, portfolioId);
+  return {
+    lastSyncedAt:    cursor?.lastSyncedAt    || null,
+    lastDriveFileId: cursor?.lastDriveFileId || null,
+  };
+}
+
+// ── Auto-sync (debounced) ─────────────────────────────────────────────────────
+
+/**
+ * Trigger a debounced Drive sync.
+ * Waits 15 seconds after the last call before syncing.
+ * On page hide / visibility change → flushes immediately.
+ *
+ * @param {string} portfolioId
+ * @param {string} accessToken
+ * @param {object[]} trades  — ALL trades (including soft-deleted) for merge
+ */
+export function triggerAutoSync(portfolioId, accessToken, trades) {
+  if (!accessToken || !portfolioId) return;
+  if (_syncTimer) clearTimeout(_syncTimer);
+
+  _syncTimer = setTimeout(() => {
+    _syncTimer = null;
+    if (_syncActive) return;
+    _syncActive = true;
+    saveToDrive(portfolioId, trades, accessToken)
+      .catch(err => console.warn('[SyncEngine] Auto-sync error:', err.message))
+      .finally(() => { _syncActive = false; });
+  }, AUTO_SYNC_DEBOUNCE);
+}
+
+/**
+ * Flush immediately (bypass debounce).
+ * Called on page hide / tab close to prevent data loss.
+ *
+ * @param {string} portfolioId
+ * @param {string} accessToken
+ * @param {object[]} trades
+ */
+export async function flushSync(portfolioId, accessToken, trades) {
+  if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
+  if (!accessToken || !portfolioId) return;
+  try {
+    await saveToDrive(portfolioId, trades, accessToken);
+  } catch (err) {
+    console.warn('[SyncEngine] Flush sync error:', err.message);
+  }
+}
+
+/**
+ * Set up page-hide / visibility-change listeners for immediate flush on close.
+ * Call once on app init. Returns a cleanup function.
+ *
+ * @param {() => string}   getPortfolioId  — fn returning current portfolio ID
+ * @param {() => object[]} getTrades       — fn returning current trades array
+ * @param {() => Promise<string|null>} getToken — fn returning valid access token
+ * @returns {() => void} cleanup function
+ */
+export function initPageHideFlush(getPortfolioId, getTrades, getToken) {
+  const flush = async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await flushSync(getPortfolioId(), token, getTrades());
+    } catch {}
+  };
+
+  const onHide       = () => { if (document.visibilityState === 'hidden') flush(); };
+  const onPageHide   = () => flush();
+
+  document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('pagehide', onPageHide);
+
+  return () => {
+    document.removeEventListener('visibilitychange', onHide);
+    window.removeEventListener('pagehide', onPageHide);
+  };
+}
+
+// ── Backup Management for Restore UI ──────────────────────────────────────────
+
+/**
+ * List all available backup files from Google Drive.
+ * @param {string} accessToken
+ * @returns {Promise<Array<{id: string, name: string, size: number, modifiedTime: string, portfolioId: string}>>}
+ */
+export async function listDriveBackups(accessToken) {
+  if (!accessToken || accessToken === 'demo-token') return [];
+
+  try {
+    const q = encodeURIComponent("mimeType != 'application/vnd.google-apps.folder' and (name contains 'foxtrade' or name contains 'tradeontip') and trashed = false");
+    const resp = await fetch(`${DRIVE_API}?q=${q}&fields=files(id,name,size,modifiedTime,createdTime,appProperties)&orderBy=modifiedTime desc&pageSize=20`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!resp.ok) return [];
+    const { files } = await resp.json();
+    if (!Array.isArray(files)) return [];
+
+    return files.map(f => {
+      // Extract portfolioId from filename foxtrade-journal-{portfolioId}.json.gz
+      const match = f.name.match(/foxtrade-journal-([a-zA-Z0-9_-]+)\./);
+      const portfolioId = match ? match[1] : (f.appProperties?.foxtradePHash || 'default');
+      return {
+        id: f.id,
+        name: f.name,
+        size: parseInt(f.size || '0', 10),
+        modifiedTime: f.modifiedTime,
+        createdTime: f.createdTime,
+        portfolioId,
+      };
+    });
+  } catch (err) {
+    console.warn('[SyncEngine] listDriveBackups error:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Download a specific backup file by its Drive fileId.
+ * @param {string} fileId
+ * @param {string} accessToken
+ * @returns {Promise<object|null>} parsed backup object { trades, metadata, exportedAt, version }
+ */
+export async function downloadBackupFileById(fileId, accessToken) {
+  if (!fileId || !accessToken) return null;
+
+  try {
+    const resp = await fetch(`${DRIVE_API}/${fileId}?alt=media&acknowledgeAbuse=true`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!resp.ok) return null;
+
+    const buffer = await resp.arrayBuffer();
+    return parseDrivePayload(buffer);
+  } catch (err) {
+    console.error('[SyncEngine] downloadBackupFileById error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Delete a backup file by fileId from Google Drive.
+ * @param {string} fileId
+ * @param {string} accessToken
+ * @returns {Promise<boolean>}
+ */
+export async function deleteBackupFileById(fileId, accessToken) {
+  if (!fileId || !accessToken) return false;
+
+  try {
+    const resp = await fetch(`${DRIVE_API}/${fileId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    return resp.ok;
+  } catch (err) {
+    console.error('[SyncEngine] deleteBackupFileById error:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Delete all FoxTrade backup files from Google Drive.
+ * Used on "Clear All Data" so remote backups don't resurrect deleted trades.
+ *
+ * @param {string} accessToken
+ * @returns {Promise<boolean>}
+ */
+export async function clearAllDriveBackups(accessToken) {
+  if (!accessToken || accessToken === 'demo-token') return false;
+  try {
+    const files = await listDriveBackups(accessToken);
+    for (const f of files) {
+      await deleteBackupFileById(f.id, accessToken);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[SyncEngine] clearAllDriveBackups error:', err);
+    return false;
+  }
+}
+

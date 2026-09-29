@@ -1,0 +1,15 @@
+name = "foxtrade-auth-worker"
+main = "auth-worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:3000"
+
+# Production secrets — set these via:
+#   wrangler secret put GOOGLE_CLIENT_ID
+#   wrangler secret put GOOGLE_CLIENT_SECRET
+#   wrangler secret put ALLOWED_ORIGIN
+#
+# Get credentials from: https://console.cloud.google.com/apis/credentials
+# OAuth 2.0 Client ID → Web application type
+# Authorized redirect URIs: https://yourdomain.com, http://localhost:3000
