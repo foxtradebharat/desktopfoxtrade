@@ -128,6 +128,38 @@ export async function saveFoxyConfig({ provider, model, apiKey }) {
   if (apiKey !== undefined) await setConfig(CONFIG_KEY_API_KEY, apiKey.trim());
 }
 
+const CONFIG_KEY_COMMITMENTS = 'foxy_trader_commitments';
+
+/**
+ * Get active trader rules and commitments persisted in IndexedDB
+ */
+export async function getTraderCommitments() {
+  const comms = await getConfig(CONFIG_KEY_COMMITMENTS, []);
+  return Array.isArray(comms) ? comms : [];
+}
+
+/**
+ * Save active trader rules and commitments to IndexedDB
+ */
+export async function saveTraderCommitments(commitments) {
+  if (Array.isArray(commitments)) {
+    await setConfig(CONFIG_KEY_COMMITMENTS, commitments);
+  }
+}
+
+/**
+ * Add a new commitment to the trader's behavioral coach memory
+ */
+export async function addTraderCommitment(ruleText) {
+  if (!ruleText || typeof ruleText !== 'string') return;
+  const current = await getTraderCommitments();
+  const cleaned = ruleText.trim();
+  if (cleaned && !current.includes(cleaned)) {
+    current.push(cleaned);
+    await saveTraderCommitments(current.slice(-10));
+  }
+}
+
 /**
  * Check if user is eligible to generate their weekly comprehensive AI report (1 per user per week)
  */
@@ -1115,7 +1147,24 @@ export async function askFoxy({
     }
   } catch(e) { /* silent */ }
 
-  const fullSystemPrompt = systemPrompt + dnaText + marketText + contractNoteContext;
+  // Inject Persistent Trader Commitments & Personal Rules (M2 Coach Continuity)
+  let commitmentsText = '';
+  try {
+    const comms = await getTraderCommitments().catch(() => []);
+    // Also detect if user is establishing a new rule in current prompt
+    const ruleMatch = prompt.match(/(?:my rule is|i promise to|set a rule|commit to|my trading rule:?)\s*(.*)/i);
+    if (ruleMatch && ruleMatch[1].trim()) {
+      await addTraderCommitment(ruleMatch[1].trim());
+      comms.push(ruleMatch[1].trim());
+    }
+    if (comms.length > 0) {
+      commitmentsText = `\n\nACTIVE TRADER RULES & COMMITMENTS (PERSISTENT COACH MEMORY):\n` +
+        comms.map((c, i) => `• Rule ${i + 1}: ${c}`).join('\n') +
+        `\nCRITICAL: Always hold the trader strictly accountable to these rules. Flag any violations in trade logs.`;
+    }
+  } catch(e) { /* silent */ }
+
+  const fullSystemPrompt = systemPrompt + dnaText + marketText + contractNoteContext + commitmentsText;
 
   // If no API key configured, use intelligent local heuristic fallback
   if (!apiKey || !apiKey.trim()) {
