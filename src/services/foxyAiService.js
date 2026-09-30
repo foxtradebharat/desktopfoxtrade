@@ -1030,6 +1030,49 @@ RESPONSE RULES — MANDATORY FORMAT:
 
 
 /**
+ * Post-generation verification guard (C2 Zero-Hallucination Enforcer)
+ * Checks quoted numbers against official journal ground truth.
+ */
+export function verifyFoxyResponse(text, { metrics, trades } = {}) {
+  if (!text || typeof text !== 'string') return text;
+
+  const discrepancies = [];
+  const exactWinRate = metrics?.winRate !== undefined ? Number(metrics.winRate) : null;
+  const exactRealizedPnl = metrics?.grossRealizedPL !== undefined ? Number(metrics.grossRealizedPL) : null;
+
+  // 1. Audit Quoted Win Rate
+  if (exactWinRate !== null) {
+    const wrMatches = [...text.matchAll(/(?:win\s*rate|win-rate|accuracy)[:\s]+([0-9]+(?:\.[0-9]+)?)\s*%/gi)];
+    for (const match of wrMatches) {
+      const quotedVal = parseFloat(match[1]);
+      if (!isNaN(quotedVal) && Math.abs(quotedVal - exactWinRate) > 1.0) {
+        discrepancies.push(`Quoted Win Rate ${quotedVal}% vs Official Ground Truth ${exactWinRate}%`);
+      }
+    }
+  }
+
+  // 2. Audit Quoted Realized P/L
+  if (exactRealizedPnl !== null) {
+    const pnlMatches = [...text.matchAll(/(?:realized\s*(?:p[&/]?l|profit|loss)|gross\s*realized)[:\s]+[₹Rs.\s]*([+\-]?\s*[0-9,]+(?:\.[0-9]+)?)/gi)];
+    for (const match of pnlMatches) {
+      const rawClean = match[1].replace(/[\s,]/g, '');
+      const quotedPnl = parseFloat(rawClean);
+      if (!isNaN(quotedPnl) && Math.abs(quotedPnl - exactRealizedPnl) > 50) {
+        discrepancies.push(`Quoted Realized P/L ₹${quotedPnl} vs Official Ground Truth ₹${exactRealizedPnl}`);
+      }
+    }
+  }
+
+  // If discrepancies found, append institutional correction note
+  if (discrepancies.length > 0) {
+    const auditNote = `\n\n> 🔍 **Foxy Ground-Truth Verification:** Note that the official journal ground truth for this period is **Win Rate: ${exactWinRate}%** and **Gross Realized P/L: ₹${Math.round(exactRealizedPnl).toLocaleString('en-IN')}**.`;
+    return text + auditNote;
+  }
+
+  return text;
+}
+
+/**
  * Send user query to the configured LLM and get Foxy's response
  */
 export async function askFoxy({
@@ -1148,20 +1191,32 @@ export async function askFoxy({
 
         // Function calling loop (max 3 rounds)
         for (let round = 0; round < 3; round++) {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: systemInstruction,
-              contents: loopContents,
-              tools: [TRADE_QUERY_TOOL]
-            })
-          });
+          const controller = new AbortController();
+          const timeoutTimer = setTimeout(() => controller.abort(), 12000); // 12s timeout protection
+
+          let res;
+          try {
+            res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent`, {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-goog-api-key': key
+              },
+              signal: controller.signal,
+              body: JSON.stringify({
+                system_instruction: systemInstruction,
+                contents: loopContents,
+                tools: [TRADE_QUERY_TOOL]
+              })
+            });
+          } finally {
+            clearTimeout(timeoutTimer);
+          }
 
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             lastError = new Error(errData?.error?.message || `Gemini API error (${res.status})`);
-            if (res.status === 503 || res.status === 404 || res.status === 429) {
+            if (res.status === 503 || res.status === 404 || res.status === 429 || res.status === 400) {
               console.warn(`[Foxy AI] Model ${targetModel} hit status ${res.status}. Falling back to next candidate model...`);
               break;
             }
@@ -1185,13 +1240,18 @@ export async function askFoxy({
                 aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
                 returnRows: !!querySpec.returnRows,
                 orderBy: querySpec.orderBy,
-                limit: querySpec.limit || 25
+                limit: Math.min(querySpec.limit || 25, 50)
               });
+
+              // Context & token budget guard: truncate oversized markdown payloads
+              if (typeof queryResult === 'string' && queryResult.length > 3500) {
+                queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
+              }
             } catch(qErr) {
               queryResult = `Query error: ${qErr.message}`;
             }
 
-            // Add function call + response to contents (preserving thoughtSignature)
+            // Add model's tool call & function execution result to loop history
             loopContents.push(candidate.content);
             loopContents.push({
               role: 'user',
@@ -1205,16 +1265,61 @@ export async function askFoxy({
           if (text) { finalText = text; break; }
         }
 
-        if (finalText) return finalText;
+        if (finalText) {
+          return verifyFoxyResponse(finalText, { metrics, trades });
+        }
       } catch (err) {
         lastError = err;
       }
     }
     console.warn('[Foxy AI] Cloud models exhausted. Falling back to local heuristic response:', lastError?.message);
-    return generateOfflineFoxyResponse(prompt, trades, metrics);
+    return verifyFoxyResponse(generateOfflineFoxyResponse(prompt, trades, metrics), { metrics, trades });
   }
 
-  // 2. OpenAI / DeepSeek / Groq / OpenRouter (All OpenAI-compatible standard)
+  // 2. Anthropic Claude Direct Browser Execution
+  if (provider === 'anthropic') {
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const anthropicMessages = [
+        ...conversationHistory.slice(-8).map(m => ({ 
+          role: m.role === 'assistant' ? 'assistant' : 'user', 
+          content: m.content 
+        })),
+        { role: 'user', content: prompt }
+      ];
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: model || 'claude-3-5-sonnet-20241022',
+          system: fullSystemPrompt,
+          messages: anthropicMessages,
+          max_tokens: 2000
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error?.message || `Anthropic API error (${res.status})`);
+      }
+
+      const data = await res.json();
+      const reply = data?.content?.[0]?.text || 'No response generated.';
+      return verifyFoxyResponse(reply, { metrics, trades });
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
+  }
+
+  // 3. OpenAI / DeepSeek / Groq / OpenRouter (All OpenAI-compatible standard)
   let endpoint = 'https://api.openai.com/v1/chat/completions';
   if (provider === 'deepseek') endpoint = 'https://api.deepseek.com/chat/completions';
   if (provider === 'groq') endpoint = 'https://api.groq.com/openai/v1/chat/completions';
@@ -1226,26 +1331,35 @@ export async function askFoxy({
     { role: 'user', content: prompt }
   ];
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-      temperature: 0.7
-    })
-  });
+  const controller = new AbortController();
+  const timeoutTimer = setTimeout(() => controller.abort(), 15000);
 
-  if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `${provider.toUpperCase()} API error (${res.status})`);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 0.7
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData?.error?.message || `${provider.toUpperCase()} API error (${res.status})`);
+    }
+
+    const data = await res.json();
+    const reply = data?.choices?.[0]?.message?.content || 'No response generated.';
+    return verifyFoxyResponse(reply, { metrics, trades });
+  } finally {
+    clearTimeout(timeoutTimer);
   }
-
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || 'No response generated.';
 }
 
 /**
