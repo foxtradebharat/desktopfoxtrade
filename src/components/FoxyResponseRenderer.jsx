@@ -95,13 +95,16 @@ export default function FoxyResponseRenderer({ content, onImportTrades }) {
     // 1. Protect commas inside parentheses: (e.g., Pullback, Pivot Bo)
     let safe = rowStr.replace(/\(([^)]+)\)/g, (match) => match.replace(/,/g, '§COMMA§'));
 
-    // 2. Protect commas inside Indian / currency numbers: e.g. 14,596 or 1,45,391 or ₹14,596.75
-    for (let iter = 0; iter < 4; iter++) {
-      safe = safe.replace(/(\d),(\d)/g, '$1§COMMA§$2');
-    }
-
-    // 3. Protect commas inside quotes if any: "a, b"
+    // 2. Protect commas inside quotes if any: "a, b"
     safe = safe.replace(/"([^"]+)"/g, (match) => match.replace(/,/g, '§COMMA§'));
+
+    // 3. Protect commas inside Indian / currency numbers: e.g. 19,350 or 1,45,391 or ₹14,596.75
+    // A numeric comma is followed by exactly 3 digits, or 2 digits before a 3-digit group.
+    // Must NOT match between a number and the next column (e.g. '350,5.7R' or '350,23-01-2024').
+    safe = safe.replace(/(\d{1,3}),(\d{3})(?!\d)/g, '$1§COMMA§$2');
+    for (let iter = 0; iter < 3; iter++) {
+      safe = safe.replace(/(\d{1,2}),(\d{2})(?=§COMMA§)/g, '$1§COMMA§$2');
+    }
 
     // 4. Split by remaining unescaped commas
     let cells = safe.split(',').map(c => c.replace(/§COMMA§/g, ',').trim());
