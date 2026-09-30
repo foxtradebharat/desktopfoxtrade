@@ -33,7 +33,7 @@ import FundManagementPage from './components/Pages/FundManagementPage';
 import DeepAnalyticsPage from './components/Pages/DeepAnalyticsPage';
 import NotesPage from './components/Pages/NotesPage';
 import CommunityPage from './components/Pages/CommunityPage';
-import AiCoachPage from './components/Pages/AiCoachPage';
+import FoxyAiPage from './components/Pages/FoxyAiPage';
 import ExpiryTrackerPage from './components/Pages/ExpiryTrackerPage';
 import MilestonesPage from './components/Pages/MilestonesPage';
 import SymbolDeepDivePage from './components/Pages/SymbolDeepDivePage';
@@ -225,7 +225,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       'expiry-tracker': 'Expiry Tracker',
       'milestones': 'Milestones',
       'community': 'Community',
-      'ai-coach': 'AI Coach',
+      'foxy-ai': 'Foxy AI',
+      'foxy': 'Foxy AI',
+      'ai-coach': 'Foxy AI',
       'notes': 'Notes'
     };
     const title = tabTitles[activeTab] || 'Journal';
@@ -243,6 +245,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         else if (path === 'fund-management' || path === 'funds') setActiveTab('fund-management');
         else if (path === 'deep-analytics' || path === 'deep') setActiveTab('deep-analytics');
         else if (path === 'notes') setActiveTab('notes');
+        else if (path === 'foxy' || path === 'foxy-ai' || path === 'ai-coach') setActiveTab('foxy-ai');
         else setActiveTab('journal');
       } catch {}
     };
@@ -1836,6 +1839,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           onColumnsClick={() => setIsSettingsOpen(true)}
           onViewChartClick={() => setActiveTab('stock-charts')}
           onBrowseImagesClick={() => setIsChartGalleryOpen(true)}
+          onFoxyAiClick={() => setActiveTab('foxy-ai')}
           visibleCols={visibleCols}
           onToggleCol={handleToggleCol}
           onSelectAllCols={handleSelectAllCols}
@@ -1980,9 +1984,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             }}
           />
         )}
-        {activeTab === 'community'       && <CommunityPage trades={portfolioTrades} user={user} />}
-        {activeTab === 'ai-coach'        && <AiCoachPage trades={portfolioTrades} />}
-        {activeTab === 'tax-analytics'   && <TaxAnalyticsPage trades={portfolioTrades} user={user} portfolioValue={portfolioCapital || (metrics?.portfolioCapital || 0)} />}
+        {(activeTab === 'foxy-ai' || activeTab === 'ai-coach' || activeTab === 'foxy') && (
+          <FoxyAiPage trades={filteredTrades} allTrades={portfolioTrades} metrics={metrics} user={user} onBackToJournal={() => setActiveTab('journal')} activePortfolioId={activePortfolioId} portfolioCapital={portfolioCapital} />
+
+        )}
         {(activeTab === 'fund-management' || activeTab === 'fundManagement') && (
           <FundManagementPage 
             trades={filteredTrades} 
