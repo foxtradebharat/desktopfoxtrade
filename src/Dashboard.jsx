@@ -1985,8 +1985,16 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           />
         )}
         {(activeTab === 'foxy-ai' || activeTab === 'ai-coach' || activeTab === 'foxy') && (
-          <FoxyAiPage trades={filteredTrades} allTrades={portfolioTrades} metrics={metrics} user={user} onBackToJournal={() => setActiveTab('journal')} activePortfolioId={activePortfolioId} portfolioCapital={portfolioCapital} />
-
+          <FoxyAiPage 
+            trades={filteredTrades} 
+            allTrades={portfolioTrades} 
+            metrics={metrics} 
+            user={user} 
+            onBackToJournal={() => setActiveTab('journal')} 
+            activePortfolioId={activePortfolioId} 
+            portfolioCapital={portfolioCapital} 
+            capitalChanges={capitalChanges}
+          />
         )}
         {(activeTab === 'fund-management' || activeTab === 'fundManagement') && (
           <FundManagementPage 
@@ -1997,6 +2005,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
               setPortfolioCapital(val);
               localStorage.setItem('tradeontip_base_capital', String(val));
             }} 
+          />
+        )}
+        {(activeTab === 'tax-analytics' || activeTab === 'tax') && (
+          <TaxAnalyticsPage
+            trades={filteredTrades}
+            user={user}
+            portfolioValue={portfolioCapital}
           />
         )}
         {activeTab === 'deep-analytics'  && (

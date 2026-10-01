@@ -23,6 +23,17 @@ import { fetchAndCacheMarketData, computeMarketCorrelation, formatMarketContextF
 import { classifyTradesBatch, summarizeClassification } from '../utils/tradeClassifier.js';
 import { parseRawTradeText, calculateIndianCharges, formatExtractedTradesForJournal } from '../utils/contractNoteParser.js';
 import { calculateTiltmeterScore } from './tiltmeterService.js';
+import { 
+  calculateYearlyFundSummary, 
+  formatFundManagementForFoxy, 
+  getStoredCapitalChanges, 
+  getAvailableFundYears 
+} from '../utils/fundManagementCalculations.js';
+import { 
+  calculateTaxMonthlyBreakdown, 
+  calculateIndianTaxClassification, 
+  formatTaxAnalyticsForFoxy 
+} from '../utils/taxAnalyticsCalculations.js';
 
 export const AI_PROVIDERS = [
   {
@@ -373,7 +384,7 @@ const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep'
  * Builds high-density, token-efficient trading journal context
  * Includes ALL modules: Fund Management, Deep Analytics, Tax Analytics, Position Sizing
  */
-export function buildFoxyJournalContext(trades = [], portfolioId = 'portfolio-default', metrics = null, portfolioCapital = 0) {
+export function buildFoxyJournalContext(trades = [], portfolioId = 'portfolio-default', metrics = null, portfolioCapital = 0, capitalChanges = null) {
   if (!trades || trades.length === 0) {
     return 'No trades recorded in the journal yet.';
   }
@@ -528,93 +539,19 @@ export function buildFoxyJournalContext(trades = [], portfolioId = 'portfolio-de
   }).join('\n  • ');
 
   // ─── FUND MANAGEMENT ENGINE ───────────────────────────────────────────────
-  const capitalChanges = loadCapitalChangesFromStorage(portfolioId, new Date().getFullYear().toString());
   const currentYear = String(new Date().getFullYear());
-  let runningCapital = 0;
-  const monthlyFundData = MONTH_NAMES_SHORT.map((monthName, mIdx) => {
-    const added = parseFloat(capitalChanges[mIdx]?.added) || 0;
-    const withdrawn = parseFloat(capitalChanges[mIdx]?.withdrawn) || 0;
-    const monthTrades = closedWithPnl.filter(t => {
-      const parsed = parseDateFoxy(t.date);
-      return parsed && parsed.year === currentYear && parsed.monthIdx === mIdx;
-    });
-    const grossPl = monthTrades.reduce((acc, t) => acc + Number(t.pnl ?? t.pl ?? 0), 0);
-    const monthWins = monthTrades.filter(t => Number(t.pnl ?? 0) > 0).length;
-    const winPct = monthTrades.length > 0 ? Math.round((monthWins / monthTrades.length) * 100) : 0;
-    const monthRList = monthTrades.map(t => parseFloat(t.rewardRisk ?? t.rMultiple)).filter(r => !isNaN(r) && r !== 0);
-    const avgMonthR = monthRList.length > 0 ? (monthRList.reduce((a, b) => a + b, 0) / monthRList.length).toFixed(2) : '-';
-    const avgDays = monthTrades.length > 0
-      ? Math.round(monthTrades.reduce((a, t) => a + Number(t.holdingDays || 0), 0) / monthTrades.length)
-      : 0;
+  const effectiveCapChanges = capitalChanges || loadCapitalChangesFromStorage(portfolioId, currentYear);
+  const fundSummary = calculateYearlyFundSummary(trades, effectiveCapChanges, currentYear);
+  const fundFormatted = formatFundManagementForFoxy(fundSummary);
 
-    let startingCapital;
-    if (mIdx === 0) { startingCapital = added - withdrawn; runningCapital = startingCapital; }
-    else { startingCapital = runningCapital + added - withdrawn; runningCapital = startingCapital; }
-    const finalCapital = startingCapital + grossPl;
-    runningCapital = finalCapital;
-    const pctPl = startingCapital > 0 ? ((grossPl / startingCapital) * 100).toFixed(2) : '0.00';
-
-    return { monthName, mIdx, added, withdrawn, startingCapital, grossPl, pctPl, finalCapital, trades: monthTrades.length, winPct, avgMonthR, avgDays };
+  // ─── TAX ANALYTICS & STATUTORY AUDIT ENGINE ───────────────────────────────
+  const taxMonthlyBreakdown = calculateTaxMonthlyBreakdown(trades, {
+    selectedYear: currentYear,
+    periodMode: 'calendar',
+    portfolioValue: portfolioCapital || fundSummary.startingCapital
   });
-
-  const activeFundMonths = monthlyFundData.filter(m => m.trades > 0 || m.added > 0);
-  const totalAdded = monthlyFundData.reduce((a, m) => a + m.added, 0);
-  const totalWithdrawn = monthlyFundData.reduce((a, m) => a + m.withdrawn, 0);
-  const currentCapital = monthlyFundData.filter(m => m.finalCapital > 0).slice(-1)[0]?.finalCapital || 0;
-  const fundSummaryRows = activeFundMonths.map(m => {
-    const plSign = m.grossPl >= 0 ? '+' : '';
-    return `${m.monthName} ${currentYear}: Trades=${m.trades} | WR=${m.winPct}% | Gross P/L=${plSign}₹${Math.round(m.grossPl).toLocaleString('en-IN')} | ${plSign}${m.pctPl}% | StartCap=₹${Math.round(m.startingCapital).toLocaleString('en-IN')} | EndCap=₹${Math.round(m.finalCapital).toLocaleString('en-IN')} | AvgR=${m.avgMonthR} | AvgDays=${m.avgDays}`;
-  }).join('\n  • ');
-
-  // ─── TAX ANALYTICS ENGINE ─────────────────────────────────────────────────
-  // Compute monthly gross P/L breakdown (Tax Analytics uses entry date by default in FoxTrade)
-  const taxMonthly = MONTH_NAMES_SHORT.map((monthName, mIdx) => {
-    const monthTrades = closedWithPnl.filter(t => {
-      const parsed = parseDateFoxy(t.date);
-      return parsed && parsed.year === currentYear && parsed.monthIdx === mIdx;
-    });
-    const grossPl = monthTrades.reduce((acc, t) => acc + Number(t.pnl ?? t.pl ?? 0), 0);
-    // Estimate brokerage + STT + charges from stored charges field if available
-    const totalCharges = monthTrades.reduce((acc, t) => {
-      const c = t.charges;
-      if (c && typeof c === 'object' && c.total) return acc + Number(c.total);
-      return acc + Number(t.totalCharges || t.brokerage || 0);
-    }, 0);
-    const netPl = grossPl - totalCharges;
-    return { monthName, mIdx, trades: monthTrades.length, grossPl, totalCharges, netPl };
-  });
-
-  const activeTaxMonths = taxMonthly.filter(m => m.trades > 0);
-  const totalGrossAll = taxMonthly.reduce((a, m) => a + m.grossPl, 0);
-  const totalChargesAll = taxMonthly.reduce((a, m) => a + m.totalCharges, 0);
-  const totalNetAll = totalGrossAll - totalChargesAll;
-
-  // Indian Tax Classification: F&O (Non-Speculative Business), Intraday (Speculative), STCG (20%), LTCG (12.5%)
-  const isDerivative = (t) => {
-    const seg = String(t.segment || t.type || '').toUpperCase();
-    const sym = String(t.name || t.symbol || '').toUpperCase();
-    return seg.includes('F&O') || seg.includes('FUT') || seg.includes('OPT') ||
-           sym.includes('CE') || sym.includes('PE') || sym.includes('FUT');
-  };
-
-  const fnoTrades = closedWithPnl.filter(isDerivative);
-  const fnoPnl = fnoTrades.reduce((a, t) => a + Number(t.pnl ?? t.pl ?? 0), 0);
-
-  const equityTrades = closedWithPnl.filter(t => !isDerivative(t));
-  const intradaySpecTrades = equityTrades.filter(t => Number(t.holdingDays || 0) === 0);
-  const intradaySpecPnl = intradaySpecTrades.reduce((a, t) => a + Number(t.pnl ?? t.pl ?? 0), 0);
-
-  const stcgTrades = equityTrades.filter(t => Number(t.holdingDays || 0) > 0 && Number(t.holdingDays || 0) <= 365);
-  const stcgPnl = stcgTrades.reduce((a, t) => a + Number(t.pnl ?? t.pl ?? 0), 0);
-
-  const ltcgTrades = equityTrades.filter(t => Number(t.holdingDays || 0) > 365);
-  const ltcgPnl = ltcgTrades.reduce((a, t) => a + Number(t.pnl ?? t.pl ?? 0), 0);
-
-  const taxRows = activeTaxMonths.map(m => {
-    const gSign = m.grossPl >= 0 ? '+' : '';
-    const nSign = m.netPl >= 0 ? '+' : '';
-    return `${m.monthName} ${currentYear}: ${m.trades} trades | Gross=${gSign}₹${Math.round(m.grossPl).toLocaleString('en-IN')} | Charges=₹${Math.round(m.totalCharges).toLocaleString('en-IN')} | Net=${nSign}₹${Math.round(m.netPl).toLocaleString('en-IN')}`;
-  }).join('\n  • ');
+  const taxClassification = calculateIndianTaxClassification(trades, { selectedYear: currentYear });
+  const taxFormatted = formatTaxAnalyticsForFoxy(taxMonthlyBreakdown, taxClassification);
 
   // ─── MISTAKE COST & PSYCHOLOGICAL LEAK ENGINE ────────────────────────────
   const avgDownTrades = closedWithPnl.filter(t => 
@@ -831,21 +768,12 @@ FIXED-RISK POSITION SIZING SIMULATIONS:
   ${diagnostics.totalPnL < 0 ? 'CAUSE: Erratic position sizing — oversized losses, undersized winners. Fix: strict fixed-fractional risk (1-2% per trade via qty = capital × risk% / SL distance).' : 'Position sizing is consistent with edge performance.'}
 
 ================================================================================
-FUND MANAGEMENT — MONTHLY CAPITAL & P/L MATRIX (${currentYear}):
-${totalAdded > 0 ? `- Starting Capital (Jan ${currentYear}): ₹${(monthlyFundData[0]?.startingCapital || 0).toLocaleString('en-IN')}` : '- Capital data not yet configured in Fund Management tab.'}
-${totalAdded > 0 ? `- Current Portfolio Balance: ₹${Math.round(currentCapital).toLocaleString('en-IN')}` : ''}
-${totalAdded > 0 ? `- Total Deposits (${currentYear}): ₹${Math.round(totalAdded).toLocaleString('en-IN')} | Total Withdrawals: ₹${Math.round(totalWithdrawn).toLocaleString('en-IN')}` : ''}
-  • ${fundSummaryRows || 'No capital data configured yet — user should enter starting capital in Fund Management.'}
+FUND MANAGEMENT — DYNAMIC CAPITAL & PERFORMANCE MATRIX (${currentYear}):
+${fundFormatted}
 
 ================================================================================
-TAX ANALYTICS — MONTHLY GROSS & NET P/L (${currentYear}):
-- Total Gross P/L (${currentYear}): ${totalGrossAll >= 0 ? '+' : ''}₹${Math.round(totalGrossAll).toLocaleString('en-IN')}
-- Total Charges/Brokerage: ₹${Math.round(totalChargesAll).toLocaleString('en-IN')}
-- Total Net P/L After Charges: ${totalNetAll >= 0 ? '+' : ''}₹${Math.round(totalNetAll).toLocaleString('en-IN')}
-- STCG Trades (≤365 days): ${stcgTrades.length} trades | P/L: ${stcgPnl >= 0 ? '+' : ''}₹${Math.round(stcgPnl).toLocaleString('en-IN')}
-- LTCG Trades (>365 days): ${ltcgTrades.length} trades | P/L: ${ltcgPnl >= 0 ? '+' : ''}₹${Math.round(ltcgPnl).toLocaleString('en-IN')}
-Monthly Tax Breakdown:
-  • ${taxRows || 'No closed trades in current year.'}
+TAX ANALYTICS & STATUTORY CHARGES AUDIT (${currentYear}):
+${taxFormatted}
 
 ================================================================================
 MISTAKE COST & PSYCHOLOGICAL LEAK AUDIT (WHAT MISTAKES COST THIS ACCOUNT):
@@ -1132,11 +1060,14 @@ export async function askFoxy({
   metrics = null,
   portfolioId = 'portfolio-default',
   portfolioCapital = 0,
+  capitalChanges = null,
   onChunk = null,
   signal = null
 }) {
   const { provider, model, apiKey } = await getFoxyConfig();
-  const journalContext = buildFoxyJournalContext(trades, portfolioId, metrics, portfolioCapital);
+  const currentYearStr = String(new Date().getFullYear());
+  const effectiveCapChanges = capitalChanges || loadCapitalChangesFromStorage(portfolioId, currentYearStr);
+  const journalContext = buildFoxyJournalContext(trades, portfolioId, metrics, portfolioCapital, effectiveCapChanges);
   const systemPrompt = getFoxySystemPrompt(journalContext);
 
   // Inject Behavioral DNA
@@ -1198,38 +1129,120 @@ export async function askFoxy({
   // 1. Google Gemini
   if (provider === 'gemini') {
     const TRADE_QUERY_TOOL = {
-      function_declarations: [{
-        name: 'run_trade_query',
-        description: 'Execute a precise analytical query on the user trade journal to get exact numbers or matching trade records. Use this for any question requiring counting, aggregation, filtering, grouping, comparison, or listing trades. Always use this tool instead of guessing.',
-        parameters: {
-          type: 'object',
-          properties: {
-            description: { type: 'string', description: 'Human readable description of what this query computes' },
-            filters: {
-              type: 'array',
-              description: 'Array of filter conditions',
-              items: {
-                type: 'object',
-                properties: {
-                  field: { type: 'string', description: 'Field: symbol, setup, status, segment, type, entry, exit, sl, cmp, pnl, holdingDays, date, hour, timeOfDay, dayOfWeek, month, year, capitalAtRisk, rewardRisk, dateFrom, dateTo' },
-                  op: { type: 'string', enum: ['eq','neq','contains','gt','lt','gte','lte','in'] },
-                  value: { type: 'string' }
-                },
-                required: ['field','op','value']
-              }
+      function_declarations: [
+        {
+          name: 'run_trade_query',
+          description: 'Execute a precise analytical query on the user trade journal to get exact numbers or matching trade records. Use this for any question requiring counting, aggregation, filtering, grouping, comparison, or listing trades. Always use this tool instead of guessing.',
+          parameters: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'Human readable description of what this query computes' },
+              filters: {
+                type: 'array',
+                description: 'Array of filter conditions',
+                items: {
+                  type: 'object',
+                  properties: {
+                    field: { type: 'string', description: 'Field: symbol, setup, status, segment, type, entry, exit, sl, cmp, pnl, holdingDays, date, hour, timeOfDay, dayOfWeek, month, year, capitalAtRisk, rewardRisk, dateFrom, dateTo' },
+                    op: { type: 'string', enum: ['eq','neq','contains','gt','lt','gte','lte','in'] },
+                    value: { type: 'string' }
+                  },
+                  required: ['field','op','value']
+                }
+              },
+              groupBy: { type: 'string', description: 'Group results by this field: setup, symbol, segment, month, dayOfWeek, hour, year, status' },
+              aggregations: {
+                type: 'array',
+                items: { type: 'string', enum: ['count','wins','losses','winRate','totalPnl','avgPnl','avgWin','avgLoss','totalR','avgR','profitFactor','expectancy','maxDrawdown','streaks','avgHolding'] }
+              },
+              returnRows: { type: 'boolean', description: 'Set to true to return full matching individual trade records (Scrip, Date, Entry, SL, Exit, PnL, R, Setup) instead of aggregated numbers.' },
+              orderBy: { type: 'object', properties: { field: {type:'string'}, dir: {type:'string'} } },
+              limit: { type: 'number', description: 'Max rows to return (default 20, max 50)' }
             },
-            groupBy: { type: 'string', description: 'Group results by this field: setup, symbol, segment, month, dayOfWeek, hour, year, status' },
-            aggregations: {
-              type: 'array',
-              items: { type: 'string', enum: ['count','wins','losses','winRate','totalPnl','avgPnl','avgWin','avgLoss','totalR','avgR','profitFactor','expectancy','maxDrawdown','streaks','avgHolding'] }
+            required: ['description']
+          }
+        },
+        {
+          name: 'run_fund_query',
+          description: 'Execute dynamic fund management calculation to get exact 100% mathematical capital breakdown for any year (e.g. 2026, 2025). Returns exact starting capital, deposits (added funds), withdrawals, monthly net P/L, ending balance, % return on capital, annualized CAGR, and cumulative multiplier. Always use this tool for questions about fund management, capital breakdown, deposits, withdrawals, ending balance, or CAGR.',
+          parameters: {
+            type: 'object',
+            properties: {
+              year: { type: 'string', description: 'Year to analyze (e.g. "2026", "2025"). Default is "2026".' },
+              month: { type: 'string', description: 'Optional month name (e.g. "Jan", "Feb", ... or "all"). Default is "all".' }
             },
-            returnRows: { type: 'boolean', description: 'Set to true to return full matching individual trade records (Scrip, Date, Entry, SL, Exit, PnL, R, Setup) instead of aggregated numbers.' },
-            orderBy: { type: 'object', properties: { field: {type:'string'}, dir: {type:'string'} } },
-            limit: { type: 'number', description: 'Max rows to return (default 20, max 50)' }
-          },
-          required: ['description']
+            required: ['year']
+          }
+        },
+        {
+          name: 'run_tax_query',
+          description: 'Compute exact 100% deterministic Indian Income Tax and statutory charges analytics. Returns Section 111A STCG (20%), Section 112A LTCG (12.5% with ₹1.25L exemption), Speculative Intraday income, Non-speculative F&O business income, Section 44AB Tax Audit Turnover (F&O absolute profit/loss turnover, Intraday turnover, Delivery turnover, and audit status against ₹10 Cr limit), and itemized statutory charges (STT, Stamp Duty, GST, Exchange charges, SEBI, Brokerage). Always use this tool for questions about tax, capital gains, tax audit, turnover, or charges.',
+          parameters: {
+            type: 'object',
+            properties: {
+              year: { type: 'string', description: 'Year e.g. "2026", "2025", or "All"' },
+              periodMode: { type: 'string', enum: ['calendar', 'fy'], description: 'Calendar year (Jan-Dec) or Financial Year (Apr-Mar). Default is "calendar".' }
+            },
+            required: ['year']
+          }
         }
-      }]
+      ]
+    };
+
+    const handleToolInvocation = (fCall) => {
+      if (!fCall || !fCall.name) return null;
+      const fName = fCall.name;
+      const fArgs = fCall.args || {};
+
+      if (fName === 'run_trade_query') {
+        try {
+          let qRes = executeQueryAndFormat(trades, {
+            filters: fArgs.filters || [],
+            groupBy: fArgs.groupBy || null,
+            aggregations: fArgs.aggregations || ['count','winRate','totalPnl'],
+            returnRows: !!fArgs.returnRows,
+            orderBy: fArgs.orderBy,
+            limit: Math.min(fArgs.limit || 25, 50)
+          });
+          if (typeof qRes === 'string' && qRes.length > 3500) {
+            qRes = qRes.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
+          }
+          return { name: fName, result: qRes };
+        } catch (qErr) {
+          return { name: fName, result: `Query error: ${qErr.message}` };
+        }
+      }
+
+      if (fName === 'run_fund_query') {
+        try {
+          const qYear = String(fArgs.year || '2026');
+          const capChanges = effectiveCapChanges || loadCapitalChangesFromStorage(portfolioId, qYear);
+          const fundSummary = calculateYearlyFundSummary(trades, capChanges, qYear);
+          const formatted = formatFundManagementForFoxy(fundSummary);
+          return { name: fName, result: formatted };
+        } catch (fErr) {
+          return { name: fName, result: `Fund query error: ${fErr.message}` };
+        }
+      }
+
+      if (fName === 'run_tax_query') {
+        try {
+          const qYear = String(fArgs.year || '2026');
+          const pMode = fArgs.periodMode || 'calendar';
+          const breakdown = calculateTaxMonthlyBreakdown(trades, {
+            selectedYear: qYear,
+            periodMode: pMode,
+            portfolioValue: portfolioCapital
+          });
+          const classification = calculateIndianTaxClassification(trades, { selectedYear: qYear });
+          const formatted = formatTaxAnalyticsForFoxy(breakdown, classification);
+          return { name: fName, result: formatted };
+        } catch (tErr) {
+          return { name: fName, result: `Tax query error: ${tErr.message}` };
+        }
+      }
+
+      return null;
     };
 
     const candidateModels = Array.from(new Set([
@@ -1392,30 +1405,12 @@ export async function askFoxy({
             }
 
             // Check if model called a function
-            if (detectedFuncCall && detectedFuncCall.name === 'run_trade_query') {
-              const querySpec = detectedFuncCall.args || {};
-              let queryResult;
-              try {
-                queryResult = executeQueryAndFormat(trades, {
-                  filters: querySpec.filters || [],
-                  groupBy: querySpec.groupBy || null,
-                  aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
-                  returnRows: !!querySpec.returnRows,
-                  orderBy: querySpec.orderBy,
-                  limit: Math.min(querySpec.limit || 25, 50)
-                });
-
-                if (typeof queryResult === 'string' && queryResult.length > 3500) {
-                  queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
-                }
-              } catch(qErr) {
-                queryResult = `Query error: ${qErr.message}`;
-              }
-
+            const invocation = handleToolInvocation(detectedFuncCall);
+            if (invocation) {
               loopContents.push(lastCandidateContent || { role: 'model', parts: [{ functionCall: detectedFuncCall }] });
               loopContents.push({
                 role: 'user',
-                parts: [{ functionResponse: { name: 'run_trade_query', response: { result: queryResult } } }]
+                parts: [{ functionResponse: { name: invocation.name, response: { result: invocation.result } } }]
               });
               continue; // next round to get final answer
             }
@@ -1433,30 +1428,12 @@ export async function askFoxy({
 
             // Check if model wants to call a function
             const funcCall = parts.find(p => p.functionCall)?.functionCall;
-            if (funcCall && funcCall.name === 'run_trade_query') {
-              const querySpec = funcCall.args || {};
-              let queryResult;
-              try {
-                queryResult = executeQueryAndFormat(trades, {
-                  filters: querySpec.filters || [],
-                  groupBy: querySpec.groupBy || null,
-                  aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
-                  returnRows: !!querySpec.returnRows,
-                  orderBy: querySpec.orderBy,
-                  limit: Math.min(querySpec.limit || 25, 50)
-                });
-
-                if (typeof queryResult === 'string' && queryResult.length > 3500) {
-                  queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
-                }
-              } catch(qErr) {
-                queryResult = `Query error: ${qErr.message}`;
-              }
-
+            const invocation = handleToolInvocation(funcCall);
+            if (invocation) {
               loopContents.push(candidate.content);
               loopContents.push({
                 role: 'user',
-                parts: [{ functionResponse: { name: 'run_trade_query', response: { result: queryResult } } }]
+                parts: [{ functionResponse: { name: invocation.name, response: { result: invocation.result } } }]
               });
               continue; // next round to get final answer
             }
@@ -1479,7 +1456,7 @@ export async function askFoxy({
       }
     }
     console.warn('[Foxy AI] Cloud models exhausted. Falling back to local heuristic response:', lastError?.message);
-    return verifyFoxyResponse(generateOfflineFoxyResponse(prompt, trades, metrics), { metrics, trades });
+    return verifyFoxyResponse(generateOfflineFoxyResponse(prompt, trades, metrics, portfolioId, portfolioCapital, effectiveCapChanges), { metrics, trades });
   }
 
   // 2. Anthropic Claude Direct Browser Execution
@@ -1571,7 +1548,7 @@ export async function askFoxy({
 /**
  * Intelligent Local Heuristic Response (Offline fallback when no API key is provided)
  */
-function generateOfflineFoxyResponse(prompt, trades = [], metrics = null) {
+function generateOfflineFoxyResponse(prompt, trades = [], metrics = null, portfolioId = 'portfolio-default', portfolioCapital = 0, capitalChanges = null) {
   const extracted = parseRawTradeText(prompt);
   if (extracted && extracted.length > 0) {
     const rows = extracted.map(t => `${t.symbol},${t.side},${t.qty},₹${t.price},₹${t.sl || '-'}`).join(' | ');
@@ -1594,8 +1571,32 @@ Click below to import directly into your FoxTrade Journal:
 [IMPORT_READY: ${JSON.stringify(extracted)}]`;
   }
 
-  const diagnostics = calculateTradeDiagnostics(trades);
   const lower = prompt.toLowerCase();
+
+  // Dynamic Fund Management Intent
+  if (lower.includes('fund') || lower.includes('capital breakdown') || lower.includes('deposit') || lower.includes('withdraw') || lower.includes('cagr') || lower.includes('starting capital') || lower.includes('ending capital')) {
+    const yrMatch = prompt.match(/\b(20\d\d)\b/);
+    const targetYr = yrMatch ? yrMatch[1] : String(new Date().getFullYear());
+    const capChanges = capitalChanges || loadCapitalChangesFromStorage(portfolioId, targetYr);
+    const fundSummary = calculateYearlyFundSummary(trades, capChanges, targetYr);
+    return formatFundManagementForFoxy(fundSummary);
+  }
+
+  // Dynamic Indian Tax Analytics & Audit Intent
+  if (lower.includes('tax') || lower.includes('stcg') || lower.includes('ltcg') || lower.includes('turnover') || lower.includes('audit') || lower.includes('statutory') || lower.includes('charges') || lower.includes('brokerage') || lower.includes('stt')) {
+    const yrMatch = prompt.match(/\b(20\d\d)\b/);
+    const targetYr = yrMatch ? yrMatch[1] : String(new Date().getFullYear());
+    const periodMode = (lower.includes('fy') || lower.includes('financial')) ? 'fy' : 'calendar';
+    const breakdown = calculateTaxMonthlyBreakdown(trades, {
+      selectedYear: targetYr,
+      periodMode,
+      portfolioValue: portfolioCapital || metrics?.portfolioCapital || 0
+    });
+    const classification = calculateIndianTaxClassification(trades, { selectedYear: targetYr });
+    return formatTaxAnalyticsForFoxy(breakdown, classification);
+  }
+
+  const diagnostics = calculateTradeDiagnostics(trades);
 
   let advice = '';
   if (lower.includes('leak') || lower.includes('losing') || lower.includes('why')) {

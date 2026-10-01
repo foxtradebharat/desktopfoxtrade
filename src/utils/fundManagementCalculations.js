@@ -305,3 +305,142 @@ export function getActivePortfolioCapital(trades = [], capitalChanges = {}, sele
 
   return 0;
 }
+
+/**
+ * Calculates yearly fund summary with starting, ending, deposits, withdrawals, and CAGR
+ */
+export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, selectedYear = '2026') {
+  const months = calculateMonthlyPerformance(trades, capitalChanges, selectedYear);
+  const activeMonths = months.filter(m => m.trades > 0 || m.added > 0 || m.withdrawn > 0);
+  
+  const totalAdded = months.reduce((acc, m) => acc + m.added, 0);
+  const totalWithdrawn = months.reduce((acc, m) => acc + m.withdrawn, 0);
+  const netCapitalChange = totalAdded - totalWithdrawn;
+  const totalNetPl = months.reduce((acc, m) => acc + m.netPl, 0);
+  const totalTrades = months.reduce((acc, m) => acc + m.trades, 0);
+  
+  let startingCapital = 0;
+  for (const m of months) {
+    if (m.startingCapital > 0) {
+      startingCapital = m.startingCapital;
+      break;
+    }
+  }
+  
+  let endingCapital = startingCapital;
+  for (let i = months.length - 1; i >= 0; i--) {
+    if (months[i].finalCapital !== 0 || months[i].trades > 0 || months[i].added > 0) {
+      endingCapital = months[i].finalCapital;
+      break;
+    }
+  }
+
+  let peakCapital = 0;
+  months.forEach(m => {
+    if (m.finalCapital > peakCapital) peakCapital = m.finalCapital;
+  });
+
+  const finalMultiplier = months.slice(-1)[0]?.cumulativeMultiplier || 1.0;
+  const finalCagr = months.filter(m => m.cagr !== 0).slice(-1)[0]?.cagr || 0;
+
+  return {
+    year: String(selectedYear),
+    startingCapital: Math.round(startingCapital * 100) / 100,
+    totalAdded: Math.round(totalAdded * 100) / 100,
+    totalWithdrawn: Math.round(totalWithdrawn * 100) / 100,
+    netCapitalChange: Math.round(netCapitalChange * 100) / 100,
+    totalNetPl: Math.round(totalNetPl * 100) / 100,
+    endingCapital: Math.round(endingCapital * 100) / 100,
+    peakCapital: Math.round(peakCapital * 100) / 100,
+    totalTrades,
+    annualizedCagr: Math.round(finalCagr * 100) / 100,
+    cumulativeMultiplier: Math.round(finalMultiplier * 1000) / 1000,
+    months,
+    activeMonths
+  };
+}
+
+/**
+ * Scan trades and storage to return all active years
+ */
+export function getAvailableFundYears(trades = [], activePortfolioId = 'portfolio-default') {
+  const yearsSet = new Set();
+  const presentYear = new Date().getFullYear().toString();
+  yearsSet.add(presentYear);
+
+  if (Array.isArray(trades)) {
+    trades.forEach(t => {
+      if (!t) return;
+      const dateCandidates = [t.date, t.entryDate, t.exitDate, t.p1Date, t.e1Date];
+      dateCandidates.forEach(dStr => {
+        if (!dStr) return;
+        const parsed = parseMonthAndYear(String(dStr));
+        if (parsed?.year && parsed.year >= 2000 && parsed.year <= 2100) {
+          yearsSet.add(String(parsed.year));
+        }
+      });
+    });
+  }
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.includes('monthly_capital') || key.includes('capital_changes'))) {
+        const match = key.match(/(20\d\d)/);
+        if (match) yearsSet.add(match[1]);
+      }
+    }
+  } catch {}
+
+  return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
+}
+
+/**
+ * Formats fund management performance matrix for Foxy AI
+ */
+export function formatFundManagementForFoxy(fundSummary) {
+  const {
+    year,
+    startingCapital,
+    totalAdded,
+    totalWithdrawn,
+    netCapitalChange,
+    totalNetPl,
+    endingCapital,
+    peakCapital,
+    totalTrades,
+    annualizedCagr,
+    cumulativeMultiplier,
+    activeMonths
+  } = fundSummary;
+
+  let out = `### FUND MANAGEMENT BREAKDOWN (${year})\n`;
+  out += `[METRIC: Starting Capital | ₹${Math.round(startingCapital).toLocaleString('en-IN')} | blue]\n`;
+  out += `[METRIC: Total Deposited | +₹${Math.round(totalAdded).toLocaleString('en-IN')} | green]\n`;
+  out += `[METRIC: Total Withdrawn | -₹${Math.round(totalWithdrawn).toLocaleString('en-IN')} | orange]\n`;
+  out += `[METRIC: Ending Balance | ₹${Math.round(endingCapital).toLocaleString('en-IN')} | ${endingCapital >= startingCapital ? 'green' : 'red'}]\n\n`;
+
+  out += `#### Key Performance & Capital Metrics:\n`;
+  out += `• **Net Realized P/L for ${year}**: ${totalNetPl >= 0 ? '+' : ''}₹${Math.round(totalNetPl).toLocaleString('en-IN')}\n`;
+  out += `• **Net Capital Infusion**: ${netCapitalChange >= 0 ? '+' : ''}₹${Math.round(netCapitalChange).toLocaleString('en-IN')}\n`;
+  out += `• **Peak Portfolio Value**: ₹${Math.round(peakCapital).toLocaleString('en-IN')}\n`;
+  out += `• **Total Closed Trades**: ${totalTrades}\n`;
+  out += `• **Compounded Multiplier**: ${cumulativeMultiplier}x\n`;
+  if (annualizedCagr !== 0) {
+    out += `• **Annualized CAGR**: ${annualizedCagr}%\n`;
+  }
+  out += `\n`;
+
+  if (activeMonths && activeMonths.length > 0) {
+    const tableHeaders = 'Month,Start Cap,Added,Withdrawn,Net P/L,% Return,End Cap,Trades,Win Rate %';
+    const tableRows = activeMonths.map(m => {
+      const plSign = m.netPl >= 0 ? '▲ +' : '▼ -';
+      const pctSign = m.pctPl >= 0 ? '+' : '';
+      return `${m.month},₹${Math.round(m.startingCapital).toLocaleString('en-IN')},₹${Math.round(m.added).toLocaleString('en-IN')},₹${Math.round(m.withdrawn).toLocaleString('en-IN')},${plSign}₹${Math.round(Math.abs(m.netPl)).toLocaleString('en-IN')},${pctSign}${m.pctPl}%,₹${Math.round(m.finalCapital).toLocaleString('en-IN')},${m.trades},${Math.round(m.winPct)}%`;
+    }).join(' | ');
+    out += `[TABLE: ${tableHeaders} | ${tableRows}]\n`;
+  }
+
+  return out;
+}
+

@@ -4,6 +4,8 @@
 
 import { runQuery, executeQueryAndFormat } from '../src/services/tradeQueryEngine.js';
 import { mergeFoxyChats, mergeFoxyCommitments } from '../src/db/syncEngine.js';
+import { calculateYearlyFundSummary, formatFundManagementForFoxy } from '../src/utils/fundManagementCalculations.js';
+import { calculateTaxMonthlyBreakdown, calculateIndianTaxClassification, formatTaxAnalyticsForFoxy } from '../src/utils/taxAnalyticsCalculations.js';
 
 // --- Ground Truth Raw Dataset (50 Diverse Trades) ---
 export const RAW_TEST_TRADES = [
@@ -426,13 +428,66 @@ export const GOLDEN_TESTS = [
              merged.includes('Never average down on losers') &&
              merged.includes('Max 3 trades per day');
     }
+  },
+  {
+    id: 35,
+    name: 'Fund Management Engine: 2026 Starting Capital, Additions, Withdrawals & Ending Balance',
+    customTest: () => {
+      const capChanges = { 0: { added: 500000, withdrawn: 0 }, 8: { added: 100000, withdrawn: 50000 } };
+      const fund = calculateYearlyFundSummary(RAW_TEST_TRADES, capChanges, '2026');
+      const formatted = formatFundManagementForFoxy(fund);
+      return fund.startingCapital === 500000 &&
+             fund.totalAdded === 600000 &&
+             fund.totalWithdrawn === 50000 &&
+             fund.netCapitalChange === 550000 &&
+             fund.totalNetPl === 55150 &&
+             fund.endingCapital === 605150 &&
+             fund.totalTrades === 43 &&
+             formatted.includes('Starting Capital') &&
+             formatted.includes('Ending Balance');
+    }
+  },
+  {
+    id: 36,
+    name: 'Tax Analytics: Section 111A STCG (20%) & Section 112A LTCG (12.5%) Capital Gains Tax Parity',
+    customTest: () => {
+      const taxClass = calculateIndianTaxClassification(RAW_TEST_TRADES, { selectedYear: '2026' });
+      const stcg = taxClass.stcg;
+      const ltcg = taxClass.ltcg;
+      return stcg.section === 'Section 111A' &&
+             stcg.trades === 17 &&
+             stcg.netPnl === 32050 &&
+             stcg.taxRatePct === 20 &&
+             stcg.estimatedTax === 6410 &&
+             ltcg.section === 'Section 112A' &&
+             ltcg.taxableAmount === 0 &&
+             ltcg.estimatedTax === 0 &&
+             taxClass.totalEstimatedTaxOnCapitalGains === 6410;
+    }
+  },
+  {
+    id: 37,
+    name: 'Tax Audit: Section 44AB F&O, Intraday, and Delivery Turnover Assessment',
+    customTest: () => {
+      const taxClass = calculateIndianTaxClassification(RAW_TEST_TRADES, { selectedYear: '2026' });
+      const audit = taxClass.turnoverAudit;
+      const breakdown = calculateTaxMonthlyBreakdown(RAW_TEST_TRADES, { selectedYear: '2026', portfolioValue: 500000 });
+      const formatted = formatTaxAnalyticsForFoxy(breakdown, taxClass);
+      return audit.fnoTurnover === 813400 &&
+             audit.intradayTurnover === 21950 &&
+             audit.deliveryTurnover === 2321050 &&
+             audit.totalCombinedTurnover === 3156400 &&
+             audit.isAuditMandatory44AB === false &&
+             formatted.includes('TAX ANALYTICS & STATUTORY AUDIT') &&
+             formatted.includes('Section 111A');
+    }
   }
 ];
 
 // --- Test Runner Function ---
 export function runGoldenTests() {
   console.log('='.repeat(80));
-  console.log('   FOXTRADE FOXY AI — GOLDEN TEST SUITE (34 DETERMINISTIC TESTS)');
+  console.log('   FOXTRADE FOXY AI — GOLDEN TEST SUITE (37 DETERMINISTIC TESTS)');
   console.log('='.repeat(80));
 
   let passed = 0;

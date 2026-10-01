@@ -4,7 +4,8 @@ import {
   Trash2, Settings, ArrowLeft, Mic, ShieldAlert, Target, 
   TrendingDown, TrendingUp, AlertTriangle, Check, Copy, Zap, ShieldCheck,
   CalendarCheck, BookmarkCheck, Award, Tag, FileSpreadsheet,
-  Pin, MoreHorizontal, Pencil, SquarePen, Search, MessageSquare, Square
+  Pin, MoreHorizontal, Pencil, SquarePen, Search, MessageSquare, Square,
+  Wallet, Calculator
 } from 'lucide-react';
 import FoxTradeLogo from '../FoxTradeLogo';
 import FoxySettingsModal from './FoxySettingsModal';
@@ -21,6 +22,8 @@ import {
 } from '../../services/foxyAiService';
 
 const QUICK_STARTERS = [
+  { icon: Wallet, label: '2026 funds breakdown & CAGR', prompt: 'Give me my full 2026 fund management breakdown, monthly deposits, withdrawals, ending balance, and CAGR.' },
+  { icon: Calculator, label: 'Tax audit & capital gains', prompt: 'Calculate my Indian tax analytics: Section 111A STCG, Section 112A LTCG, F&O/intraday income, Section 44AB turnover, and statutory charges.' },
   { icon: TrendingDown, label: 'Why am I losing money this month?', prompt: 'Analyze my trades and diagnose my main performance leaks and reasons for losses.' },
   { icon: ShieldAlert, label: 'Audit open risk & stop losses', prompt: 'Audit all my active open trades. Which positions have no stop loss, and what is my total open risk?' },
   { icon: Target, label: 'What is my most profitable setup?', prompt: 'Break down my performance by setup and strategy. Which setup has my highest expectancy and win rate?' },
@@ -115,7 +118,16 @@ function renderFormattedContent(text) {
   });
 }
 
-export default function FoxyAiPage({ trades = [], metrics = null, user, onBackToJournal, activePortfolioId = 'portfolio-default', portfolioCapital = 0 }) {
+export default function FoxyAiPage({ 
+  trades = [], 
+  allTrades = [],
+  metrics = null, 
+  user, 
+  onBackToJournal, 
+  activePortfolioId = 'portfolio-default', 
+  portfolioCapital = 0,
+  capitalChanges = null
+}) {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -345,13 +357,15 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
     }
 
     try {
+      const effectiveTrades = (allTrades && allTrades.length > 0) ? allTrades : trades;
       const aiResponse = await askFoxy({
         prompt: text,
         conversationHistory: [...messages, userMessage],
-        trades: trades,
+        trades: effectiveTrades,
         metrics: metrics,
         portfolioId: activePortfolioId,
         portfolioCapital: portfolioCapital,
+        capitalChanges: capitalChanges,
         signal: abortController.signal,
         onChunk: (chunk, accumulatedText) => {
           setMessages(prev =>
