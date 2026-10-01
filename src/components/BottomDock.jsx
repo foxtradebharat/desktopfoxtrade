@@ -8,6 +8,7 @@ import AccountSettingsPopover from './AccountSettingsPopover';
 import RestoreBackupModal from './RestoreBackupModal';
 import FoxTradeLogo from './FoxTradeLogo';
 import PlaybookIcon from './Playbook/PlaybookIcon';
+import FoxyAiIcon from './FoxyAiIcon';
 import { subscribeToSyncStatus, subscribeToSyncError, setSyncError } from '../db/index.js';
 import { saveTradesToDrive } from '../services/driveService.js';
 import { getValidAccessToken } from '../db/tokenManager.js';
@@ -85,6 +86,7 @@ export default function BottomDock({
     { id: 'fund-management', label: 'Fund Management', icon: Wallet },
     { id: 'deep-analytics', label: 'Deep Analytics', icon: BrainCircuit },
     { id: 'notes', label: 'Notes', icon: Pencil },
+    { id: 'foxy-ai', label: 'Foxy Ai', icon: FoxyAiIcon },
   ];
 
   return (
@@ -165,7 +167,7 @@ export default function BottomDock({
                     }
                   }}
                 >
-                  <Icon size={tab.id === 'playbook' ? 15 : 14} strokeWidth={2} />
+                  <Icon size={tab.id === 'playbook' || tab.id === 'foxy-ai' ? 15 : 14} strokeWidth={2} />
                   <span>{tab.label}</span>
                 </button>
               );
