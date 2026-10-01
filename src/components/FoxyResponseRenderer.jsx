@@ -1,8 +1,17 @@
 import React, { useState } from 'react';
 import { BarChart3, Sparkles } from 'lucide-react';
 
-export default function FoxyResponseRenderer({ content, onImportTrades }) {
-  if (!content) return null;
+export default function FoxyResponseRenderer({ content, onImportTrades, isStreaming = false }) {
+  if (!content) {
+    if (isStreaming) {
+      return (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 0' }}>
+          <span style={styles.streamingCursor} />
+        </div>
+      );
+    }
+    return null;
+  }
 
   const [importedMap, setImportedMap] = useState({});
   const [importingMap, setImportingMap] = useState({});
@@ -657,7 +666,14 @@ export default function FoxyResponseRenderer({ content, onImportTrades }) {
     return elements;
   };
 
-  return <div style={styles.container}>{renderLines()}</div>;
+  return (
+    <div style={styles.container}>
+      {renderLines()}
+      {isStreaming && (
+        <span style={styles.streamingCursor} />
+      )}
+    </div>
+  );
 }
 
 const styles = {
@@ -1016,5 +1032,15 @@ const styles = {
     fontWeight: 700,
     boxShadow: '0 1px 3px rgba(22,163,74,0.3)',
     transition: 'all 0.15s ease'
+  },
+  streamingCursor: {
+    display: 'inline-block',
+    width: '7px',
+    height: '14px',
+    backgroundColor: '#2563eb',
+    verticalAlign: '-1px',
+    marginLeft: '4px',
+    borderRadius: '1px',
+    animation: 'foxyBlink 0.8s ease-in-out infinite'
   }
 };

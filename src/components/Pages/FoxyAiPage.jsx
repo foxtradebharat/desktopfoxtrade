@@ -4,7 +4,7 @@ import {
   Trash2, Settings, ArrowLeft, Mic, ShieldAlert, Target, 
   TrendingDown, TrendingUp, AlertTriangle, Check, Copy, Zap, ShieldCheck,
   CalendarCheck, BookmarkCheck, Award, Tag, FileSpreadsheet,
-  Pin, MoreHorizontal, Pencil, SquarePen, Search, MessageSquare
+  Pin, MoreHorizontal, Pencil, SquarePen, Search, MessageSquare, Square
 } from 'lucide-react';
 import FoxTradeLogo from '../FoxTradeLogo';
 import FoxySettingsModal from './FoxySettingsModal';
@@ -128,11 +128,19 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [savedJournalIndex, setSavedJournalIndex] = useState(null);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const abortControllerRef = useRef(null);
+
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  };
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const plusMenuRef = useRef(null);
   const plusBtnRef = useRef(null);
@@ -300,7 +308,7 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
 
   const handleSendMessage = async (textToSend) => {
     const text = (textToSend || inputValue).trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isStreaming) return;
 
     setInputValue('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -312,9 +320,22 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
       timestamp: Date.now()
     };
 
-    const newMessages = [...messages, userMessage];
+    const assistantMsgId = `msg_${Date.now() + 1}`;
+    const initialAssistantMessage = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      isStreaming: true,
+      timestamp: Date.now()
+    };
+
+    const newMessages = [...messages, userMessage, initialAssistantMessage];
     setMessages(newMessages);
     setIsLoading(true);
+    setIsStreaming(true);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     // Update chat title if first message
     const currentChat = chats.find(c => c.id === activeChatId);
@@ -326,46 +347,80 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
     try {
       const aiResponse = await askFoxy({
         prompt: text,
-        conversationHistory: newMessages,
+        conversationHistory: [...messages, userMessage],
         trades: trades,
         metrics: metrics,
         portfolioId: activePortfolioId,
-        portfolioCapital: portfolioCapital
+        portfolioCapital: portfolioCapital,
+        signal: abortController.signal,
+        onChunk: (chunk, accumulatedText) => {
+          setMessages(prev =>
+            prev.map(msg =>
+              msg.id === assistantMsgId
+                ? { ...msg, content: accumulatedText, isStreaming: true }
+                : msg
+            )
+          );
+        }
       });
 
+      setMessages(prev => {
+        const finalized = prev.map(msg =>
+          msg.id === assistantMsgId
+            ? { ...msg, content: aiResponse || msg.content, isStreaming: false }
+            : msg
+        );
 
-      const assistantMessage = {
-        id: `msg_${Date.now() + 1}`,
-        role: 'assistant',
-        content: aiResponse,
-        timestamp: Date.now()
-      };
-
-      const finalMessages = [...newMessages, assistantMessage];
-      setMessages(finalMessages);
-
-      // Save to chat history
-      setChats(prev => {
-        const updated = prev.map(c => {
-          if (c.id === activeChatId) {
-            return { ...c, title: updatedTitle, messages: finalMessages, updatedAt: Date.now() };
-          }
-          return c;
+        // Save to chat history
+        setChats(chatPrev => {
+          const updated = chatPrev.map(c => {
+            if (c.id === activeChatId) {
+              return { ...c, title: updatedTitle, messages: finalized, updatedAt: Date.now() };
+            }
+            return c;
+          });
+          saveFoxyChatHistory(updated);
+          return updated;
         });
-        saveFoxyChatHistory(updated);
-        return updated;
+
+        return finalized;
       });
 
     } catch (err) {
-      const errorMessage = {
-        id: `msg_${Date.now() + 1}`,
-        role: 'assistant',
-        content: `⚠️ **Error connecting to ${foxyConfig.provider.toUpperCase()}**: ${err.message}\n\nPlease verify your API key in **Configure LLM** in the top bar.`,
-        timestamp: Date.now()
-      };
-      setMessages([...newMessages, errorMessage]);
+      if (abortController.signal.aborted) {
+        // User stopped generation - preserve received stream content
+        setMessages(prev => {
+          const preserved = prev.map(msg =>
+            msg.id === assistantMsgId
+              ? { ...msg, isStreaming: false, content: msg.content || '*(Generation stopped)*' }
+              : msg
+          );
+          setChats(chatPrev => {
+            const updated = chatPrev.map(c => {
+              if (c.id === activeChatId) {
+                return { ...c, title: updatedTitle, messages: preserved, updatedAt: Date.now() };
+              }
+              return c;
+            });
+            saveFoxyChatHistory(updated);
+            return updated;
+          });
+          return preserved;
+        });
+      } else {
+        const errorMessage = {
+          id: assistantMsgId,
+          role: 'assistant',
+          content: `⚠️ **Error connecting to ${foxyConfig.provider.toUpperCase()}**: ${err.message}\n\nPlease verify your API key in **Configure LLM** in the top bar.`,
+          timestamp: Date.now(),
+          isStreaming: false
+        };
+        setMessages(prev => prev.map(m => m.id === assistantMsgId ? errorMessage : m));
+      }
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -848,51 +903,85 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
         }}
       />
 
-      {/* Right — Send button */}
-      <button
-        type="button"
-        onClick={() => handleSendMessage()}
-        disabled={!inputValue.trim() || isLoading}
-        aria-label="Send message"
-        style={{
-          width: '34px',
-          height: '34px',
-          borderRadius: '50%',
-          border: 'none',
-          background: inputValue.trim() && !isLoading
-            ? '#2563eb'
-            : '#f3f4f6',
-          color: inputValue.trim() && !isLoading ? '#ffffff' : '#9ca3af',
-          cursor: inputValue.trim() && !isLoading ? 'pointer' : 'default',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-          flexShrink: 0,
-          boxShadow: inputValue.trim() && !isLoading
-            ? '0 2px 10px rgba(37,99,235,0.38)'
-            : 'none',
-        }}
-        onMouseEnter={(e) => {
-          if (inputValue.trim() && !isLoading) {
-            e.currentTarget.style.background = '#1d4ed8';
-            e.currentTarget.style.transform = 'scale(1.05)';
-            e.currentTarget.style.boxShadow = '0 4px 14px rgba(37,99,235,0.48)';
+      {/* Right — Send or Stop button */}
+      {isStreaming ? (
+        <button
+          type="button"
+          onClick={handleStopGeneration}
+          aria-label="Stop generating"
+          title="Stop generating"
+          style={{
+            width: '34px',
+            height: '34px',
+            borderRadius: '50%',
+            border: 'none',
+            background: '#111827',
+            color: '#ffffff',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s ease',
+            flexShrink: 0,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.18)'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#dc2626';
+            e.currentTarget.style.transform = 'scale(1.06)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = '#111827';
+            e.currentTarget.style.transform = 'scale(1)';
+          }}
+        >
+          <Square size={12} fill="#ffffff" stroke="none" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => handleSendMessage()}
+          disabled={!inputValue.trim() || isLoading}
+          aria-label="Send message"
+          style={{
+            width: '34px',
+            height: '34px',
+            borderRadius: '50%',
+            border: 'none',
+            background: inputValue.trim() && !isLoading
+              ? '#2563eb'
+              : '#f3f4f6',
+            color: inputValue.trim() && !isLoading ? '#ffffff' : '#9ca3af',
+            cursor: inputValue.trim() && !isLoading ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+            flexShrink: 0,
+            boxShadow: inputValue.trim() && !isLoading
+              ? '0 2px 10px rgba(37,99,235,0.38)'
+              : 'none',
+          }}
+          onMouseEnter={(e) => {
+            if (inputValue.trim() && !isLoading) {
+              e.currentTarget.style.background = '#1d4ed8';
+              e.currentTarget.style.transform = 'scale(1.05)';
+              e.currentTarget.style.boxShadow = '0 4px 14px rgba(37,99,235,0.48)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+            if (inputValue.trim() && !isLoading) {
+              e.currentTarget.style.background = '#2563eb';
+              e.currentTarget.style.boxShadow = '0 2px 10px rgba(37,99,235,0.38)';
+            }
+          }}
+        >
+          {isLoading
+            ? <span style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+            : <Send size={14} />
           }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          if (inputValue.trim() && !isLoading) {
-            e.currentTarget.style.background = '#2563eb';
-            e.currentTarget.style.boxShadow = '0 2px 10px rgba(37,99,235,0.38)';
-          }
-        }}
-      >
-        {isLoading
-          ? <span style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
-          : <Send size={14} />
-        }
-      </button>
+        </button>
+      )}
     </div>
   );
 
@@ -901,6 +990,7 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
     <style>{`
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes foxyPulse { 0%,100% { opacity:0.4; transform:scale(0.85); } 50% { opacity:1; transform:scale(1); } }
+      @keyframes foxyBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
       .foxy-textarea::placeholder { color: #9ca3af; }
     `}</style>
     <div style={{
@@ -1859,65 +1949,79 @@ export default function FoxyAiPage({ trades = [], metrics = null, user, onBackTo
                       position: 'relative'
                     }}>
                       <div>
-                        <FoxyResponseRenderer content={msg.content} onImportTrades={handleImportTrades} />
+                        {!msg.content && msg.isStreaming ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0' }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite' }} />
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.22s' }} />
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.44s' }} />
+                          </div>
+                        ) : (
+                          <FoxyResponseRenderer
+                            content={msg.content}
+                            onImportTrades={handleImportTrades}
+                            isStreaming={msg.isStreaming}
+                          />
+                        )}
                       </div>
 
-                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                          onClick={() => copyToClipboard(msg.content, idx)}
-                          title="Copy response"
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#9ca3af',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            borderRadius: '4px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            fontSize: '11px'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.color = '#111827'}
-                          onMouseLeave={(e) => e.currentTarget.style.color = '#9ca3af'}
-                        >
-                          {copiedIndex === idx ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                          <span>{copiedIndex === idx ? 'Copied' : 'Copy'}</span>
-                        </button>
+                      {!msg.isStreaming && msg.content && (
+                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button
+                            onClick={() => copyToClipboard(msg.content, idx)}
+                            title="Copy response"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#9ca3af',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              borderRadius: '4px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '11px'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#111827'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#9ca3af'}
+                          >
+                            {copiedIndex === idx ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                            <span>{copiedIndex === idx ? 'Copied' : 'Copy'}</span>
+                          </button>
 
-                        <button
-                          onClick={() => handleSaveToJournal(msg.content, idx)}
-                          title="Save this analysis as a journal note"
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: savedJournalIndex === idx ? '#10b981' : '#9ca3af',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            borderRadius: '4px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            fontSize: '11px'
-                          }}
-                          onMouseEnter={(e) => {
-                            if (savedJournalIndex !== idx) e.currentTarget.style.color = '#111827';
-                          }}
-                          onMouseLeave={(e) => {
-                            if (savedJournalIndex !== idx) e.currentTarget.style.color = '#9ca3af';
-                          }}
-                        >
-                          {savedJournalIndex === idx ? <BookmarkCheck size={12} color="#10b981" /> : <CalendarCheck size={12} />}
-                          <span>{savedJournalIndex === idx ? 'Saved to Notes' : 'Save to Journal'}</span>
-                        </button>
-                      </div>
+                          <button
+                            onClick={() => handleSaveToJournal(msg.content, idx)}
+                            title="Save this analysis as a journal note"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: savedJournalIndex === idx ? '#10b981' : '#9ca3af',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              borderRadius: '4px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '11px'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (savedJournalIndex !== idx) e.currentTarget.style.color = '#111827';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (savedJournalIndex !== idx) e.currentTarget.style.color = '#9ca3af';
+                            }}
+                          >
+                            {savedJournalIndex === idx ? <BookmarkCheck size={12} color="#10b981" /> : <CalendarCheck size={12} />}
+                            <span>{savedJournalIndex === idx ? 'Saved to Notes' : 'Save to Journal'}</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
 
-              {/* Typing / Loading indicator */}
-              {isLoading && (
+              {/* Typing / Loading indicator (fallback if no streaming message in progress) */}
+              {isLoading && !isStreaming && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', alignSelf: 'flex-start' }}>
                   <div style={{
                     width: '28px',

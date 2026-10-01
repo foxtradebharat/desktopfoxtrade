@@ -174,7 +174,7 @@ export default function App() {
 
     const timeout = setTimeout(() => {
       setAuthChecking(false);
-    }, 150);
+    }, 2500);
 
     return () => {
       unsubscribe();

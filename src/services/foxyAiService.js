@@ -1131,7 +1131,9 @@ export async function askFoxy({
   trades = [],
   metrics = null,
   portfolioId = 'portfolio-default',
-  portfolioCapital = 0
+  portfolioCapital = 0,
+  onChunk = null,
+  signal = null
 }) {
   const { provider, model, apiKey } = await getFoxyConfig();
   const journalContext = buildFoxyJournalContext(trades, portfolioId, metrics, portfolioCapital);
@@ -1186,7 +1188,9 @@ export async function askFoxy({
 
   // If no API key configured, use intelligent local heuristic fallback
   if (!apiKey || !apiKey.trim()) {
-    return generateOfflineFoxyResponse(prompt, trades, metrics);
+    const offlineText = generateOfflineFoxyResponse(prompt, trades, metrics);
+    if (onChunk) onChunk(offlineText, offlineText);
+    return verifyFoxyResponse(offlineText, { metrics, trades });
   }
 
   const key = apiKey.trim();
@@ -1230,12 +1234,14 @@ export async function askFoxy({
 
     const candidateModels = Array.from(new Set([
       model,
-      'gemini-3-flash-preview',
-      'gemini-3.8-flash',
-      'gemini-flash-latest',
-      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite',
       'gemini-3.1-flash-lite',
-      'gemini-flash-lite-latest'
+      'gemini-flash-lite-latest',
+      'gemini-3.6-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.5-flash',
+      'gemini-3.8-flash',
+      'gemini-flash-latest'
     ])).filter(m => m && !m.includes('pro') && !m.includes('1.5') && !m.includes('2.0') && !m.includes('2.5'));
 
     const systemInstruction = { parts: [{ text: fullSystemPrompt }] };
@@ -1258,12 +1264,26 @@ export async function askFoxy({
 
         // Function calling loop (max 3 rounds)
         for (let round = 0; round < 3; round++) {
+          if (signal?.aborted) break;
+
           const controller = new AbortController();
-          const timeoutTimer = setTimeout(() => controller.abort(), 12000); // 12s timeout protection
+          const timeoutTimer = setTimeout(() => controller.abort(), onChunk ? 45000 : 15000);
+          const onUserAbort = () => controller.abort();
+          if (signal) {
+            if (signal.aborted) {
+              clearTimeout(timeoutTimer);
+              return '*(Generation stopped)*';
+            }
+            signal.addEventListener('abort', onUserAbort, { once: true });
+          }
+
+          const endpoint = onChunk
+            ? `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:streamGenerateContent?alt=sse`
+            : `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent`;
 
           let res;
           try {
-            res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent`, {
+            res = await fetch(endpoint, {
               method: 'POST',
               headers: { 
                 'Content-Type': 'application/json',
@@ -1276,8 +1296,14 @@ export async function askFoxy({
                 tools: [TRADE_QUERY_TOOL]
               })
             });
+          } catch (fetchErr) {
+            if (signal?.aborted) {
+              return '*(Generation stopped)*';
+            }
+            throw fetchErr;
           } finally {
             clearTimeout(timeoutTimer);
+            if (signal) signal.removeEventListener('abort', onUserAbort);
           }
 
           if (!res.ok) {
@@ -1290,50 +1316,163 @@ export async function askFoxy({
             throw lastError;
           }
 
-          const data = await res.json();
-          const candidate = data?.candidates?.[0];
-          const parts = candidate?.content?.parts || [];
+          if (onChunk) {
+            // --- SSE Stream Processing ---
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let detectedFuncCall = null;
+            let lastCandidateContent = null;
+            let roundText = '';
 
-          // Check if model wants to call a function
-          const funcCall = parts.find(p => p.functionCall)?.functionCall;
-          if (funcCall && funcCall.name === 'run_trade_query') {
-            // Execute the query
-            const querySpec = funcCall.args || {};
-            let queryResult;
             try {
-              queryResult = executeQueryAndFormat(trades, {
-                filters: querySpec.filters || [],
-                groupBy: querySpec.groupBy || null,
-                aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
-                returnRows: !!querySpec.returnRows,
-                orderBy: querySpec.orderBy,
-                limit: Math.min(querySpec.limit || 25, 50)
-              });
+              while (true) {
+                if (signal?.aborted) {
+                  try { await reader.cancel(); } catch (e) {}
+                  return roundText || '*(Generation stopped)*';
+                }
 
-              // Context & token budget guard: truncate oversized markdown payloads
-              if (typeof queryResult === 'string' && queryResult.length > 3500) {
-                queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const rawLine of lines) {
+                  const line = rawLine.trim();
+                  if (!line || !line.startsWith('data:')) continue;
+                  const jsonStr = line.replace(/^data:\s*/, '').trim();
+                  if (!jsonStr) continue;
+
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const candidate = parsed?.candidates?.[0];
+                    if (!candidate) continue;
+
+                    if (candidate.content) {
+                      lastCandidateContent = candidate.content;
+                    }
+                    const parts = candidate.content?.parts || [];
+
+                    for (const part of parts) {
+                      if (part.functionCall) {
+                        detectedFuncCall = part.functionCall;
+                      }
+                      if (part.text) {
+                        roundText += part.text;
+                        onChunk(part.text, roundText);
+                      }
+                    }
+                  } catch (pErr) {
+                    // Ignore partial chunk parse error
+                  }
+                }
               }
-            } catch(qErr) {
-              queryResult = `Query error: ${qErr.message}`;
+
+              // Flush residual buffer
+              if (buffer.trim().startsWith('data:')) {
+                try {
+                  const jsonStr = buffer.trim().replace(/^data:\s*/, '').trim();
+                  const parsed = JSON.parse(jsonStr);
+                  const candidate = parsed?.candidates?.[0];
+                  if (candidate?.content) lastCandidateContent = candidate.content;
+                  const parts = candidate?.content?.parts || [];
+                  for (const part of parts) {
+                    if (part.functionCall) detectedFuncCall = part.functionCall;
+                    if (part.text) {
+                      roundText += part.text;
+                      onChunk(part.text, roundText);
+                    }
+                  }
+                } catch (e) {}
+              }
+            } finally {
+              try { reader.releaseLock(); } catch (e) {}
             }
 
-            // Add model's tool call & function execution result to loop history
-            loopContents.push(candidate.content);
-            loopContents.push({
-              role: 'user',
-              parts: [{ functionResponse: { name: 'run_trade_query', response: { result: queryResult } } }]
-            });
-            continue; // next round to get final answer
-          }
+            // Check if model called a function
+            if (detectedFuncCall && detectedFuncCall.name === 'run_trade_query') {
+              const querySpec = detectedFuncCall.args || {};
+              let queryResult;
+              try {
+                queryResult = executeQueryAndFormat(trades, {
+                  filters: querySpec.filters || [],
+                  groupBy: querySpec.groupBy || null,
+                  aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
+                  returnRows: !!querySpec.returnRows,
+                  orderBy: querySpec.orderBy,
+                  limit: Math.min(querySpec.limit || 25, 50)
+                });
 
-          // Got text response
-          const text = parts.find(p => p.text)?.text;
-          if (text) { finalText = text; break; }
+                if (typeof queryResult === 'string' && queryResult.length > 3500) {
+                  queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
+                }
+              } catch(qErr) {
+                queryResult = `Query error: ${qErr.message}`;
+              }
+
+              loopContents.push(lastCandidateContent || { role: 'model', parts: [{ functionCall: detectedFuncCall }] });
+              loopContents.push({
+                role: 'user',
+                parts: [{ functionResponse: { name: 'run_trade_query', response: { result: queryResult } } }]
+              });
+              continue; // next round to get final answer
+            }
+
+            if (roundText) {
+              finalText = roundText;
+              break;
+            }
+
+          } else {
+            // --- Standard Non-Streaming JSON Response ---
+            const data = await res.json();
+            const candidate = data?.candidates?.[0];
+            const parts = candidate?.content?.parts || [];
+
+            // Check if model wants to call a function
+            const funcCall = parts.find(p => p.functionCall)?.functionCall;
+            if (funcCall && funcCall.name === 'run_trade_query') {
+              const querySpec = funcCall.args || {};
+              let queryResult;
+              try {
+                queryResult = executeQueryAndFormat(trades, {
+                  filters: querySpec.filters || [],
+                  groupBy: querySpec.groupBy || null,
+                  aggregations: querySpec.aggregations || ['count','winRate','totalPnl'],
+                  returnRows: !!querySpec.returnRows,
+                  orderBy: querySpec.orderBy,
+                  limit: Math.min(querySpec.limit || 25, 50)
+                });
+
+                if (typeof queryResult === 'string' && queryResult.length > 3500) {
+                  queryResult = queryResult.slice(0, 3500) + '\n... [Remaining rows truncated for token efficiency]';
+                }
+              } catch(qErr) {
+                queryResult = `Query error: ${qErr.message}`;
+              }
+
+              loopContents.push(candidate.content);
+              loopContents.push({
+                role: 'user',
+                parts: [{ functionResponse: { name: 'run_trade_query', response: { result: queryResult } } }]
+              });
+              continue; // next round to get final answer
+            }
+
+            // Got text response
+            const text = parts.find(p => p.text)?.text;
+            if (text) { finalText = text; break; }
+          }
         }
 
         if (finalText) {
-          return verifyFoxyResponse(finalText, { metrics, trades });
+          const verified = verifyFoxyResponse(finalText, { metrics, trades });
+          if (onChunk && verified !== finalText) {
+            onChunk('', verified);
+          }
+          return verified;
         }
       } catch (err) {
         lastError = err;
