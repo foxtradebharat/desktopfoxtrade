@@ -15,8 +15,11 @@ export function calculateTradeDiagnostics(trades = []) {
   if (!trades || trades.length === 0) {
     return {
       totalTrades: 0,
+      closedTradesCount: 0,
+      openPositions: 0,
       winRatePct: 0,
       totalPnL: 0,
+      unrealizedPnL: 0,
       avgWin: 0,
       avgLoss: 0,
       winLossRatio: 0,
@@ -28,16 +31,26 @@ export function calculateTradeDiagnostics(trades = []) {
     };
   }
 
+  // Active open positions strictly require openQty > 0
+  const openTrades = trades.filter(t => (t.status === 'Open' || t.status === 'Partial') && (Number(t.openQty || 0) > 0));
   const closedTrades = trades.filter(t => t.status === 'Closed');
+  
   let totalPnL = 0;
   let winsCount = 0;
   let lossesCount = 0;
   let totalWinPnL = 0;
   let totalLossPnL = 0;
 
+  // Realized Gross P/L includes closed and partial trades (consistent with FoxTrade dashboard)
+  trades.forEach(t => {
+    if (t.status === 'Closed' || t.status === 'Partial') {
+      const pnl = Number(t.realizedPnL ?? t.pnl ?? t.pl ?? 0);
+      totalPnL += pnl;
+    }
+  });
+
   closedTrades.forEach(t => {
-    const pnl = Number(t.realizedPnL || t.pnl || 0);
-    totalPnL += pnl;
+    const pnl = Number(t.realizedPnL ?? t.pnl ?? t.pl ?? 0);
     if (pnl > 0) {
       winsCount++;
       totalWinPnL += pnl;
@@ -47,19 +60,23 @@ export function calculateTradeDiagnostics(trades = []) {
     }
   });
 
-  const totalTrades = closedTrades.length;
+  const totalTrades = trades.length;
   const decidedTradesCount = winsCount + lossesCount;
-  const winRatePct = decidedTradesCount > 0 ? (winsCount / decidedTradesCount) * 100 : (totalTrades > 0 ? (winsCount / totalTrades) * 100 : 0);
+  const winRatePct = decidedTradesCount > 0 ? (winsCount / decidedTradesCount) * 100 : (closedTrades.length > 0 ? (winsCount / closedTrades.length) * 100 : 0);
   const avgWin = winsCount > 0 ? totalWinPnL / winsCount : 0;
   const avgLoss = lossesCount > 0 ? totalLossPnL / lossesCount : 0;
   const winLossRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 99 : 0;
+  const unrealizedPnL = openTrades.reduce((sum, t) => sum + (Number(t.unrealized || 0)), 0);
 
   return {
     totalTrades,
+    closedTradesCount: closedTrades.length,
+    openPositions: openTrades.length,
     winsCount,
     lossesCount,
     winRatePct: Math.round(winRatePct * 10) / 10,
-    totalPnL: Math.round(totalPnL),
+    totalPnL: Math.round(totalPnL * 100) / 100,
+    unrealizedPnL: Math.round(unrealizedPnL * 100) / 100,
     avgWin: Math.round(avgWin),
     avgLoss: Math.round(avgLoss),
     winLossRatio: Math.round(winLossRatio * 100) / 100,

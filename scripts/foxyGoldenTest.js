@@ -3,6 +3,7 @@
 // 32+ automated test questions with independently computed ground-truth
 
 import { runQuery, executeQueryAndFormat } from '../src/services/tradeQueryEngine.js';
+import { mergeFoxyChats, mergeFoxyCommitments } from '../src/db/syncEngine.js';
 
 // --- Ground Truth Raw Dataset (50 Diverse Trades) ---
 export const RAW_TEST_TRADES = [
@@ -394,13 +395,44 @@ export const GOLDEN_TESTS = [
       const md = executeQueryAndFormat(RAW_TEST_TRADES, { groupBy: 'setup', aggregations: ['count', 'winRate', 'totalPnl'] });
       return typeof md === 'string' && md.includes('| group | count |') && md.includes('Breakout');
     }
+  },
+  {
+    id: 33,
+    name: 'Google Drive Sync: mergeFoxyChats preserves multi-device conversations without loss',
+    customTest: () => {
+      const deviceAChats = [
+        { id: 'chat_1', title: 'Why am I losing?', updatedAt: 1000, messages: [{ role: 'user', content: 'hello' }] },
+        { id: 'chat_2', title: 'Breakout setup review', updatedAt: 2000, messages: [{ role: 'user', content: 'test' }] }
+      ];
+      const deviceBChats = [
+        { id: 'chat_2', title: 'Breakout setup review (updated)', updatedAt: 2500, messages: [{ role: 'user', content: 'test' }, { role: 'model', content: 'reply' }] },
+        { id: 'chat_3', title: 'VIX analysis', updatedAt: 3000, messages: [{ role: 'user', content: 'check vix' }] }
+      ];
+      const merged = mergeFoxyChats(deviceAChats, deviceBChats);
+      return merged.length === 3 &&
+             merged.find(c => c.id === 'chat_2')?.messages.length === 2 &&
+             merged[0].id === 'chat_3'; // newest first
+    }
+  },
+  {
+    id: 34,
+    name: 'Google Drive Sync: mergeFoxyCommitments deduplicates coach rules across devices',
+    customTest: () => {
+      const rulesDeviceA = ['Stop loss max 1.5%', 'Never average down on losers'];
+      const rulesDeviceB = ['Never average down on losers', 'Max 3 trades per day'];
+      const merged = mergeFoxyCommitments(rulesDeviceA, rulesDeviceB);
+      return merged.length === 3 &&
+             merged.includes('Stop loss max 1.5%') &&
+             merged.includes('Never average down on losers') &&
+             merged.includes('Max 3 trades per day');
+    }
   }
 ];
 
 // --- Test Runner Function ---
 export function runGoldenTests() {
   console.log('='.repeat(80));
-  console.log('   FOXTRADE FOXY AI — GOLDEN TEST SUITE (32 DETERMINISTIC TESTS)');
+  console.log('   FOXTRADE FOXY AI — GOLDEN TEST SUITE (34 DETERMINISTIC TESTS)');
   console.log('='.repeat(80));
 
   let passed = 0;

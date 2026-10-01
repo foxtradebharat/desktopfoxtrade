@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, ChevronDown, Columns, Eye, EyeOff, Image, Plus, Upload, Download, Cloud, BarChart2, Briefcase, LayoutGrid, Zap, Radio } from 'lucide-react';
+import { Search, ChevronDown, Columns, Eye, EyeOff, Image, Sparkles, Plus, Upload, Download, Cloud, BarChart2, Briefcase, LayoutGrid, Zap, Radio } from 'lucide-react';
 import ColumnsPopover from './ColumnsPopover';
 import ExportDropdown from './ExportDropdown';
 import PnlIcon from './PnlIcon';
@@ -31,6 +31,7 @@ export default function Toolbar({
   onColumnsClick,
   onViewChartClick,
   onBrowseImagesClick,
+  onFoxyAiClick,
   visibleCols,
   onToggleCol,
   onSelectAllCols,
@@ -308,41 +309,43 @@ export default function Toolbar({
                 </button>
               )}
 
-              {/* Browse all chart images (matching Nexus Journal Image button) */}
-              {(!settings?.toolbarActions || settings.toolbarActions.find(a => a.id === 'chartViewer')?.enabled !== false) && (
-                <button 
-                  onClick={onBrowseImagesClick || onViewChartClick}
-                  title="Visual Chartbook"
-                  aria-label="Visual Chartbook"
-                  style={{ 
-                    background: 'none', 
-                    border: 'none', 
-                    color: '#6b7280', 
-                    cursor: 'pointer', 
-                    padding: '4px',
-                    borderRadius: '6px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'background-color 0.15s ease, transform 0.1s ease, color 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.06)'; }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                    e.currentTarget.style.transform = 'scale(1)';
-                  }}
-                  onMouseDown={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.12)';
-                    e.currentTarget.style.transform = 'scale(0.95)';
-                  }}
-                  onMouseUp={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
-                    e.currentTarget.style.transform = 'scale(1)';
-                  }}
-                >
-                  <Image size={16} />
-                </button>
-              )}
+              {/* Foxy AI Page Trigger (Replaces Image button right of eye icon) */}
+              <button 
+                onClick={onFoxyAiClick}
+                title="Foxy AI"
+                aria-label="Foxy AI"
+                style={{ 
+                  background: 'none', 
+                  border: 'none', 
+                  color: '#6b7280', 
+                  cursor: 'pointer', 
+                  padding: '4px',
+                  borderRadius: '6px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background-color 0.15s ease, transform 0.1s ease, color 0.15s ease'
+                }}
+                onMouseEnter={(e) => { 
+                  e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.06)'; 
+                  e.currentTarget.style.color = '#111827';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = '#6b7280';
+                  e.currentTarget.style.transform = 'scale(1)';
+                }}
+                onMouseDown={(e) => {
+                  e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.12)';
+                  e.currentTarget.style.transform = 'scale(0.95)';
+                }}
+                onMouseUp={(e) => {
+                  e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.06)';
+                  e.currentTarget.style.transform = 'scale(1)';
+                }}
+              >
+                <Sparkles size={16} />
+              </button>
 
               {journalViewMode === 'stats' && (
                 <>

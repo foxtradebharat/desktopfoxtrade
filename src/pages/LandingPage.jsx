@@ -276,7 +276,7 @@ export default function LandingPage({ onGoogleLogin, isLoading, authError, user,
           <FeaturePill icon={<Sparkles size={14} />} label="Psychology Tracking" />
           <FeaturePill icon={<Calendar size={14} />} label="Holiday Calendar" />
           <FeaturePill icon={<Receipt size={14} />} label="Tax Analytics (ITR)" />
-          <FeaturePill icon={<Bot size={14} />} label="AI Trade Coach" />
+          <FeaturePill icon={<Sparkles size={14} />} label="Foxy AI" />
           <FeaturePill icon={<IndianRupee size={14} />} label="INR First — Always" />
         </div>
 

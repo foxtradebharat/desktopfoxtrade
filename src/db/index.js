@@ -55,6 +55,8 @@ export {
 // ── Sync Engine ───────────────────────────────────────────────────────────────
 export {
   mergeTradeArrays,
+  mergeFoxyChats,
+  mergeFoxyCommitments,
   buildDrivePayload,
   parseDrivePayload,
   saveToDrive,

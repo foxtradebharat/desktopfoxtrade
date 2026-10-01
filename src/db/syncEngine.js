@@ -41,7 +41,7 @@
  */
 
 import { idbGet, idbPut, STORES } from './foxtradeDB.js';
-import { getDeviceId } from './configStore.js';
+import { getDeviceId, getConfig, setConfig } from './configStore.js';
 import { clearDoneOps } from './operationsQueue.js';
 import { syncPendingImages } from './imageStore.js';
 
@@ -272,6 +272,56 @@ export function mergeTradeArrays(local, remote) {
   return Array.from(map.values());
 }
 
+/**
+ * Merge two Foxy chat arrays by conversation ID without duplicates.
+ * Preserves the chat with the latest timestamp or most messages.
+ * @param {object[]} local
+ * @param {object[]} remote
+ * @returns {object[]}
+ */
+export function mergeFoxyChats(local = [], remote = []) {
+  if (!Array.isArray(local) || local.length === 0) return Array.isArray(remote) ? remote : [];
+  if (!Array.isArray(remote) || remote.length === 0) return local;
+
+  const map = new Map();
+  for (const c of local) {
+    if (c && c.id) map.set(c.id, c);
+  }
+
+  for (const rc of remote) {
+    if (!rc || !rc.id) continue;
+    const lc = map.get(rc.id);
+    if (!lc) {
+      map.set(rc.id, rc);
+    } else {
+      const lcLen = lc.messages?.length || 0;
+      const rcLen = rc.messages?.length || 0;
+      if (rcLen > lcLen || (rc.updatedAt || 0) > (lc.updatedAt || 0)) {
+        map.set(rc.id, rc);
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+}
+
+/**
+ * Merge two commitment rule arrays with deduplication.
+ * @param {string[]} local
+ * @param {string[]} remote
+ * @returns {string[]}
+ */
+export function mergeFoxyCommitments(local = [], remote = []) {
+  const combined = [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])];
+  const unique = [];
+  for (const rule of combined) {
+    if (typeof rule === 'string' && rule.trim() && !unique.includes(rule.trim())) {
+      unique.push(rule.trim());
+    }
+  }
+  return unique.slice(-15);
+}
+
 // ── Build / Parse backup payload ──────────────────────────────────────────────
 
 /**
@@ -291,6 +341,26 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     if (rawInd) independentNotes = JSON.parse(rawInd);
   } catch {}
 
+  let foxyChats = null;
+  let foxyCommitments = null;
+  let foxyConfig = null;
+  try {
+    const rawChats = await getConfig('foxy_ai_chats', null);
+    if (Array.isArray(rawChats) && rawChats.length > 0) foxyChats = rawChats;
+
+    const rawComms = await getConfig('foxy_trader_commitments', null);
+    if (Array.isArray(rawComms) && rawComms.length > 0) foxyCommitments = rawComms;
+
+    const provider = await getConfig('foxy_ai_provider', null);
+    const model = await getConfig('foxy_ai_model', null);
+    const apiKey = await getConfig('foxy_ai_api_key', null);
+    if (apiKey || provider || model) {
+      foxyConfig = { provider, model, apiKey };
+    }
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading Foxy AI data for backup:', err);
+  }
+
   const payload = {
     version:       BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
@@ -300,9 +370,13 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     trades,
     ...(notes ? { notes } : {}),
     ...(independentNotes ? { independentNotes } : {}),
+    ...(foxyChats ? { foxyChats } : {}),
+    ...(foxyCommitments ? { foxyCommitments } : {}),
+    ...(foxyConfig ? { foxyConfig } : {}),
     metadata: {
       tradeCount:          trades.filter(t => !t.deletedAt).length,
       lastTradeUpdatedAt:  Math.max(0, ...trades.map(t => t.clientUpdatedAt || 0)),
+      hasFoxyData:         !!(foxyChats?.length || foxyCommitments?.length || foxyConfig?.apiKey),
     },
   };
   return compressJSON(payload);
@@ -468,6 +542,47 @@ export async function loadFromDrive(portfolioId, accessToken) {
       try {
         localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify(payload.independentNotes));
       } catch {}
+    }
+
+    // Restore Foxy AI chats with smart merge
+    if (Array.isArray(payload.foxyChats) && payload.foxyChats.length > 0) {
+      try {
+        const localChats = await getConfig('foxy_ai_chats', []);
+        const mergedChats = mergeFoxyChats(localChats, payload.foxyChats);
+        await setConfig('foxy_ai_chats', mergedChats);
+      } catch (e) {
+        console.warn('[SyncEngine] Restore foxyChats failed:', e);
+      }
+    }
+
+    // Restore Foxy trader commitments with deduplication
+    if (Array.isArray(payload.foxyCommitments) && payload.foxyCommitments.length > 0) {
+      try {
+        const localComms = await getConfig('foxy_trader_commitments', []);
+        const mergedComms = mergeFoxyCommitments(localComms, payload.foxyCommitments);
+        await setConfig('foxy_trader_commitments', mergedComms);
+      } catch (e) {
+        console.warn('[SyncEngine] Restore foxyCommitments failed:', e);
+      }
+    }
+
+    // Restore Foxy API key and config if present
+    if (payload.foxyConfig && typeof payload.foxyConfig === 'object') {
+      try {
+        const localKey = await getConfig('foxy_ai_api_key', '');
+        // Restore key if remote has one and local is empty
+        if (payload.foxyConfig.apiKey && (!localKey || localKey.trim() === '')) {
+          await setConfig('foxy_ai_api_key', payload.foxyConfig.apiKey);
+        }
+        if (payload.foxyConfig.provider) {
+          await setConfig('foxy_ai_provider', payload.foxyConfig.provider);
+        }
+        if (payload.foxyConfig.model) {
+          await setConfig('foxy_ai_model', payload.foxyConfig.model);
+        }
+      } catch (e) {
+        console.warn('[SyncEngine] Restore foxyConfig failed:', e);
+      }
     }
 
     return Array.isArray(payload.trades) ? payload.trades : [];

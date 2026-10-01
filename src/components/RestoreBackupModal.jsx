@@ -29,7 +29,11 @@ import {
   bulkPutTrades, 
   clearTrades, 
   getTradesWithDeleted,
-  getValidAccessToken
+  getValidAccessToken,
+  getConfig,
+  setConfig,
+  mergeFoxyChats,
+  mergeFoxyCommitments
 } from '../db/index.js';
 import { requestAccessToken } from '../services/googleDrive.js';
 
@@ -451,6 +455,46 @@ export default function RestoreBackupModal({
       }
       if (Array.isArray(backupPayload?.independentNotes)) {
         try { localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify(backupPayload.independentNotes)); } catch {}
+      }
+
+      // Restore Foxy AI chats with smart merge if present
+      if (Array.isArray(backupPayload?.foxyChats) && backupPayload.foxyChats.length > 0) {
+        try {
+          const localChats = await getConfig('foxy_ai_chats', []);
+          const mergedChats = mergeFoxyChats(localChats, backupPayload.foxyChats);
+          await setConfig('foxy_ai_chats', mergedChats);
+        } catch (e) {
+          console.warn('[RestoreBackupModal] Restore foxyChats failed:', e);
+        }
+      }
+
+      // Restore Foxy trader commitments with deduplication
+      if (Array.isArray(backupPayload?.foxyCommitments) && backupPayload.foxyCommitments.length > 0) {
+        try {
+          const localComms = await getConfig('foxy_trader_commitments', []);
+          const mergedComms = mergeFoxyCommitments(localComms, backupPayload.foxyCommitments);
+          await setConfig('foxy_trader_commitments', mergedComms);
+        } catch (e) {
+          console.warn('[RestoreBackupModal] Restore foxyCommitments failed:', e);
+        }
+      }
+
+      // Restore Foxy API key & settings if present
+      if (backupPayload?.foxyConfig && typeof backupPayload.foxyConfig === 'object') {
+        try {
+          const localKey = await getConfig('foxy_ai_api_key', '');
+          if (backupPayload.foxyConfig.apiKey && (!localKey || localKey.trim() === '')) {
+            await setConfig('foxy_ai_api_key', backupPayload.foxyConfig.apiKey);
+          }
+          if (backupPayload.foxyConfig.provider) {
+            await setConfig('foxy_ai_provider', backupPayload.foxyConfig.provider);
+          }
+          if (backupPayload.foxyConfig.model) {
+            await setConfig('foxy_ai_model', backupPayload.foxyConfig.model);
+          }
+        } catch (e) {
+          console.warn('[RestoreBackupModal] Restore foxyConfig failed:', e);
+        }
       }
 
       if (!remoteTrades.length) {

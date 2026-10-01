@@ -15,6 +15,7 @@
  */
 
 import { getConfig, setConfig } from '../db/configStore.js';
+import { getValidAccessToken, getActivePortfolioId, getTradesWithDeleted, triggerAutoSync } from '../db/index.js';
 import { calculateTradeDiagnostics } from './aiService.js';
 import { runQuery, executeQueryAndFormat } from './tradeQueryEngine.js';
 import { getOrComputeDNA, formatDNAForContext } from '../utils/traderDNA.js';
@@ -120,12 +121,28 @@ export async function getFoxyConfig() {
 }
 
 /**
+ * Automatically schedule a debounced Google Drive sync if user is authenticated
+ */
+async function scheduleFoxyDriveSync() {
+  try {
+    const token = await getValidAccessToken().catch(() => null);
+    if (!token || token === 'demo-token') return;
+    const portfolioId = await getActivePortfolioId().catch(() => 'default');
+    const trades = await getTradesWithDeleted(portfolioId).catch(() => []);
+    triggerAutoSync(portfolioId, token, trades);
+  } catch (_) {
+    // Non-blocking background sync notice
+  }
+}
+
+/**
  * Save LLM configuration to IndexedDB
  */
 export async function saveFoxyConfig({ provider, model, apiKey }) {
   if (provider) await setConfig(CONFIG_KEY_PROVIDER, provider);
   if (model) await setConfig(CONFIG_KEY_MODEL, model);
   if (apiKey !== undefined) await setConfig(CONFIG_KEY_API_KEY, apiKey.trim());
+  scheduleFoxyDriveSync();
 }
 
 const CONFIG_KEY_COMMITMENTS = 'foxy_trader_commitments';
@@ -144,6 +161,7 @@ export async function getTraderCommitments() {
 export async function saveTraderCommitments(commitments) {
   if (Array.isArray(commitments)) {
     await setConfig(CONFIG_KEY_COMMITMENTS, commitments);
+    scheduleFoxyDriveSync();
   }
 }
 
@@ -1504,4 +1522,5 @@ export async function getFoxyChatHistory() {
 
 export async function saveFoxyChatHistory(chats) {
   await setConfig(CONFIG_KEY_CHATS, chats);
+  scheduleFoxyDriveSync();
 }
