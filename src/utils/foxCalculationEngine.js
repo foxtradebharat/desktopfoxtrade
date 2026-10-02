@@ -71,7 +71,7 @@ export function calcPercentMove(entryPrice, currentPrice, side = 'Buy') {
  * Exact Lot-by-Lot Matching Engine (LIFO / FIFO)
  * Matches exit legs against entry legs and computes realized P/L and remaining lots.
  */
-export function matchLots(entryLots, exitLots, costBasisMethod = 'lifo', side = 'Buy') {
+export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 'Buy') {
   const isBuy = String(side).toLowerCase() === 'buy';
   const now = Date.now();
 
@@ -343,7 +343,7 @@ function parseCleanNum(val, fallback = 0) {
  * Takes a raw trade object from FoxTrade and applies 100% verified formulas.
  */
 export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options = {}) {
-  const costBasisMethod = options.costBasisMethod || 'lifo';
+  const costBasisMethod = options.costBasisMethod || 'fifo';
   const side = (t.type || t.side || 'Buy');
   const isBuy = String(side).toLowerCase() === 'buy';
 

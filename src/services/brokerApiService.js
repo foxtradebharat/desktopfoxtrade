@@ -140,7 +140,7 @@ export function checkAccountHealth(account) {
 
 // Proxy base — empty string means "same origin" which works for both Vite proxy (dev)
 // and Cloudflare Worker (prod, set VITE_BROKER_PROXY in .env.production)
-const BROKER_PROXY_BASE = import.meta.env.VITE_BROKER_PROXY || '';
+const BROKER_PROXY_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_BROKER_PROXY) || '';
 
 // Helper: Convert Indian Broker Trade Timestamp into DD-MM-YYYY & HH:MM
 function parseBrokerDate(dateString) {

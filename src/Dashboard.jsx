@@ -419,9 +419,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const [journalSettings, setJournalSettings] = useState(() => {
     try {
       const saved = localStorage.getItem('tradeontip_settings');
-      return saved ? JSON.parse(saved) : {};
+      const parsed = saved ? JSON.parse(saved) : {};
+      if (!parsed.costBasisMethod) {
+        parsed.costBasisMethod = 'fifo';
+      }
+      return parsed;
     } catch {
-      return {};
+      return { costBasisMethod: 'fifo' };
     }
   });
 
@@ -841,7 +845,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       } catch {}
       return 0;
     })();
-    const BASE_CAPITAL = initialFundCapital > 0 ? initialFundCapital : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : 0);
+    const tradeAlloc = Number(t?.totalCapitalAllocated || 0);
+    const BASE_CAPITAL = initialFundCapital > 0 
+      ? initialFundCapital 
+      : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : (tradeAlloc > 0 ? tradeAlloc : 200000));
 
     const isLiveCmp = journalSettings.liveCmpEnabled === true;
 
@@ -860,7 +867,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
     return enrichTradeWithFoxFormulas(t, tradeCapital, {
       liveCMPs: isLiveCmp ? liveCMPs : {},
-      costBasisMethod: journalSettings.costBasisMethod || 'lifo',
+      costBasisMethod: journalSettings.costBasisMethod || 'fifo',
       getCharges: (broker, segment, entryTurnover, exitTurnover, exitedQty) =>
         calculateCharges(broker, segment, entryTurnover, exitTurnover, exitedQty, chargesMap || {})
     });
@@ -1189,7 +1196,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           }
         }
       } catch {}
-      return portfolioCapital > 0 ? portfolioCapital : 0;
+      if (portfolioCapital > 0) return portfolioCapital;
+      const tradeWithAlloc = portfolioTrades.find(t => Number(t.totalCapitalAllocated) > 0);
+      if (tradeWithAlloc) return Number(tradeWithAlloc.totalCapitalAllocated);
+      return 200000;
     })();
 
     // Current portfolio capital = the latest final capital from the monthly performance chain.
@@ -1201,7 +1211,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           if (monthlyPerf[i].finalCapital > 0) return monthlyPerf[i].finalCapital;
         }
       }
-      return baseFundCapital > 0 ? (baseFundCapital + grossRealizedPL) : (grossRealizedPL > 0 ? grossRealizedPL : 0);
+      return baseFundCapital > 0 ? (baseFundCapital + grossRealizedPL) : (grossRealizedPL > 0 ? (200000 + grossRealizedPL) : 200000);
     })();
 
     // ── Unrealized P/L % of portfolio ─────────────────────────────────────────
@@ -1607,6 +1617,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         activePortfolioId: activePortfolioId || 'portfolio-default',
         baseCapital: portfolioCapital || 100000,
         liveCMPs,
+        costBasisMethod: journalSettings.costBasisMethod || 'fifo',
         startingTradeNo: 1
       });
 

@@ -11,7 +11,7 @@ export default function TradeSettingsModal({
 }) {
   const tradingMarket = settings.tradingMarket || 'india';
   const columnTerminology = settings.columnTerminology || 'pyramidExit';
-  const costBasisMethod = settings.costBasisMethod || 'lifo';
+  const costBasisMethod = settings.costBasisMethod || 'fifo';
 
   // Journal Display toggles with sensible defaults
   const liveCmpEnabled = settings.liveCmpEnabled === true; // Default: false (OFF)
@@ -37,7 +37,7 @@ export default function TradeSettingsModal({
     if (onUpdateSetting) {
       onUpdateSetting('tradingMarket', 'india');
       onUpdateSetting('columnTerminology', 'pyramidExit');
-      onUpdateSetting('costBasisMethod', 'lifo');
+      onUpdateSetting('costBasisMethod', 'fifo');
       onUpdateSetting('liveCmpEnabled', false);
       onUpdateSetting('statsInHoldings', true);
       onUpdateSetting('statsInBrokers', false);
@@ -593,7 +593,11 @@ export default function TradeSettingsModal({
                   cursor: 'pointer',
                   textAlign: 'center',
                   transition: 'all 0.15s ease',
-                  boxShadow: costBasisMethod === 'fifo' ? '0 1px 2px rgba(0,0,0,0.04)' : 'none'
+                  boxShadow: costBasisMethod === 'fifo' ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
                 }}
                 onMouseEnter={(e) => {
                   if (costBasisMethod !== 'fifo') {
@@ -608,7 +612,18 @@ export default function TradeSettingsModal({
                   }
                 }}
               >
-                FIFO (First In, First Out)
+                <span>FIFO (First In, First Out)</span>
+                <span style={{
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  borderRadius: '9999px',
+                  backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                  color: 'var(--color-green, #10b981)',
+                  fontWeight: 600,
+                  letterSpacing: '0.02em'
+                }}>
+                  Recommended
+                </span>
               </button>
 
               <button

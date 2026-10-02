@@ -907,7 +907,7 @@ function RewardRiskCell({ trade, val, cellStickyStyle }) {
   );
 }
 
-function HoldingDaysCell({ trade, val, cellStickyStyle, costBasisMethod = 'lifo' }) {
+function HoldingDaysCell({ trade, val, cellStickyStyle, costBasisMethod = 'fifo' }) {
   const [isHovered, setIsHovered] = useState(false);
   const [coords, setCoords] = useState(null);
   const cellRef = useRef(null);
@@ -1760,7 +1760,7 @@ export default function JournalTable({
   const showReorderHandles = settings?.columnReorderHandles !== false;
   const showReviewIndicators = settings?.tradeReviewIndicators === true;
   const showBulkActions = settings?.bulkTradeActions === true;
-  const costBasisMethod = settings?.costBasisMethod || 'lifo';
+  const costBasisMethod = settings?.costBasisMethod || 'fifo';
 
   const [selectedTradeIds, setSelectedTradeIds] = useState(new Set());
 

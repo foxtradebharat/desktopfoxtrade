@@ -469,7 +469,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
           notes: `Imported from ${detectedBroker.name} tradebook (${p.date})`
         };
 
-        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' });
+        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: options.costBasisMethod || 'fifo' });
       });
     } else {
       // Individual Fills imported directly
@@ -495,7 +495,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
           broker: detectedBroker.id !== 'unknown' ? detectedBroker.id : 'Broker Import',
           notes: `Raw fill: ${f.orderId ? `Order #${f.orderId}` : ''} at ${f.entryTime}`
         };
-        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' });
+        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: options.costBasisMethod || 'fifo' });
       });
     }
   }
@@ -725,7 +725,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         currentAllocation: currentAllocVal,
       };
 
-      resultTrades.push(enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' }));
+      resultTrades.push(enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: options.costBasisMethod || 'fifo' }));
     }
   }
 
