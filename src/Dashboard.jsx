@@ -3,6 +3,7 @@ import { db } from './services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { saveUserTrades, subscribeToUserTrades, setDriveContext, clearAllLocalTrades } from './services/dbService';
 import { fetchStockPrice } from './services/yahooService';
+import { fetchLiveCMPForSymbol } from './services/strikePriceService';
 import { liveMarketFeed } from './services/liveMarketFeed';
 import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups } from './services/googleDrive';
 import TopBar from './components/TopBar';
@@ -1440,9 +1441,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             if (cachedPrice && Number(cachedPrice) > 0) {
               updated.cmp = Number(cachedPrice);
             } else {
-              fetchStockPrice(sym).then(q => {
-                const p = parseFloat(q?.price || q?.cmp);
-                if (p && !isNaN(p) && p > 0) {
+              fetchLiveCMPForSymbol(sym).then(p => {
+                if (p > 0) {
                   setTrades(latest => latest.map(item => {
                     if (item.id === id && (!item.cmp || Number(item.cmp) === 0)) {
                       return enrichTradeWithLegs({ ...item, cmp: p });

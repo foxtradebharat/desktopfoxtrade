@@ -16,6 +16,7 @@ import EntryTypeDropdown from './EntryTypeDropdown';
 import GrowthAreaDropdown from './GrowthAreaDropdown';
 import ExitTriggerDropdown from './ExitTriggerDropdown';
 import TradeSummaryPopover from './TradeSummaryPopover';
+import { fetchLiveCMPForSymbol } from '../services/strikePriceService';
 
 const COLUMNS = [
   { id: 'tradeNo', label: 'TRADE NO.', width: '108px' },
@@ -3016,9 +3017,17 @@ export default function JournalTable({
                                 value={trade.name || ''}
                                 placeholder="Stock name"
                                 market={tradingMarket}
-                                onChange={(newSymbol) => {
+                                onChange={async (newSymbol) => {
                                   if (newSymbol !== trade.name) {
                                     onUpdateTrade(trade.id, 'name', newSymbol);
+                                    if ((!trade.cmp || Number(trade.cmp) === 0) && newSymbol) {
+                                      try {
+                                        const p = await fetchLiveCMPForSymbol(newSymbol);
+                                        if (p > 0) {
+                                          onUpdateTrade(trade.id, 'cmp', p);
+                                        }
+                                      } catch (_) {}
+                                    }
                                   }
                                 }}
                               />

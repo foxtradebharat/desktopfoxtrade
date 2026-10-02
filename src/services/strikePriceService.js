@@ -7,6 +7,9 @@
  * Endpoint: https://api-v2.strike.money/v2/api/equity/priceticks
  */
 
+import { fetchStockPrice } from './yahooService.js';
+import { getCanonicalSymbol } from '../utils/securityMaster.js';
+
 const INDEX_TICKERS = new Set([
   'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'CNX500', 'CNXSCAP',
   'CNXMIDCAP', 'NIFMSC400', 'SENSEX', 'NIFTYNXT50', 'NIFTY50'
@@ -255,7 +258,29 @@ export async function fetchStrikeHistoricalCandles(symbol, range = '1y', interva
   return null;
 }
 
+export async function fetchLiveCMPForSymbol(symbol) {
+  if (!symbol) return 0;
+  const canonical = getCanonicalSymbol ? getCanonicalSymbol(symbol) : String(symbol).trim().toUpperCase();
+  try {
+    const strike = await fetchStrikePrice(canonical);
+    if (strike?.price && Number(strike.price) > 0) {
+      return Number(strike.price);
+    }
+  } catch (_) {}
+
+  try {
+    const yahoo = await fetchStockPrice(canonical);
+    if (yahoo?.price && Number(yahoo.price) > 0) {
+      return Number(yahoo.price);
+    }
+  } catch (_) {}
+
+  return 0;
+}
+
 export default {
   fetchStrikePrice,
-  fetchStrikeHistoricalCandles
+  fetchStrikeHistoricalCandles,
+  fetchLiveCMPForSymbol
 };
+

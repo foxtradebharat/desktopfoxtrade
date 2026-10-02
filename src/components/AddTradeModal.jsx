@@ -9,7 +9,7 @@ import SymbolLogo from './SymbolLogo';
 import BrokerLogo from './BrokerLogo';
 import { BROKER_DEFINITIONS } from '../services/brokerLogos';
 import { fetchStockPrice } from '../services/yahooService';
-import { fetchStrikePrice } from '../services/strikePriceService';
+import { fetchStrikePrice, fetchLiveCMPForSymbol } from '../services/strikePriceService';
 import { searchStocks, getFallbackList } from '../services/stockService';
 import { getCanonicalSymbol } from '../utils/securityMaster.js';
 
@@ -398,14 +398,8 @@ export default function AddTradeModal({
                             setIsFetchingCmp(true);
                             try {
                               const canonical = getCanonicalSymbol(stockName.trim());
-                              let price = null;
-                              const yData = await fetchStockPrice(canonical);
-                              if (yData?.price || yData?.cmp) price = parseFloat(yData.cmp || yData.price);
-                              else {
-                                const strikeData = await fetchStrikePrice(canonical);
-                                if (strikeData?.price) price = strikeData.price;
-                              }
-                              if (price && !isNaN(price)) setCmp(price.toFixed(2));
+                              const price = await fetchLiveCMPForSymbol(canonical);
+                              if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
                             } catch {}
                             finally { setIsFetchingCmp(false); }
                           }
@@ -420,14 +414,8 @@ export default function AddTradeModal({
                                 const canonical = getCanonicalSymbol(stock.symbol);
                                 setStockName(canonical); setShowStockDropdown(false); setIsFetchingCmp(true);
                                 try {
-                                  let price = null;
-                                  const yData = await fetchStockPrice(canonical);
-                                  if (yData?.price || yData?.cmp) price = parseFloat(yData.cmp || yData.price);
-                                  else {
-                                    const strikeData = await fetchStrikePrice(canonical);
-                                    if (strikeData?.price) price = strikeData.price;
-                                  }
-                                  if (price && !isNaN(price)) setCmp(price.toFixed(2));
+                                  const price = await fetchLiveCMPForSymbol(canonical);
+                                  if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
                                 } catch {}
                                 finally { setIsFetchingCmp(false); }
                               }}
