@@ -42,7 +42,7 @@ export default function MarketTimingBanner({
     return () => clearInterval(interval);
   }, [tradingMarket]);
 
-  // Dot type & colors matching Nexus Journal
+  // Dot type & colors
   const dotType = (() => {
     if (marketStatus.isOpen) return marketStatus.isPreMarket ? 'pre' : 'open';
     if (marketStatus.isHolidayToday) {
@@ -67,7 +67,7 @@ export default function MarketTimingBanner({
     special: '#f59e0b'
   }[dotType];
 
-  // Title matching Nexus Journal
+  // Title
   const title = (() => {
     if (marketStatus.isOpen) {
       if (marketStatus.currentSession) {
@@ -87,7 +87,7 @@ export default function MarketTimingBanner({
     return marketStatus.isWeekend ? 'Weekend' : 'Market Closed';
   })();
 
-  // Status Badge matching Nexus Journal
+  // Status Badge
   const statusBadge = (() => {
     if (marketStatus.isOpen) {
       return marketStatus.isPreMarket ? (

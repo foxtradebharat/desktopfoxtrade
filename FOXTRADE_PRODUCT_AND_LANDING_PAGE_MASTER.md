@@ -1,7 +1,7 @@
 # 🦊 FoxTrade (`foxtrade.in`) — Complete Product & Landing Page Master Blueprint
 
 > **Document Type:** Product Master Specification, Feature Inventory & Landing Page Blueprint  
-> **Brand Name:** **FoxTrade** (formerly referenced as TradeOnTip / Nexus Pro)  
+> **Brand Name:** **FoxTrade** (TradeOnTip)  
 > **Web Domain:** `foxtrade.in`  
 > **Target Audience:** Indian Equity (NSE / BSE), F&O (Futures & Options), Swing Traders, Intraday Scalpers, Breakout Investors, and Global Equity Traders  
 > **Core Proposition:** Institutional-Grade Mathematical Discipline, Pinned Live TradingView Candlestick Execution Markers, Multi-Leg Pyramiding Engine, Native Indian STCG/LTCG Tax Engine, and 100% Zero-Knowledge Google Drive Privacy.
@@ -200,7 +200,7 @@ Designed to pinpoint and fix emotional leaks in trading execution.
 
 ### Module 8: Multi-Broker 1-Click CSV Ingestion
 Eliminates manual data entry by importing trade logs directly from popular Indian brokers.
-- **Supported Brokers:** Zerodha Kite, Groww, Angel One, Dhan, Upstox, and Nexus Journal CSVs.
+- **Supported Brokers:** Zerodha Kite, Groww, Angel One, Dhan, Upstox, and FoxTrade Journal CSVs.
 - **Deduplication Engine:** Automatically detects and prevents duplicate trade records during re-imports.
 - **Instant Mapping:** Auto-maps broker order books into multi-leg buy and sell legs.
 

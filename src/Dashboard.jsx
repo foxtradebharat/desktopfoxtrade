@@ -54,9 +54,9 @@ import {
   getActivePortfolioCapital
 } from './utils/fundManagementCalculations';
 import {
-  enrichTradeWithNexusFormulas,
+  enrichTradeWithFoxFormulas,
   calculateDashboardStats
-} from './utils/nexusCalculationEngine';
+} from './utils/foxCalculationEngine';
 import { parseTradesFromFile } from './utils/tradeImportEngine';
 import { deduplicateAndMergeTrades } from './utils/tradeDeduplicationEngine';
 import { loadBrokerCharges, calculateCharges, detectSegment } from './utils/brokerChargesService';
@@ -200,7 +200,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     } catch {}
     return 'journal';
   });
-  const [selectedChartSymbol, setSelectedChartSymbol] = useState('TATASTEEL');
+  const [selectedChartSymbol, setSelectedChartSymbol] = useState(null);
   const [deepDiveConfig, setDeepDiveConfig] = useState(null);
   const [selectedPlaybookId, setSelectedPlaybookId] = useState(null);
   const [pageSize, setPageSize]         = useState(12);
@@ -657,7 +657,19 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     } catch (_) {}
   }, [trades, user?.uid]);
   const [loadingTrades, setLoadingTrades] = useState(false);
-  const [liveCMPs, setLiveCMPs] = useState({});
+  const [liveCMPs, setLiveCMPs] = useState(() => {
+    try {
+      const savedSettings = localStorage.getItem('tradeontip_settings');
+      const parsedSettings = savedSettings ? JSON.parse(savedSettings) : {};
+      if (parsedSettings.liveCmpEnabled !== true) {
+        return {};
+      }
+      const cached = sessionStorage.getItem('tradeontip_live_cmps');
+      return cached ? JSON.parse(cached) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // Shared sync and warning states
   const [autoBackup, setAutoBackup] = useState(() => {
@@ -776,7 +788,11 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // Real-time Live Market Data Feed & WebSocket Engine for NSE
   useEffect(() => {
-    if (loadingTrades || !uniqueSymbolsStr) return;
+    const isLiveCmp = journalSettings.liveCmpEnabled === true;
+    if (loadingTrades || !uniqueSymbolsStr || !isLiveCmp) {
+      liveMarketFeed.stop();
+      return;
+    }
 
     const symbols = uniqueSymbolsStr.split(',').filter(Boolean);
     liveMarketFeed.setWatchedSymbols(symbols);
@@ -793,7 +809,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             changed = true;
           }
         });
-        return changed ? next : prev;
+        if (changed) {
+          try {
+            sessionStorage.setItem('tradeontip_live_cmps', JSON.stringify(next));
+          } catch (_) {}
+          return next;
+        }
+        return prev;
       });
     });
 
@@ -801,12 +823,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       unsubscribe();
       liveMarketFeed.stop();
     };
-  }, [uniqueSymbolsStr, loadingTrades]);
+  }, [uniqueSymbolsStr, loadingTrades, journalSettings.liveCmpEnabled]);
 
   // File Ref for CSV Import
   const fileInputRef = useRef(null);
 
-  // ── Helper to calculate and enrich trade with exact Nexus formulas ────────
+  // ── Helper to calculate and enrich trade with exact FoxTrade formulas ────────
   const enrichTradeWithLegs = (t) => {
     const PORTFOLIO_CAPITAL = portfolioCapital || 0;
     const initialFundCapital = (() => {
@@ -821,28 +843,45 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     })();
     const BASE_CAPITAL = initialFundCapital > 0 ? initialFundCapital : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : 0);
 
-    return enrichTradeWithNexusFormulas(t, BASE_CAPITAL, {
-      liveCMPs,
-      costBasisMethod: journalSettings.costBasisMethod || 'fifo',
+    const isLiveCmp = journalSettings.liveCmpEnabled === true;
+
+    const getMonthCapital = () => {
+      if (!t?.date || !monthlyPerf) return BASE_CAPITAL;
+      const parts = String(t.date).split(/[-/]/);
+      if (parts.length === 3) {
+        const mIdx = parseInt(parts[1], 10) - 1;
+        if (mIdx >= 0 && mIdx < 12 && monthlyPerf[mIdx]?.startingCapital > 0) {
+          return monthlyPerf[mIdx].startingCapital;
+        }
+      }
+      return BASE_CAPITAL;
+    };
+    const tradeCapital = getMonthCapital();
+
+    return enrichTradeWithFoxFormulas(t, tradeCapital, {
+      liveCMPs: isLiveCmp ? liveCMPs : {},
+      costBasisMethod: journalSettings.costBasisMethod || 'lifo',
       getCharges: (broker, segment, entryTurnover, exitTurnover, exitedQty) =>
         calculateCharges(broker, segment, entryTurnover, exitTurnover, exitedQty, chargesMap || {})
     });
   };
 
   // ── Computed metrics ────────────────────────────────────────────────────────
-  // All formulas verified exactly against Nexus Journal CSV data
+  // All formulas verified exactly for FoxTrade calculations
   // Filter trades for the currently active portfolio
   const portfolioTrades = useMemo(() => {
     return trades.filter(t => (t.portfolioId || 'portfolio-default') === activePortfolioId);
   }, [trades, activePortfolioId]);
 
   const monthlyPerf = useMemo(() => {
-    return calculateMonthlyPerformance(portfolioTrades, capitalChanges, '2026');
-  }, [portfolioTrades, capitalChanges]);
+    return calculateMonthlyPerformance(portfolioTrades, capitalChanges, '2026', {
+      costBasisMethod: journalSettings.costBasisMethod || 'lifo'
+    });
+  }, [portfolioTrades, capitalChanges, journalSettings.costBasisMethod]);
 
   const enrichedTrades = useMemo(() => {
     return portfolioTrades.map(t => enrichTradeWithLegs(t));
-  }, [portfolioTrades, liveCMPs, capitalChanges, portfolioCapital, chargesMap, journalSettings.costBasisMethod]);
+  }, [portfolioTrades, monthlyPerf, liveCMPs, capitalChanges, portfolioCapital, chargesMap, journalSettings.costBasisMethod, journalSettings.liveCmpEnabled]);
 
   // ── 1. Welcome Notification for New User Sign Up / First Visit ───────────
   useEffect(() => {
@@ -1094,7 +1133,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       if (!d) return true;
       return d >= from && d <= to;
     });
-  }, [portfolioTrades, searchTerm, statusFilter, instrumentFilter, outcomeFilter, tradeTypeFilter, liveCMPs, resolvedDateFilter]);
+  }, [portfolioTrades, searchTerm, statusFilter, instrumentFilter, outcomeFilter, tradeTypeFilter, liveCMPs, resolvedDateFilter, journalSettings.liveCmpEnabled]);
 
   const tradesWithCumm = useMemo(() => {
     let cumm = 0;
@@ -1115,7 +1154,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     const closedTrades  = enriched.filter(t => t.status === 'Closed');
     const wins          = closedTrades.filter(t => (t.pnl || 0) > 0).length;
 
-    // ── Win Rate: Exclude 0 P/L (breakeven) trades matching Nexus P/L Method ──
+    // ── Win Rate: Exclude 0 P/L (breakeven) trades matching FoxTrade P/L Method ──
     const decidedTrades = closedTrades.filter(t => (t.pnl || 0) !== 0);
     const winRate = decidedTrades.length > 0
       ? ((wins / decidedTrades.length) * 100).toFixed(2)
@@ -1312,7 +1351,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       currentDrawdown,
       currentDrawdownAmount
     };
-  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs]);
+  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled]);
 
 
   const triggerBackupWarningIfOff = () => {
@@ -1482,6 +1521,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   const handleSelectPortfolio = (id) => {
     setActivePortfolioId(id);
+    setSelectedChartSymbol(null);
     localStorage.setItem('tradeontip_active_portfolio_id', id);
     const selected = portfolios.find(p => p.id === id);
     if (selected && selected.baseCapital) {
@@ -1944,7 +1984,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {activeTab === 'analytics'       && (
           <AnalyticsPage 
-            trades={portfolioTrades} 
+            trades={enrichedTrades} 
             portfolioCapital={portfolioCapital || (metrics?.portfolioCapital || 0)} 
             onOpenStockChart={handleOpenStockChart}
             chargesMap={chargesMap}
@@ -1967,6 +2007,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             trades={enrichedTrades} 
             selectedSymbol={selectedChartSymbol}
             onSelectSymbol={setSelectedChartSymbol}
+            onOpenAddTrade={() => setIsAddModalOpen(true)}
+            onOpenQuickLog={() => setIsQuickLogOpen(true)}
+            onOpenImport={() => setIsBrokerImportOpen(true)}
+            onNavigateToJournal={() => setActiveTab('journal')}
           />
         )}
         {activeTab === 'symbol-deep-dive' && (
@@ -1994,6 +2038,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             activePortfolioId={activePortfolioId} 
             portfolioCapital={portfolioCapital} 
             capitalChanges={capitalChanges}
+            themeMode={themeMode}
           />
         )}
         {(activeTab === 'fund-management' || activeTab === 'fundManagement') && (
@@ -2151,7 +2196,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         trades={trades}
       />
 
-      {/* Global Toast Notification (Exact Sonner / Nexus style) */}
+      {/* Global Toast Notification (FoxTrade Modern Toast style) */}
       <ToastNotification 
         toast={toastNotification} 
         onClose={() => setToastNotification(null)} 

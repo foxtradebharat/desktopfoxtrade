@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 142 39" role="img" aria-labelledby="title">
+  <title id="title">ProStocks</title>
+  <rect width="142" height="39" rx="2" fill="#fff"/>
+  <path d="M0 0h28v39H0z" fill="#00a878"/>
+  <path d="M5 5h18v29H5z" fill="none" stroke="#263238" stroke-width="2" stroke-dasharray="2 2"/>
+  <path d="M9 8h4v23H9zm7 0h4v23h-4z" fill="#263238"/>
+  <text x="32" y="26" fill="#333" font-family="Arial, sans-serif" font-size="19" font-weight="700">ProStocks</text>
+</svg>

@@ -161,7 +161,7 @@ $$\text{Realized Amount (₹)} = \text{Avg Exit Price} \times \text{Total Exited
 * **Pyramiding Expanders (`+` Header Icon)**: Click `+` on column headers to reveal P1 $\rightarrow$ P2 $\rightarrow$ P3 $\rightarrow$ P4 legs on demand.
 * **Smart Hover Summary Card**: Hovering over the Deep Dive arrow (`↗`) next to any stock name displays a high-$Z$-index, floating summary card with auto-flip above/below viewport detection and direct click-through.
 * **Upload Chart Images Modal**: 2-column modal (`BEFORE ENTRY` / `AFTER EXIT`) supporting file drag & drop + TradingView snapshot URL pasting.
-* **Multi-Broker CSV Ingestion**: Parses trade exports from Zerodha, Groww, Angel One, Dhan, Upstox, and Nexus Journal CSVs.
+* **Multi-Broker CSV Ingestion**: Parses trade exports from Zerodha, Groww, Angel One, Dhan, Upstox, and FoxTrade Journal CSVs.
 
 ---
 
@@ -177,7 +177,7 @@ $$\text{Realized Amount (₹)} = \text{Avg Exit Price} \times \text{Total Exited
   * Pinned **`E1 • E2 ⬇`** marker (**Deep Crimson `#dc2626`**) placed above exit candle.
   * Volume bars histogram and moving average overlays with hidden right price lines to prevent visual clutter.
 * **2-Column Bottom Dashboard**:
-  * **Left — Nexus-Standard Trade Note Editor**:
+  * **Left — Institutional Trade Note Editor**:
     * Note Title with `0/80` counter.
     * Interactive `TRADE NOTES: [ Logo Trade #210 ]` badge pill.
     * Multi-tag manager with `0/8` counter and `#tag` pills.

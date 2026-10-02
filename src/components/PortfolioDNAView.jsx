@@ -399,7 +399,7 @@ export default function PortfolioDNAView({
                 </span>
               </div>
 
-              {/* PORTFOLIO IMPACT AUDIT POPOVER (Nexus 1:1) */}
+              {/* PORTFOLIO IMPACT AUDIT POPOVER */}
               {showImpactAuditPopover && (
                 <div 
                   className="foxtrade-popover-card"
@@ -493,7 +493,7 @@ export default function PortfolioDNAView({
           </span>
         </div>
       ) : rightDockView === 'dashboard' ? (
-        /* ── DASHBOARD VIEW (Nexus 1:1 Stacked Portfolio Snapshot & Benchmark Index Timeline) ── */
+        /* ── DASHBOARD VIEW (Stacked Portfolio Snapshot & Benchmark Index Timeline) ── */
         <div style={{ marginBottom: '40px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
           {/* 1. Header: Portfolio Snapshot & Color-Coded Progress Indicators */}
           <div style={{
@@ -855,7 +855,7 @@ export default function PortfolioDNAView({
           />
         </div>
       ) : rightDockView === 'charts' ? (
-        /* ── SECTIONAL ACTIVE STOCK CHART VIEW (Nexus 1:1 Architecture) ── */
+        /* ── SECTIONAL ACTIVE STOCK CHART VIEW ── */
         <div style={{ marginBottom: '40px' }}>
           {/* High volume batch control if holdings > 8 */}
           {displayedPositions.length > 8 && (
@@ -902,7 +902,7 @@ export default function PortfolioDNAView({
             </div>
           )}
 
-          {/* Sectional Grid 2-column layout (Nexus 1:1) */}
+          {/* Sectional Grid 2-column layout */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 540px), 1fr))',
@@ -1398,7 +1398,7 @@ export default function PortfolioDNAView({
         </button>
       </div>
 
-      {/* ── 4. PORTFOLIO DNA SECTION (Only in Card View, matching Nexus 1:1) ── */}
+      {/* ── 4. PORTFOLIO DNA SECTION (Only in Card View) ── */}
       {rightDockView === 'cards' && (
         <div style={{
         marginTop: '32px',

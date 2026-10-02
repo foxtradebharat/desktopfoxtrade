@@ -12,6 +12,7 @@ import FoxySettingsModal from './FoxySettingsModal';
 import FoxyPreTradePanel from './FoxyPreTradePanel';
 import FoxyResponseRenderer from '../FoxyResponseRenderer';
 import { bulkPutTrades } from '../../db';
+import { putIndependentNote, saveDayNote } from '../../db/noteStore';
 import { formatExtractedTradesForJournal } from '../../utils/contractNoteParser';
 import { 
   getFoxyConfig, 
@@ -126,8 +127,63 @@ export default function FoxyAiPage({
   onBackToJournal, 
   activePortfolioId = 'portfolio-default', 
   portfolioCapital = 0,
-  capitalChanges = null
+  capitalChanges = null,
+  themeMode
 }) {
+  const [currentTheme, setCurrentTheme] = useState(() => {
+    return themeMode || (typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-theme') || (document.documentElement.classList.contains('dark') ? 'dark' : 'light')) : 'light');
+  });
+
+  useEffect(() => {
+    if (themeMode) {
+      setCurrentTheme(themeMode);
+      return;
+    }
+    const updateTheme = () => {
+      const dt = document.documentElement.getAttribute('data-theme');
+      const isD = document.documentElement.classList.contains('dark');
+      setCurrentTheme(dt || (isD ? 'dark' : 'light'));
+    };
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    window.addEventListener('storage', updateTheme);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('storage', updateTheme);
+    };
+  }, [themeMode]);
+
+  const isDark = currentTheme === 'dark' || currentTheme === 'pitch-black';
+  const isPitchBlack = currentTheme === 'pitch-black';
+
+  const theme = {
+    isDark,
+    isPitchBlack,
+    bgPage: isPitchBlack ? '#000000' : isDark ? '#111827' : '#ffffff',
+    bgSidebar: isPitchBlack ? '#0a0a0a' : isDark ? '#0f172a' : '#f9fafb',
+    borderSidebar: isPitchBlack ? '#1a1a1a' : isDark ? '#1e293b' : '#f0f0f2',
+    bgCard: isPitchBlack ? '#0a0a0a' : isDark ? '#1e293b' : '#ffffff',
+    bgSurface: isPitchBlack ? '#121212' : isDark ? '#1e293b' : '#ffffff',
+    border: isPitchBlack ? '#1f1f1f' : isDark ? '#334155' : '#e5e7eb',
+    borderInput: isPitchBlack ? '#262626' : isDark ? '#334155' : '#e2e8f0',
+    borderLight: isPitchBlack ? '#141414' : isDark ? '#1e293b' : '#f0f0f2',
+    textPrimary: isPitchBlack ? '#ffffff' : isDark ? '#f8fafc' : '#111827',
+    textSecondary: isPitchBlack ? '#d4d4d4' : isDark ? '#cbd5e1' : '#4b5563',
+    textMuted: isPitchBlack ? '#737373' : isDark ? '#94a3b8' : '#6b7280',
+    bgHover: isPitchBlack ? '#171717' : isDark ? '#1e293b' : '#f3f4f6',
+    bgActive: isPitchBlack ? '#222222' : isDark ? '#283548' : '#ececee',
+    inputBg: isPitchBlack ? '#0a0a0a' : isDark ? '#1e293b' : '#ffffff',
+    starterBg: isPitchBlack ? '#0a0a0a' : isDark ? '#1e293b' : '#ffffff',
+    starterBorder: isPitchBlack ? '#1f1f1f' : isDark ? '#334155' : '#e5e7eb',
+    starterHoverBg: isPitchBlack ? '#141414' : isDark ? '#283548' : '#fafbfc',
+    iconBg: isPitchBlack ? '#171717' : isDark ? '#0f172a' : '#f3f4f6',
+    userBubbleBg: isDark ? '#1e3a5f' : '#0e3a6c',
+    inputGradient: isPitchBlack 
+      ? 'linear-gradient(to top, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 100%)' 
+      : isDark 
+        ? 'linear-gradient(to top, rgba(17,24,39,1) 60%, rgba(17,24,39,0) 100%)' 
+        : 'linear-gradient(to top, rgba(255,255,255,1) 60%, rgba(255,255,255,0) 100%)'
+  };
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -224,7 +280,13 @@ export default function FoxyAiPage({
       if (savedChats && savedChats.length > 0) {
         setChats(savedChats);
         setActiveChatId(savedChats[0].id);
-        setMessages(savedChats[0].messages || []);
+        const rawMsgs = savedChats[0].messages || [];
+        const cleanMsgs = rawMsgs.map(m => ({
+          ...m,
+          role: (m.role === 'user' || m.sender === 'user') ? 'user' : 'assistant',
+          content: m.content !== undefined && m.content !== null ? m.content : (m.text || '')
+        }));
+        setMessages(cleanMsgs);
       } else {
         createNewChat();
       }
@@ -245,6 +307,12 @@ export default function FoxyAiPage({
   }, [inputValue]);
 
   const createNewChat = () => {
+    const currentChat = chats.find(c => c.id === activeChatId);
+    if (currentChat && (!currentChat.messages || currentChat.messages.length === 0) && currentChat.title === 'New conversation') {
+      setMessages([]);
+      setInputValue('');
+      return;
+    }
     const newChat = {
       id: `chat_${Date.now()}`,
       title: 'New conversation',
@@ -265,7 +333,13 @@ export default function FoxyAiPage({
   const selectChat = (chatId) => {
     setActiveChatId(chatId);
     const chat = chats.find(c => c.id === chatId);
-    setMessages(chat?.messages || []);
+    const rawMsgs = chat?.messages || [];
+    const cleanMsgs = rawMsgs.map(m => ({
+      ...m,
+      role: (m.role === 'user' || m.sender === 'user') ? 'user' : 'assistant',
+      content: m.content !== undefined && m.content !== null ? m.content : (m.text || '')
+    }));
+    setMessages(cleanMsgs);
   };
 
   const togglePinChat = (e, chatId) => {
@@ -328,7 +402,9 @@ export default function FoxyAiPage({
     const userMessage = {
       id: `msg_${Date.now()}`,
       role: 'user',
+      sender: 'user',
       content: text,
+      text: text,
       timestamp: Date.now()
     };
 
@@ -336,7 +412,9 @@ export default function FoxyAiPage({
     const initialAssistantMessage = {
       id: assistantMsgId,
       role: 'assistant',
+      sender: 'foxy',
       content: '',
+      text: '',
       isStreaming: true,
       timestamp: Date.now()
     };
@@ -371,7 +449,7 @@ export default function FoxyAiPage({
           setMessages(prev =>
             prev.map(msg =>
               msg.id === assistantMsgId
-                ? { ...msg, content: accumulatedText, isStreaming: true }
+                ? { ...msg, content: accumulatedText, text: accumulatedText, isStreaming: true }
                 : msg
             )
           );
@@ -381,7 +459,7 @@ export default function FoxyAiPage({
       setMessages(prev => {
         const finalized = prev.map(msg =>
           msg.id === assistantMsgId
-            ? { ...msg, content: aiResponse || msg.content, isStreaming: false }
+            ? { ...msg, content: aiResponse || msg.content, text: aiResponse || msg.content, isStreaming: false }
             : msg
         );
 
@@ -406,7 +484,7 @@ export default function FoxyAiPage({
         setMessages(prev => {
           const preserved = prev.map(msg =>
             msg.id === assistantMsgId
-              ? { ...msg, isStreaming: false, content: msg.content || '*(Generation stopped)*' }
+              ? { ...msg, isStreaming: false, content: msg.content || '*(Generation stopped)*', text: msg.content || '*(Generation stopped)*' }
               : msg
           );
           setChats(chatPrev => {
@@ -425,7 +503,9 @@ export default function FoxyAiPage({
         const errorMessage = {
           id: assistantMsgId,
           role: 'assistant',
+          sender: 'foxy',
           content: `⚠️ **Error connecting to ${foxyConfig.provider.toUpperCase()}**: ${err.message}\n\nPlease verify your API key in **Configure LLM** in the top bar.`,
+          text: `⚠️ **Error connecting to ${foxyConfig.provider.toUpperCase()}**: ${err.message}\n\nPlease verify your API key in **Configure LLM** in the top bar.`,
           timestamp: Date.now(),
           isStreaming: false
         };
@@ -451,7 +531,7 @@ export default function FoxyAiPage({
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const handleSaveToJournal = (text, idx) => {
+  const handleSaveToJournal = async (text, idx) => {
     try {
       // Clean tags like [METRIC: ...], [VERDICT: ...], [TABLE: ...] for clean note reading
       const cleanContent = text
@@ -471,22 +551,18 @@ export default function FoxyAiPage({
       };
       localStorage.setItem('tradeontip_quick_notes', JSON.stringify([newQuickNote, ...existingQuick]));
 
-      // 2. Save to NotesPage Independent Notes ('foxtrade_independent_notes_v2')
-      const savedInd = localStorage.getItem('foxtrade_independent_notes_v2');
-      const existingInd = savedInd ? JSON.parse(savedInd) : [];
+      // 2. Save to NotesPage Independent Notes (persisted to IDB + localStorage + Drive)
       const newIndNote = {
         id: `foxy_eod_${Date.now()}`,
         title: 'Foxy AI EOD Session Review',
         content: cleanContent,
         category: 'notes',
         tags: ['Foxy AI', 'EOD Review'],
-        pinned: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        isPinned: true,
       };
-      localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify([newIndNote, ...existingInd]));
+      await putIndependentNote(newIndNote);
 
-      // 3. Save to Daily Calendar notes ('foxtrade_notes_v2') under the target date
+      // 3. Save to Daily Calendar notes under the target date (persisted to IDB + localStorage + Drive)
       const dateMatch = cleanContent.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
       let targetDateKey = new Date().toISOString().slice(0, 10);
       if (dateMatch) {
@@ -497,28 +573,21 @@ export default function FoxyAiPage({
         else if (dmy) targetDateKey = `${dmy[3]}-${String(dmy[2]).padStart(2,'0')}-${String(dmy[1]).padStart(2,'0')}`;
       }
 
-      const savedDaily = localStorage.getItem('foxtrade_notes_v2');
-      const existingDaily = savedDaily ? JSON.parse(savedDaily) : {};
-      const currentDay = existingDaily[targetDateKey] || {};
-      const updatedScoped = {
-        ...(currentDay.scopedNotes || {}),
-        general: {
-          title: 'Foxy AI EOD Session Review',
-          content: cleanContent,
-          tags: ['Foxy AI', 'EOD Review'],
-          mood: 'good',
-          scope: 'general'
-        }
-      };
-      existingDaily[targetDateKey] = {
-        ...currentDay,
-        title: currentDay.title || 'Foxy AI EOD Session Review',
+      await saveDayNote(targetDateKey, {
+        title: 'Foxy AI EOD Session Review',
         content: cleanContent,
-        tags: Array.from(new Set([...(currentDay.tags || []), 'Foxy AI', 'EOD Review'])),
-        mood: currentDay.mood || 'good',
-        scopedNotes: updatedScoped
-      };
-      localStorage.setItem('foxtrade_notes_v2', JSON.stringify(existingDaily));
+        tags: ['Foxy AI', 'EOD Review'],
+        mood: 'good',
+        scopedNotes: {
+          general: {
+            title: 'Foxy AI EOD Session Review',
+            content: cleanContent,
+            tags: ['Foxy AI', 'EOD Review'],
+            mood: 'good',
+            scope: 'general'
+          }
+        }
+      });
 
       setSavedJournalIndex(idx);
       setTimeout(() => setSavedJournalIndex(null), 3000);
@@ -551,29 +620,23 @@ export default function FoxyAiPage({
         maxWidth: '720px',
         width: '100%',
         position: 'relative',
-        background: '#ffffff',
+        background: theme.inputBg,
         borderRadius: '30px',
         padding: '6px 10px 6px 10px',
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        border: '1px solid #e2e8f0',
+        border: `1px solid ${theme.borderInput}`,
         boxShadow: isCentered
-          ? '0 8px 30px -4px rgba(0,0,0,0.06), 0 2px 6px -1px rgba(0,0,0,0.02)'
-          : '0 4px 20px -2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.02)',
+          ? (isDark ? '0 8px 30px -4px rgba(0,0,0,0.5)' : '0 8px 30px -4px rgba(0,0,0,0.06), 0 2px 6px -1px rgba(0,0,0,0.02)')
+          : (isDark ? '0 4px 20px -2px rgba(0,0,0,0.4)' : '0 4px 20px -2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.02)'),
         transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
       }}
       onFocusCapture={(e) => {
-        e.currentTarget.style.borderColor = '#cbd5e1';
-        e.currentTarget.style.boxShadow = isCentered
-          ? '0 10px 32px -4px rgba(0,0,0,0.08), 0 0 0 2px rgba(226, 232, 240, 0.8)'
-          : '0 6px 24px -2px rgba(0,0,0,0.06), 0 0 0 2px rgba(226, 232, 240, 0.8)';
+        e.currentTarget.style.borderColor = isDark ? '#3b82f6' : '#cbd5e1';
       }}
       onBlurCapture={(e) => {
-        e.currentTarget.style.borderColor = '#e2e8f0';
-        e.currentTarget.style.boxShadow = isCentered
-          ? '0 8px 30px -4px rgba(0,0,0,0.06), 0 2px 6px -1px rgba(0,0,0,0.02)'
-          : '0 4px 20px -2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.02)';
+        e.currentTarget.style.borderColor = theme.borderInput;
       }}
     >
       {/* Floating Card directly above the input container, matching its exact width */}
@@ -586,10 +649,10 @@ export default function FoxyAiPage({
             left: 0,
             right: 0,
             width: '100%',
-            backgroundColor: '#ffffff',
+            backgroundColor: theme.bgCard,
             borderRadius: '20px',
-            border: '1px solid #e5e7eb',
-            boxShadow: '0 20px 40px -8px rgba(0,0,0,0.14), 0 4px 16px rgba(0,0,0,0.06)',
+            border: `1px solid ${theme.border}`,
+            boxShadow: isDark ? '0 20px 40px -8px rgba(0,0,0,0.7), 0 4px 16px rgba(0,0,0,0.4)' : '0 20px 40px -8px rgba(0,0,0,0.14), 0 4px 16px rgba(0,0,0,0.06)',
             padding: '8px',
             zIndex: 100,
             display: 'flex',
@@ -618,24 +681,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#eff6ff',
+              backgroundColor: isDark ? 'rgba(37,99,235,0.2)' : '#eff6ff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <Zap size={16} color="#2563eb" />
+              <Zap size={16} color="#3b82f6" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>Audit Open Risk</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Missing stop losses & portfolio risk</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>Audit Open Risk</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Missing stop losses & portfolio risk</span>
             </div>
           </button>
 
@@ -659,24 +722,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#f0fdf4',
+              backgroundColor: isDark ? 'rgba(5,150,105,0.2)' : '#f0fdf4',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <CalendarCheck size={16} color="#059669" />
+              <CalendarCheck size={16} color="#10b981" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>End-of-Day (EOD) Review</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Daily session debrief & discipline score</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>End-of-Day (EOD) Review</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Daily session debrief & discipline score</span>
             </div>
           </button>
 
@@ -700,24 +763,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#fffbeb',
+              backgroundColor: isDark ? 'rgba(217,119,6,0.2)' : '#fffbeb',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <Award size={16} color="#d97706" />
+              <Award size={16} color="#f59e0b" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>Weekly Report Card</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Letter grade & ₹ mistake cost audit</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>Weekly Report Card</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Letter grade & ₹ mistake cost audit</span>
             </div>
           </button>
 
@@ -741,24 +804,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#f5f3ff',
+              backgroundColor: isDark ? 'rgba(124,58,237,0.2)' : '#f5f3ff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <Tag size={16} color="#7c3aed" />
+              <Tag size={16} color="#a855f7" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>Auto-Tag & Mistake Classifier</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Audit FOMO, averaging down & playbooks</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>Auto-Tag & Mistake Classifier</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Audit FOMO, averaging down & playbooks</span>
             </div>
           </button>
 
@@ -783,24 +846,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#f0fdf4',
+              backgroundColor: isDark ? 'rgba(5,150,105,0.2)' : '#f0fdf4',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <FileSpreadsheet size={16} color="#059669" />
+              <FileSpreadsheet size={16} color="#10b981" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>Paste Contract Note / Trades</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Parse clipboard text for 1-click import</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>Paste Contract Note / Trades</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Parse clipboard text for 1-click import</span>
             </div>
           </button>
 
@@ -824,24 +887,24 @@ export default function FoxyAiPage({
               textAlign: 'left',
               transition: 'background-color 0.15s ease'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <div style={{
               width: '30px',
               height: '30px',
               borderRadius: '8px',
-              backgroundColor: '#eff6ff',
+              backgroundColor: isDark ? 'rgba(37,99,235,0.2)' : '#eff6ff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <ShieldCheck size={16} color="#1d4ed8" />
+              <ShieldCheck size={16} color="#3b82f6" />
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>Pre-Trade Risk Screener</span>
-              <span style={{ fontSize: '12.5px', color: '#6b7280', fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Gatekeeper cockpit before entering trade</span>
+              <span style={{ fontSize: '13.5px', fontWeight: 600, color: theme.textPrimary, whiteSpace: 'nowrap' }}>Pre-Trade Risk Screener</span>
+              <span style={{ fontSize: '12.5px', color: theme.textMuted, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Gatekeeper cockpit before entering trade</span>
             </div>
           </button>
         </div>
@@ -858,9 +921,9 @@ export default function FoxyAiPage({
           width: '32px',
           height: '32px',
           borderRadius: '50%',
-          border: plusMenuOpen ? '1px solid #d1d5db' : '1px solid #e5e7eb',
-          background: plusMenuOpen ? '#e5e7eb' : '#f3f4f6',
-          color: plusMenuOpen ? '#111827' : '#4b5563',
+          border: `1px solid ${theme.border}`,
+          background: plusMenuOpen ? theme.bgHover : theme.iconBg,
+          color: theme.textPrimary,
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -873,20 +936,14 @@ export default function FoxyAiPage({
           paddingBottom: '2px',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#e5e7eb';
-          e.currentTarget.style.color = '#111827';
-          e.currentTarget.style.borderColor = '#d1d5db';
+          e.currentTarget.style.background = theme.bgHover;
+          e.currentTarget.style.color = theme.textPrimary;
+          e.currentTarget.style.borderColor = theme.borderInput;
         }}
         onMouseLeave={(e) => {
-          if (!plusMenuOpen) {
-            e.currentTarget.style.background = '#f3f4f6';
-            e.currentTarget.style.color = '#4b5563';
-            e.currentTarget.style.borderColor = '#e5e7eb';
-          } else {
-            e.currentTarget.style.background = '#e5e7eb';
-            e.currentTarget.style.color = '#111827';
-            e.currentTarget.style.borderColor = '#d1d5db';
-          }
+          e.currentTarget.style.background = plusMenuOpen ? theme.bgHover : theme.iconBg;
+          e.currentTarget.style.color = theme.textPrimary;
+          e.currentTarget.style.borderColor = theme.border;
         }}
       >
         +
@@ -907,13 +964,13 @@ export default function FoxyAiPage({
           outline: 'none',
           backgroundColor: 'transparent',
           fontSize: '14.5px',
-          color: '#111827',
+          color: theme.textPrimary,
           resize: 'none',
           maxHeight: '160px',
           padding: '6px 4px',
           fontFamily: 'inherit',
           lineHeight: '1.5',
-          caretColor: '#1d4ed8',
+          caretColor: '#3b82f6',
         }}
       />
 
@@ -929,7 +986,7 @@ export default function FoxyAiPage({
             height: '34px',
             borderRadius: '50%',
             border: 'none',
-            background: '#111827',
+            background: isDark ? '#334155' : '#111827',
             color: '#ffffff',
             cursor: 'pointer',
             display: 'flex',
@@ -944,7 +1001,7 @@ export default function FoxyAiPage({
             e.currentTarget.style.transform = 'scale(1.06)';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#111827';
+            e.currentTarget.style.background = isDark ? '#334155' : '#111827';
             e.currentTarget.style.transform = 'scale(1)';
           }}
         >
@@ -963,8 +1020,8 @@ export default function FoxyAiPage({
             border: 'none',
             background: inputValue.trim() && !isLoading
               ? '#2563eb'
-              : '#f3f4f6',
-            color: inputValue.trim() && !isLoading ? '#ffffff' : '#9ca3af',
+              : (isDark ? '#283548' : '#f3f4f6'),
+            color: inputValue.trim() && !isLoading ? '#ffffff' : theme.textMuted,
             cursor: inputValue.trim() && !isLoading ? 'pointer' : 'default',
             display: 'flex',
             alignItems: 'center',
@@ -1011,8 +1068,8 @@ export default function FoxyAiPage({
       display: 'flex',
       height: 'calc(100vh - 104px)',
       width: '100%',
-      backgroundColor: '#ffffff',
-      color: '#111827',
+      backgroundColor: theme.bgPage,
+      color: theme.textPrimary,
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       position: 'relative',
       overflow: 'hidden'
@@ -1021,8 +1078,8 @@ export default function FoxyAiPage({
       <div style={{
         width: sidebarOpen ? '260px' : '52px',
         minWidth: sidebarOpen ? '260px' : '52px',
-        backgroundColor: '#f9fafb',
-        borderRight: '1px solid #f0f0f2',
+        backgroundColor: theme.bgSidebar,
+        borderRight: `1px solid ${theme.borderSidebar}`,
         display: 'flex',
         flexDirection: 'column',
         transition: 'width 0.22s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1058,7 +1115,7 @@ export default function FoxyAiPage({
                 transition: 'background-color 0.15s ease',
                 padding: 0
               }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >
               <FoxTradeLogo size={22} />
@@ -1075,7 +1132,7 @@ export default function FoxyAiPage({
                 borderRadius: '8px',
                 border: 'none',
                 background: 'none',
-                color: '#374151',
+                color: theme.textSecondary,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -1084,12 +1141,12 @@ export default function FoxyAiPage({
                 transition: 'all 0.15s ease'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#f3f4f6';
-                e.currentTarget.style.color = '#111827';
+                e.currentTarget.style.backgroundColor = theme.bgHover;
+                e.currentTarget.style.color = theme.textPrimary;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#374151';
+                e.currentTarget.style.color = theme.textSecondary;
               }}
             >
               <SquarePen size={19} />
@@ -1109,7 +1166,7 @@ export default function FoxyAiPage({
                 borderRadius: '8px',
                 border: 'none',
                 background: 'none',
-                color: '#374151',
+                color: theme.textSecondary,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -1118,12 +1175,12 @@ export default function FoxyAiPage({
                 transition: 'all 0.15s ease'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#f3f4f6';
-                e.currentTarget.style.color = '#111827';
+                e.currentTarget.style.backgroundColor = theme.bgHover;
+                e.currentTarget.style.color = theme.textPrimary;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#374151';
+                e.currentTarget.style.color = theme.textSecondary;
               }}
             >
               <Search size={19} />
@@ -1140,7 +1197,7 @@ export default function FoxyAiPage({
                 borderRadius: '8px',
                 border: 'none',
                 background: 'none',
-                color: '#374151',
+                color: theme.textSecondary,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -1149,12 +1206,12 @@ export default function FoxyAiPage({
                 transition: 'all 0.15s ease'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#f3f4f6';
-                e.currentTarget.style.color = '#111827';
+                e.currentTarget.style.backgroundColor = theme.bgHover;
+                e.currentTarget.style.color = theme.textPrimary;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = '#374151';
+                e.currentTarget.style.color = theme.textSecondary;
               }}
             >
               <MessageSquare size={19} />
@@ -1213,11 +1270,11 @@ export default function FoxyAiPage({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              borderBottom: '1px solid #f0f0f2'
+              borderBottom: `1px solid ${theme.borderSidebar}`
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <FoxTradeLogo size={22} />
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#111827', letterSpacing: '-0.2px' }}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.2px' }}>
                   Foxy AI
                 </span>
               </div>
@@ -1228,7 +1285,7 @@ export default function FoxyAiPage({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: '#6b7280',
+                  color: theme.textMuted,
                   cursor: 'pointer',
                   padding: '6px',
                   borderRadius: '8px',
@@ -1236,7 +1293,7 @@ export default function FoxyAiPage({
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
                 <PanelLeftClose size={16} />
@@ -1251,11 +1308,11 @@ export default function FoxyAiPage({
                   flex: 1,
                   padding: '8px 12px',
                   borderRadius: '10px',
-                  border: '1px solid #e5e7eb',
-                  backgroundColor: '#ffffff',
+                  border: `1px solid ${theme.border}`,
+                  backgroundColor: theme.bgCard,
                   fontSize: '13px',
                   fontWeight: 600,
-                  color: '#111827',
+                  color: theme.textPrimary,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
@@ -1264,19 +1321,19 @@ export default function FoxyAiPage({
                   transition: 'all 0.15s ease'
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#d1d5db';
-                  e.currentTarget.style.backgroundColor = '#fafbfc';
+                  e.currentTarget.style.borderColor = theme.borderInput;
+                  e.currentTarget.style.backgroundColor = theme.bgHover;
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#e5e7eb';
-                  e.currentTarget.style.backgroundColor = '#ffffff';
+                  e.currentTarget.style.borderColor = theme.border;
+                  e.currentTarget.style.backgroundColor = theme.bgCard;
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Plus size={15} color="#111827" />
+                  <Plus size={15} color={theme.textPrimary} />
                   <span>New chat</span>
                 </div>
-                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>⌘N</span>
+                <span style={{ fontSize: '11px', color: theme.textMuted, fontWeight: 500 }}>⌘N</span>
               </button>
 
               <button
@@ -1291,18 +1348,18 @@ export default function FoxyAiPage({
                 style={{
                   padding: '8px',
                   borderRadius: '10px',
-                  border: '1px solid #e5e7eb',
-                  backgroundColor: isSearchOpen ? '#f3f4f6' : '#ffffff',
-                  color: '#4b5563',
+                  border: `1px solid ${theme.border}`,
+                  backgroundColor: isSearchOpen ? theme.bgHover : theme.bgCard,
+                  color: theme.textSecondary,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   transition: 'all 0.15s ease'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                 onMouseLeave={(e) => {
-                  if (!isSearchOpen) e.currentTarget.style.backgroundColor = '#ffffff';
+                  if (!isSearchOpen) e.currentTarget.style.backgroundColor = theme.bgCard;
                 }}
               >
                 <Search size={15} />
@@ -1318,10 +1375,10 @@ export default function FoxyAiPage({
                   gap: '6px',
                   padding: '5px 8px',
                   borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  backgroundColor: '#ffffff'
+                  border: `1px solid ${theme.border}`,
+                  backgroundColor: theme.bgCard
                 }}>
-                  <Search size={13} color="#9ca3af" />
+                  <Search size={13} color={theme.textMuted} />
                   <input
                     ref={searchInputRef}
                     type="text"
@@ -1333,14 +1390,14 @@ export default function FoxyAiPage({
                       outline: 'none',
                       width: '100%',
                       fontSize: '12px',
-                      color: '#111827',
+                      color: theme.textPrimary,
                       backgroundColor: 'transparent'
                     }}
                   />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery('')}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#9ca3af', fontSize: '11px' }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: theme.textMuted, fontSize: '11px' }}
                     >
                       ✕
                     </button>
@@ -1385,8 +1442,8 @@ export default function FoxyAiPage({
                     padding: '7px 8px',
                     borderRadius: '8px',
                     cursor: 'pointer',
-                    backgroundColor: isActive ? '#ececee' : (isHovered || isMenuOpen ? '#f3f4f6' : 'transparent'),
-                    color: isActive ? '#111827' : '#4b5563',
+                    backgroundColor: isActive ? theme.bgActive : (isHovered || isMenuOpen ? theme.bgHover : 'transparent'),
+                    color: isActive ? theme.textPrimary : theme.textSecondary,
                     fontSize: '13px',
                     fontWeight: isActive ? 600 : 500,
                     transition: 'background-color 0.12s ease',
@@ -1408,7 +1465,7 @@ export default function FoxyAiPage({
                     {chat.isPinned && (
                       <Pin
                         size={12}
-                        color={isActive ? '#111827' : '#6b7280'}
+                        color={isActive ? theme.textPrimary : theme.textMuted}
                         style={{ transform: 'rotate(45deg)', flexShrink: 0 }}
                       />
                     )}
@@ -1441,8 +1498,8 @@ export default function FoxyAiPage({
                             borderRadius: '6px',
                             border: '1px solid #3b82f6',
                             outline: 'none',
-                            backgroundColor: '#ffffff',
-                            color: '#111827',
+                            backgroundColor: theme.bgCard,
+                            color: theme.textPrimary,
                             boxShadow: '0 0 0 2px rgba(59, 130, 246, 0.2)'
                           }}
                         />
@@ -1480,7 +1537,7 @@ export default function FoxyAiPage({
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: chat.isPinned ? '#111827' : '#9ca3af',
+                          color: chat.isPinned ? theme.textPrimary : theme.textMuted,
                           cursor: 'pointer',
                           padding: '3px 4px',
                           borderRadius: '4px',
@@ -1490,15 +1547,15 @@ export default function FoxyAiPage({
                           transition: 'color 0.12s ease, background-color 0.12s ease'
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.color = '#111827';
-                          e.currentTarget.style.backgroundColor = '#e5e7eb';
+                          e.currentTarget.style.color = theme.textPrimary;
+                          e.currentTarget.style.backgroundColor = theme.bgHover;
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.color = chat.isPinned ? '#111827' : '#9ca3af';
+                          e.currentTarget.style.color = chat.isPinned ? theme.textPrimary : theme.textMuted;
                           e.currentTarget.style.backgroundColor = 'transparent';
                         }}
                       >
-                        <Pin size={13} fill={chat.isPinned ? '#111827' : 'none'} style={{ transform: 'rotate(45deg)' }} />
+                        <Pin size={13} fill={chat.isPinned ? theme.textPrimary : 'none'} style={{ transform: 'rotate(45deg)' }} />
                       </button>
 
                       {/* 3-Dot Menu Button */}
@@ -1510,9 +1567,9 @@ export default function FoxyAiPage({
                         }}
                         title="More options"
                         style={{
-                          background: isMenuOpen ? '#e5e7eb' : 'none',
+                          background: isMenuOpen ? theme.bgHover : 'none',
                           border: 'none',
-                          color: isMenuOpen ? '#111827' : '#9ca3af',
+                          color: isMenuOpen ? theme.textPrimary : theme.textMuted,
                           cursor: 'pointer',
                           padding: '3px 4px',
                           borderRadius: '4px',
@@ -1522,12 +1579,12 @@ export default function FoxyAiPage({
                           transition: 'color 0.12s ease, background-color 0.12s ease'
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.color = '#111827';
-                          e.currentTarget.style.backgroundColor = '#e5e7eb';
+                          e.currentTarget.style.color = theme.textPrimary;
+                          e.currentTarget.style.backgroundColor = theme.bgHover;
                         }}
                         onMouseLeave={(e) => {
                           if (!isMenuOpen) {
-                            e.currentTarget.style.color = '#9ca3af';
+                            e.currentTarget.style.color = theme.textMuted;
                             e.currentTarget.style.backgroundColor = 'transparent';
                           }
                         }}
@@ -1537,7 +1594,7 @@ export default function FoxyAiPage({
                     </div>
                   )}
 
-                  {/* 3-Dot Dropdown Menu (Clean light theme matching FoxTrade) */}
+                  {/* 3-Dot Dropdown Menu (Clean theme matching FoxTrade) */}
                   {isMenuOpen && (
                     <div
                       ref={chatMenuRef}
@@ -1548,10 +1605,10 @@ export default function FoxyAiPage({
                         top: '32px',
                         zIndex: 100,
                         width: '142px',
-                        backgroundColor: '#ffffff',
+                        backgroundColor: theme.bgCard,
                         borderRadius: '10px',
-                        border: '1px solid #e5e7eb',
-                        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)',
+                        border: `1px solid ${theme.border}`,
+                        boxShadow: isDark ? '0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4)' : '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)',
                         padding: '5px',
                         display: 'flex',
                         flexDirection: 'column',
@@ -1571,21 +1628,21 @@ export default function FoxyAiPage({
                           background: 'none',
                           border: 'none',
                           borderRadius: '7px',
-                          color: '#1f2937',
+                          color: theme.textPrimary,
                           fontSize: '13px',
                           fontWeight: 500,
                           cursor: 'pointer',
                           textAlign: 'left',
                           transition: 'background-color 0.12s ease'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
-                        <Pencil size={14} color="#4b5563" />
+                        <Pencil size={14} color={theme.textMuted} />
                         <span>Rename</span>
                       </button>
 
-                      <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '3px 4px' }} />
+                      <div style={{ height: '1px', backgroundColor: theme.borderSidebar, margin: '3px 4px' }} />
 
                       {/* Pin / Unpin */}
                       <button
@@ -1604,21 +1661,21 @@ export default function FoxyAiPage({
                           background: 'none',
                           border: 'none',
                           borderRadius: '7px',
-                          color: '#1f2937',
+                          color: theme.textPrimary,
                           fontSize: '13px',
                           fontWeight: 500,
                           cursor: 'pointer',
                           textAlign: 'left',
                           transition: 'background-color 0.12s ease'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
-                        <Pin size={14} color="#4b5563" style={{ transform: 'rotate(45deg)' }} />
+                        <Pin size={14} color={theme.textMuted} style={{ transform: 'rotate(45deg)' }} />
                         <span>{chat.isPinned ? 'Unpin chat' : 'Pin chat'}</span>
                       </button>
 
-                      <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '3px 4px' }} />
+                      <div style={{ height: '1px', backgroundColor: theme.borderSidebar, margin: '3px 4px' }} />
 
                       {/* Delete */}
                       <button
@@ -1644,7 +1701,7 @@ export default function FoxyAiPage({
                           textAlign: 'left',
                           transition: 'background-color 0.12s ease'
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#fef2f2'}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(220,38,38,0.15)' : '#fef2f2'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
                         <Trash2 size={14} color="#dc2626" />
@@ -1673,13 +1730,13 @@ export default function FoxyAiPage({
                         borderRadius: '6px',
                         transition: 'background-color 0.12s ease'
                       }}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                     >
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                         Pinned ({pinnedChats.length})
                       </span>
-                      {pinnedCollapsed ? <ChevronRight size={13} color="#9ca3af" /> : <ChevronDown size={13} color="#9ca3af" />}
+                      {pinnedCollapsed ? <ChevronRight size={13} color={theme.textMuted} /> : <ChevronDown size={13} color={theme.textMuted} />}
                     </div>
                     {!pinnedCollapsed && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
@@ -1704,13 +1761,13 @@ export default function FoxyAiPage({
                       marginTop: pinnedChats.length > 0 ? '6px' : '0',
                       transition: 'background-color 0.12s ease'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                   >
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       Recent ({recentChats.length})
                     </span>
-                    {recentCollapsed ? <ChevronRight size={13} color="#9ca3af" /> : <ChevronDown size={13} color="#9ca3af" />}
+                    {recentCollapsed ? <ChevronRight size={13} color={theme.textMuted} /> : <ChevronDown size={13} color={theme.textMuted} />}
                   </div>
                   {!recentCollapsed && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
@@ -1726,8 +1783,8 @@ export default function FoxyAiPage({
         {/* Sidebar Footer: Model Status & Key Configuration Trigger */}
         <div style={{
           padding: '12px',
-          borderTop: '1px solid #f0f0f2',
-          backgroundColor: '#fafbfc'
+          borderTop: `1px solid ${theme.borderSidebar}`,
+          backgroundColor: theme.bgSidebar
         }}>
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -1735,8 +1792,8 @@ export default function FoxyAiPage({
               width: '100%',
               padding: '8px 10px',
               borderRadius: '8px',
-              border: '1px solid #e5e7eb',
-              backgroundColor: '#ffffff',
+              border: `1px solid ${theme.border}`,
+              backgroundColor: theme.bgCard,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -1751,34 +1808,32 @@ export default function FoxyAiPage({
                 backgroundColor: foxyConfig.apiKey ? '#10b981' : '#f59e0b'
               }} />
               <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: '#111827' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: theme.textPrimary }}>
                   {currentModelObj?.name?.split(' ')[0] || 'Gemini'}
                 </div>
-                <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                <div style={{ fontSize: '10px', color: theme.textMuted }}>
                   {foxyConfig.apiKey ? 'Connected' : 'Free Local Mode'}
                 </div>
               </div>
             </div>
 
-            <Settings size={14} color="#6b7280" />
+            <Settings size={14} color={theme.textMuted} />
           </button>
         </div>
           </div>
         )}
       </div>
 
-      {/* ─── MAIN CHAT AREA (WHITE MINIMALIST CHATGPT STYLE) ─── */}
+      {/* ─── MAIN CHAT AREA ─── */}
       <div style={{
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: '#ffffff',
+        backgroundColor: theme.bgPage,
         position: 'relative',
         overflow: 'hidden'
       }}>
-
-
 
         {/* Message Container */}
         <div style={{
@@ -1789,277 +1844,345 @@ export default function FoxyAiPage({
           flexDirection: 'column',
           alignItems: 'center'
         }}>
-          {messages.length === 0 ? (
-            /* ─── EMPTY STATE: CENTERED CHAT BOX & BALANCED PILLS ─── */
-            <div style={{
-              maxWidth: '680px',
-              width: '100%',
-              margin: 'auto 0',
-              textAlign: 'center',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '20px',
-              padding: '20px 0'
-            }}>
-              {/* FoxTrade Emblem */}
-              <div style={{
-                width: '52px',
-                height: '52px',
-                borderRadius: '16px',
-                backgroundColor: '#ffffff',
-                border: '1px solid #e5e7eb',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <FoxTradeLogo size={30} />
-              </div>
+          {(() => {
+            const currentChat = chats.find(c => c.id === activeChatId);
+            const visibleMessages = messages.filter(msg => {
+              const text = msg.content !== undefined && msg.content !== null ? msg.content : (msg.text || '');
+              return text.trim().length > 0 || msg.isStreaming;
+            });
 
-              {/* Clean Heading */}
-              <h1 style={{
-                fontSize: '28px',
-                fontWeight: 700,
-                color: '#111827',
-                margin: '0 0 6px 0',
-                letterSpacing: '-0.5px'
-              }}>
-                Where should we begin?
-              </h1>
+            const matchedStarter = currentChat?.title && currentChat.title !== 'New conversation'
+              ? QUICK_STARTERS.find(s => 
+                  s.prompt.toLowerCase().startsWith(currentChat.title.toLowerCase().replace(/\.\.\.$/, '')) ||
+                  s.label.toLowerCase().includes(currentChat.title.toLowerCase())
+                )
+              : null;
+            const promptToReRun = matchedStarter ? matchedStarter.prompt : currentChat?.title;
 
-              {/* 4 Perfectly Balanced Quick Starter Cards (2x2 Grid) */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: '10px',
-                width: '100%',
-                marginTop: '4px'
-              }}>
-                {QUICK_STARTERS.map((starter, idx) => {
-                  const Icon = starter.icon;
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => handleSendMessage(starter.prompt)}
-                      style={{
-                        padding: '12px 14px',
-                        borderRadius: '12px',
-                        border: '1px solid #e5e7eb',
-                        backgroundColor: '#ffffff',
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        transition: 'all 0.15s ease',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = '#111827';
-                        e.currentTarget.style.backgroundColor = '#fafbfc';
-                        e.currentTarget.style.transform = 'translateY(-1px)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = '#e5e7eb';
-                        e.currentTarget.style.backgroundColor = '#ffffff';
-                        e.currentTarget.style.transform = 'none';
-                      }}
-                    >
-                      <div style={{
-                        padding: '6px',
-                        borderRadius: '8px',
-                        backgroundColor: '#f3f4f6',
-                        color: '#111827',
-                        display: 'flex'
-                      }}>
-                        <Icon size={14} />
+            if (visibleMessages.length === 0) {
+              return (
+                /* ─── EMPTY STATE: CENTERED CHAT BOX & BALANCED PILLS ─── */
+                <div style={{
+                  maxWidth: '680px',
+                  width: '100%',
+                  margin: 'auto 0',
+                  textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '20px',
+                  padding: '20px 0'
+                }}>
+                  {/* FoxTrade Emblem */}
+                  <div style={{
+                    width: '52px',
+                    height: '52px',
+                    borderRadius: '16px',
+                    backgroundColor: theme.bgCard,
+                    border: `1px solid ${theme.border}`,
+                    boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.04)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <FoxTradeLogo size={30} />
+                  </div>
+
+                  {/* Clean Heading */}
+                  <h1 style={{
+                    fontSize: '26px',
+                    fontWeight: 700,
+                    color: theme.textPrimary,
+                    margin: '0 0 4px 0',
+                    letterSpacing: '-0.5px'
+                  }}>
+                    {currentChat && currentChat.title !== 'New conversation' ? currentChat.title : 'Where should we begin?'}
+                  </h1>
+
+                  {currentChat && currentChat.title !== 'New conversation' && promptToReRun && (
+                    <div style={{
+                      backgroundColor: theme.bgHover,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: '12px',
+                      padding: '12px 16px',
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.2)' : '0 1px 2px rgba(0,0,0,0.02)'
+                    }}>
+                      <div style={{ textAlign: 'left', flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '11px', fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                          Previous Session Topic
+                        </div>
+                        <div style={{ fontSize: '13px', color: theme.textPrimary, fontWeight: 500, marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {promptToReRun}
+                        </div>
                       </div>
-                      <span style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>
-                        {starter.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            /* ─── ACTIVE CHAT CONVERSATION FLOW ─── */
-            <div style={{
-              maxWidth: '740px',
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '24px'
-            }}>
-              {messages.map((msg, idx) => {
-                const isUser = msg.role === 'user';
+                      <button
+                        onClick={() => handleSendMessage(promptToReRun)}
+                        disabled={isLoading || isStreaming}
+                        style={{
+                          backgroundColor: '#0e3a6c',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '7px 14px',
+                          fontSize: '12.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          flexShrink: 0
+                        }}
+                      >
+                        <Zap size={13} />
+                        <span>Run Query</span>
+                      </button>
+                    </div>
+                  )}
 
-                // User query message — aligned strictly to the RIGHT
-                if (isUser) {
+                  {/* 4 Perfectly Balanced Quick Starter Cards (2x2 Grid) */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '10px',
+                    width: '100%',
+                    marginTop: '4px'
+                  }}>
+                    {QUICK_STARTERS.map((starter, idx) => {
+                      const Icon = starter.icon;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => handleSendMessage(starter.prompt)}
+                          style={{
+                            padding: '12px 14px',
+                            borderRadius: '12px',
+                            border: `1px solid ${theme.starterBorder}`,
+                            backgroundColor: theme.starterBg,
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            transition: 'all 0.15s ease',
+                            boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.2)' : '0 1px 2px rgba(0,0,0,0.02)'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = theme.borderInput;
+                            e.currentTarget.style.backgroundColor = theme.starterHoverBg;
+                            e.currentTarget.style.transform = 'translateY(-1px)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = theme.starterBorder;
+                            e.currentTarget.style.backgroundColor = theme.starterBg;
+                            e.currentTarget.style.transform = 'none';
+                          }}
+                        >
+                          <div style={{
+                            padding: '6px',
+                            borderRadius: '8px',
+                            backgroundColor: theme.iconBg,
+                            color: theme.textPrimary,
+                            display: 'flex'
+                          }}>
+                            <Icon size={14} />
+                          </div>
+                          <span style={{ fontSize: '13px', fontWeight: 500, color: theme.textSecondary }}>
+                            {starter.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              /* ─── ACTIVE CHAT CONVERSATION FLOW ─── */
+              <div style={{
+                maxWidth: '740px',
+                width: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '24px'
+              }}>
+                {visibleMessages.map((msg, idx) => {
+                  const isUser = msg.role === 'user' || msg.sender === 'user';
+                  const messageText = msg.content !== undefined && msg.content !== null ? msg.content : (msg.text || '');
+
+                  // User query message — aligned strictly to the RIGHT
+                  if (isUser) {
+                    return (
+                      <div
+                        key={msg.id || idx}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'flex-end',
+                          width: '100%',
+                          marginBottom: '4px'
+                        }}
+                      >
+                        <div
+                          style={{
+                            backgroundColor: theme.userBubbleBg,
+                            color: '#ffffff',
+                            padding: '10px 18px',
+                            borderRadius: '22px',
+                            fontSize: '14px',
+                            lineHeight: '1.5',
+                            maxWidth: '78%',
+                            wordBreak: 'break-word',
+                            whiteSpace: 'pre-wrap',
+                            boxShadow: isDark ? '0 2px 8px rgba(0, 0, 0, 0.4)' : '0 2px 8px rgba(14, 58, 108, 0.15)'
+                          }}
+                        >
+                          {messageText}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Foxy AI response — aligned strictly to the LEFT
                   return (
                     <div
                       key={msg.id || idx}
                       style={{
                         display: 'flex',
-                        justifyContent: 'flex-end',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        alignSelf: 'flex-start',
                         width: '100%',
-                        marginBottom: '4px'
+                        marginBottom: '8px'
                       }}
                     >
-                      <div
-                        style={{
-                          backgroundColor: '#0e3a6c', // Sleek ChatGPT dark navy bubble matching screenshot
-                          color: '#ffffff',
-                          padding: '10px 18px',
-                          borderRadius: '22px',
-                          fontSize: '14px',
-                          lineHeight: '1.5',
-                          maxWidth: '78%',
-                          wordBreak: 'break-word',
-                          whiteSpace: 'pre-wrap',
-                          boxShadow: '0 2px 8px rgba(14, 58, 108, 0.15)'
-                        }}
-                      >
-                        {msg.content}
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '8px',
+                        backgroundColor: theme.bgCard,
+                        border: `1px solid ${theme.border}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        marginTop: '2px'
+                      }}>
+                        <FoxTradeLogo size={16} />
+                      </div>
+
+                      <div style={{
+                        flex: 1,
+                        color: theme.textPrimary,
+                        fontSize: '14px',
+                        lineHeight: '1.6',
+                        position: 'relative'
+                      }}>
+                        <div>
+                          {!messageText && msg.isStreaming ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0' }}>
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite' }} />
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite 0.22s' }} />
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite 0.44s' }} />
+                            </div>
+                          ) : (
+                            <FoxyResponseRenderer
+                              content={messageText}
+                              onImportTrades={handleImportTrades}
+                              isStreaming={msg.isStreaming}
+                              isDark={isDark}
+                              themeMode={currentTheme}
+                            />
+                          )}
+                        </div>
+
+                        {!msg.isStreaming && messageText && (
+                          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              onClick={() => copyToClipboard(messageText, idx)}
+                              title="Copy response"
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: theme.textMuted,
+                                cursor: 'pointer',
+                                padding: '4px',
+                                borderRadius: '4px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '11px'
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.color = theme.textPrimary}
+                              onMouseLeave={(e) => e.currentTarget.style.color = theme.textMuted}
+                            >
+                              {copiedIndex === idx ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                              <span>{copiedIndex === idx ? 'Copied' : 'Copy'}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleSaveToJournal(messageText, idx)}
+                              title="Save this analysis as a journal note"
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: savedJournalIndex === idx ? '#10b981' : theme.textMuted,
+                                cursor: 'pointer',
+                                padding: '4px',
+                                borderRadius: '4px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '11px'
+                              }}
+                              onMouseEnter={(e) => {
+                                if (savedJournalIndex !== idx) e.currentTarget.style.color = theme.textPrimary;
+                              }}
+                              onMouseLeave={(e) => {
+                                if (savedJournalIndex !== idx) e.currentTarget.style.color = theme.textMuted;
+                              }}
+                            >
+                              {savedJournalIndex === idx ? <BookmarkCheck size={12} color="#10b981" /> : <CalendarCheck size={12} />}
+                              <span>{savedJournalIndex === idx ? 'Saved to Notes' : 'Save to Journal'}</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
-                }
+                })}
 
-                // Foxy AI response — aligned strictly to the LEFT
-                return (
-                  <div
-                    key={msg.id || idx}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: '12px',
-                      alignSelf: 'flex-start',
-                      width: '100%',
-                      marginBottom: '8px'
-                    }}
-                  >
+                {/* Typing / Loading indicator (fallback if no streaming message in progress) */}
+                {isLoading && !isStreaming && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', alignSelf: 'flex-start' }}>
                     <div style={{
                       width: '28px',
                       height: '28px',
                       borderRadius: '8px',
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #e5e7eb',
+                      backgroundColor: theme.bgCard,
+                      border: `1px solid ${theme.border}`,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
-                      marginTop: '2px'
+                      justifyContent: 'center'
                     }}>
                       <FoxTradeLogo size={16} />
                     </div>
-
-                    <div style={{
-                      flex: 1,
-                      color: '#111827',
-                      fontSize: '14px',
-                      lineHeight: '1.6',
-                      position: 'relative'
-                    }}>
-                      <div>
-                        {!msg.content && msg.isStreaming ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0' }}>
-                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite' }} />
-                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.22s' }} />
-                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.44s' }} />
-                          </div>
-                        ) : (
-                          <FoxyResponseRenderer
-                            content={msg.content}
-                            onImportTrades={handleImportTrades}
-                            isStreaming={msg.isStreaming}
-                          />
-                        )}
-                      </div>
-
-                      {!msg.isStreaming && msg.content && (
-                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <button
-                            onClick={() => copyToClipboard(msg.content, idx)}
-                            title="Copy response"
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: '#9ca3af',
-                              cursor: 'pointer',
-                              padding: '4px',
-                              borderRadius: '4px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '11px'
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.color = '#111827'}
-                            onMouseLeave={(e) => e.currentTarget.style.color = '#9ca3af'}
-                          >
-                            {copiedIndex === idx ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                            <span>{copiedIndex === idx ? 'Copied' : 'Copy'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleSaveToJournal(msg.content, idx)}
-                            title="Save this analysis as a journal note"
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: savedJournalIndex === idx ? '#10b981' : '#9ca3af',
-                              cursor: 'pointer',
-                              padding: '4px',
-                              borderRadius: '4px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '11px'
-                            }}
-                            onMouseEnter={(e) => {
-                              if (savedJournalIndex !== idx) e.currentTarget.style.color = '#111827';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (savedJournalIndex !== idx) e.currentTarget.style.color = '#9ca3af';
-                            }}
-                          >
-                            {savedJournalIndex === idx ? <BookmarkCheck size={12} color="#10b981" /> : <CalendarCheck size={12} />}
-                            <span>{savedJournalIndex === idx ? 'Saved to Notes' : 'Save to Journal'}</span>
-                          </button>
-                        </div>
-                      )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0' }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite' }} />
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite 0.22s' }} />
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: theme.textMuted, animation: 'foxyPulse 1.2s ease-in-out infinite 0.44s' }} />
                     </div>
                   </div>
-                );
-              })}
+                )}
 
-              {/* Typing / Loading indicator (fallback if no streaming message in progress) */}
-              {isLoading && !isStreaming && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', alignSelf: 'flex-start' }}>
-                  <div style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '8px',
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <FoxTradeLogo size={16} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0' }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite' }} />
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.22s' }} />
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af', animation: 'foxyPulse 1.2s ease-in-out infinite 0.44s' }} />
-                  </div>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} style={{ height: '100px' }} />
-            </div>
-          )}
+                <div ref={messagesEndRef} style={{ height: '100px' }} />
+              </div>
+            );
+          })()}
         </div>
 
         {/* ─── FLOATING INPUT BAR (always visible at bottom, truly floating) ─── */}
@@ -2072,7 +2195,7 @@ export default function FoxyAiPage({
           flexDirection: 'column',
           alignItems: 'center',
           padding: '0 20px 18px 20px',
-          background: 'linear-gradient(to top, rgba(255,255,255,1) 60%, rgba(255,255,255,0) 100%)',
+          background: theme.inputGradient,
           pointerEvents: 'none',
           zIndex: 10,
         }}>
@@ -2087,6 +2210,8 @@ export default function FoxyAiPage({
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onConfigSaved={(newCfg) => setFoxyConfig(newCfg)}
+        themeMode={currentTheme}
+        isDark={isDark}
       />
 
       {/* ─── PRE-TRADE SCREENER PANEL ─── */}
@@ -2095,6 +2220,8 @@ export default function FoxyAiPage({
         onClose={() => setIsPreTradeOpen(false)}
         trades={trades}
         portfolioCapital={metrics?.portfolioCapital || portfolioCapital || 0}
+        themeMode={currentTheme}
+        isDark={isDark}
       />
     </div>
     </>

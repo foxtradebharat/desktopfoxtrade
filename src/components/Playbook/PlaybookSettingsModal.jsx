@@ -411,7 +411,7 @@ export default function PlaybookSettingsModal({
               {renderToggle(
                 'excludeBreakevenFromWinRate',
                 'Exclude Breakeven Trades from Win Rate %',
-                'Formula: Wins / (Wins + Losses). Breakeven trades (₹0 P&L) will not dilute your systematic win percentage (Nexus standard)',
+                'Formula: Wins / (Wins + Losses). Breakeven trades (₹0 P&L) will not dilute your systematic win percentage',
                 excludeBreakevenFromWinRate,
                 val => onUpdateSetting('excludeBreakevenFromWinRate', val)
               )}

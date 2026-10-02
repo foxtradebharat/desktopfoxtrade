@@ -14,10 +14,12 @@ import {
   Quote,
   Code
 } from 'lucide-react';
-import { db } from '../../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import {
+  getIndependentNotes,
+  saveIndependentNotes,
+  subscribeToIndependentNotes,
+} from '../../db/noteStore';
 
-const LS_IND_KEY = 'foxtrade_independent_notes_v2';
 const IND_CATEGORIES = [
   { key: 'notes', label: 'Notes', icon: StickyNote },
   { key: 'tasks', label: 'Tasks', icon: ClipboardList },
@@ -28,7 +30,7 @@ const IND_CATEGORIES = [
 export default function PlaybookScratchpad({ user }) {
   const [notes, setNotes] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(LS_IND_KEY)) || [];
+      return JSON.parse(localStorage.getItem('foxtrade_independent_notes_v2')) || [];
     } catch {
       return [];
     }
@@ -38,15 +40,20 @@ export default function PlaybookScratchpad({ user }) {
   const [selectedId, setSelectedId] = useState(null);
   const [search, setSearch] = useState('');
 
+  // Keep synced across components and IndexedDB in real time
+  useEffect(() => {
+    getIndependentNotes().then(idbNotes => {
+      if (Array.isArray(idbNotes) && idbNotes.length > 0) setNotes(idbNotes);
+    });
+    return subscribeToIndependentNotes(updatedNotes => {
+      setNotes(updatedNotes);
+    });
+  }, []);
+
   const persist = useCallback((updated) => {
     setNotes(updated);
-    try {
-      localStorage.setItem(LS_IND_KEY, JSON.stringify(updated));
-    } catch {}
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { independentNotes: updated }, { merge: true }).catch(() => {});
-    }
-  }, [user]);
+    saveIndependentNotes(updated);
+  }, []);
 
   const filtered = notes.filter(n =>
     n.category === activeCategory &&

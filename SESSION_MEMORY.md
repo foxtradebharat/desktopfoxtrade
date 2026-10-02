@@ -49,5 +49,5 @@
 
 ## 3. 📂 Core Calculation Files
 - [FOXTRADE_CALCULATION_FORMULAS.md](file:///d:/tradeontip/FOXTRADE_CALCULATION_FORMULAS.md) — Master calculation engine specification.
-- [nexusCalculationEngine.js](file:///d:/tradeontip/src/utils/nexusCalculationEngine.js) — 100% verified drop-in pure calculation engine.
+- [foxCalculationEngine.js](file:///d:/tradeontip/src/utils/foxCalculationEngine.js) — 100% verified drop-in pure calculation engine.
 - [Dashboard.jsx](file:///d:/tradeontip/src/Dashboard.jsx) — State management and metric aggregations.

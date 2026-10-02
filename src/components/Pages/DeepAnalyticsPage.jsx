@@ -46,7 +46,7 @@ const fmtINR = (v, sign = false) => {
   const abs = Math.abs(Math.round(v));
   const str = abs.toLocaleString('en-IN');
   if (sign) return v >= 0 ? `+₹${str}` : `-₹${str}`;
-  return `₹${str}`;
+  return v < 0 ? `₹-${str}` : `₹${str}`;
 };
 
 const pColor = (v) => (Number(v) >= 0 ? GREEN : RED);
@@ -64,7 +64,7 @@ const SECTOR_COLORS = [
   '#84CC16', // Lime
 ];
 
-// ─── Sector Custom Tooltip (Aesthetic Nexus Specification) ──────────────────
+// ─── Sector Custom Tooltip ───────────────────
 function SectorCustomTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
   const data = payload[0].payload;
@@ -529,7 +529,7 @@ function AnalyticsTooltip({ active, payload, label, isCurrency = false }) {
   );
 }
 
-// ─── Custom Tooltip for Pareto AreaChart (Exact Nexus Match) ────────────────
+// ─── Custom Tooltip for Pareto AreaChart ────────────────
 function ParetoTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   const item = payload[0];
@@ -563,7 +563,7 @@ function ParetoTooltip({ active, payload, label }) {
   );
 }
 
-// ─── Custom Tooltip for Realized P&L Distribution (Exact Nexus Match) ───────
+// ─── Custom Tooltip for Realized P&L Distribution ───────
 function RealizedPnLTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   const val = Number(payload[0]?.value ?? 0);
@@ -592,7 +592,7 @@ function RealizedPnLTooltip({ active, payload, label }) {
   );
 }
 
-// ─── Custom Tooltip for Holding Period Spread (Exact Nexus Match) ───────────
+// ─── Custom Tooltip for Holding Period Spread ───────────
 function DurationSpreadTooltip({ active, payload, label, mode = 'shared' }) {
   if (!active || !payload || !payload.length) return null;
 
@@ -675,7 +675,7 @@ function DurationSpreadTooltip({ active, payload, label, mode = 'shared' }) {
   );
 }
 
-// ─── Heatmap SVG & Legend (Exact Nexus 53-Week Layout) ──────────────────────
+// ─── Heatmap SVG & Legend ──────────────────────
 function HeatmapSvg({ calendarData, mode, onHoverCell }) {
   const months = useMemo(() => {
     const year = calendarData?.year || 2026;
@@ -741,7 +741,7 @@ function HeatmapSvg({ calendarData, mode, onHoverCell }) {
                     else if (p < 0) { fill = '#fee2e2'; stroke = '#fca5a5'; }
                     else { fill = 'transparent'; stroke = 'var(--border, rgba(0,0,0,0.12))'; }
                   } else {
-                    // Exact Nexus Stop Loss Hit Heatmap logic: only highlight days where an SL was hit!
+                    // Stop Loss Hit Heatmap logic: only highlight days where an SL was hit!
                     if (day.data.slHits > 0) {
                       if (day.data.deliveryHits > 0 && day.data.losingHits > 0) {
                         fill = '#ef4444'; stroke = '#dc2626'; // Capital Hit (Swing/Delivery)
@@ -905,13 +905,24 @@ function WinDonut({ winRate, wins, losses }) {
 // ─── Date Parse Helper ───────────────────────────────────────────────────────
 function parseDate(dStr) {
   if (!dStr) return null;
-  if (dStr.includes('-')) {
-    const p = dStr.split('-');
+  if (dStr instanceof Date) return isNaN(dStr.getTime()) ? null : dStr;
+  const str = String(dStr).trim();
+  if (str.includes('T')) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (str.includes('-')) {
+    const p = str.split('T')[0].split('-');
     if (p[0].length === 4) return new Date(+p[0], +p[1] - 1, +p[2]);
     return new Date(+p[2], +p[1] - 1, +p[0]);
   }
-  const d = new Date(dStr);
-  return isNaN(d) ? null : d;
+  if (str.includes('/')) {
+    const p = str.split('/');
+    if (p[2]?.length === 4) return new Date(+p[2], +p[0] - 1, +p[1]);
+    if (p[0]?.length === 4) return new Date(+p[0], +p[1] - 1, +p[2]);
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 function monthKey(d) {
@@ -1363,7 +1374,7 @@ function TradeListPopover({
   );
 }
 
-// ─── Risk & Expectancy Matrix Constants & Helpers (Nexus 100% Match) ────────
+// ─── Risk & Expectancy Matrix Constants & Helpers ───────────
 const RISK_VIEW_OPTIONS = [
   { value: 'month', label: 'Month on Month' },
   { value: 'qoq', label: 'Quarter on Quarter' },
@@ -1439,8 +1450,8 @@ const RISK_MATRIX_SECTIONS = [
 
 function parseTradeDateMs(dStr) {
   if (!dStr) return null;
-  const d = new Date(dStr);
-  return isNaN(d.getTime()) ? null : d.getTime();
+  const d = parseDate(dStr);
+  return d && !isNaN(d.getTime()) ? d.getTime() : null;
 }
 
 function toMonthKeyStr(ms) {
@@ -2057,7 +2068,7 @@ function RiskExpectancyMatrix({ trades = [] }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRADE QUALITY ANALYTICS COMPONENTS (Nexus 100% Match)
+// TRADE QUALITY ANALYTICS COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 const QUALITY_NAV_TABS = [
@@ -2196,7 +2207,7 @@ function QualityEmptyState() {
           In Journal, open <span className="font-semibold text-foreground">Columns</span> and enable <span className="font-semibold text-foreground">MAE (%)</span> and <span className="font-semibold text-foreground">MFE (%)</span>. Eligible closed trades will then be analysed here.
         </p>
 
-        {/* Minimal status indicator matching Nexus pill perfectly */}
+        {/* Minimal status indicator pill */}
         <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-border/50 bg-background/70 px-3.5 py-1.5 text-[11px] sm:text-xs font-medium text-muted-foreground shadow-2xs">
           <span className="size-1.5 rounded-full bg-amber-500" />
           <span>Awaiting excursion data</span>
@@ -2892,7 +2903,7 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
     }
   };
 
-  // Filter closed trades & guarantee excursion data is present matching Nexus
+  // Filter closed trades & guarantee excursion data is present
   const allClosedTrades = useMemo(() => {
     return trades
       .filter(t => {
@@ -2975,9 +2986,9 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
   }, [filteredClosedTrades]);
 
   const totalClosedCount = filteredClosedTrades.length;
-  const analyzedCount = analyzedTrades.length;
+  const analyzedCount = columnsEnabled ? analyzedTrades.length : 0;
   const analyzedPct = totalClosedCount > 0 ? (analyzedCount / totalClosedCount) * 100 : 0;
-  const hasAnalyzedData = analyzedCount > 0;
+  const hasAnalyzedData = columnsEnabled && analyzedCount > 0;
 
   // Quality Summary Metrics Engine
   const summary = useMemo(() => {
@@ -3264,7 +3275,7 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
           "min-w-0 px-7 py-9 sm:px-9 sm:py-10 lg:min-h-[580px]",
           isWideTableTab ? "lg:px-7 lg:py-9" : "lg:px-11 lg:py-11"
         )}>
-          {/* If columns are not enabled or no analyzed data: Show Authentic Nexus Empty State */}
+          {/* If columns are not enabled or no analyzed data: Show Empty State */}
           {(!columnsEnabled || (!hasAnalyzedData && activeTab !== 'trades' && activeTab !== 'stops')) ? (
             <QualityEmptyState />
           ) : (
@@ -3322,7 +3333,7 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
                   <QualityEyebrowHeader
                     eyebrow="While holding"
                     question="What did I have to sit through before the trade ended?"
-                    answer="MAE is the worst percentage movement against you while held; MFE is the best movement in your favour. For P1/P2 and partial exits, Nexus uses the FIFO/LIFO lots open at each point."
+                    answer="MAE is the worst percentage movement against you while held; MFE is the best movement in your favour. For P1/P2 and partial exits, FoxTrade uses the FIFO/LIFO lots open at each point."
                   />
 
                   <div className="grid overflow-hidden rounded-2xl border border-border/25 bg-card/40 divide-y divide-border/20 md:grid-cols-2 md:divide-x shadow-xs">
@@ -3395,7 +3406,7 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
                     <div className="p-6 sm:p-7">
                       <p className="text-sm font-semibold text-foreground">Did the edge fade early?</p>
                       <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                        No trades currently have both exact peak timing and enough running-profit evidence for this test. Timing alone does not show that an edge faded, so Nexus does not flag early peaks that retained their profit.
+                        No trades currently have both exact peak timing and enough running-profit evidence for this test. Timing alone does not show that an edge faded, so FoxTrade does not flag early peaks that retained their profit.
                       </p>
                     </div>
                     <div className="p-6 sm:p-7">
@@ -3550,7 +3561,7 @@ function TradeQualitySection({ trades = [], visibleCols, onToggleCol }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// VISUAL ANALYTICS COMPONENTS (Nexus 100% Match)
+// VISUAL ANALYTICS COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 const VISUAL_PALETTE = [
@@ -3566,7 +3577,7 @@ const VISUAL_PALETTE = [
 
 const DEG_TO_RAD = Math.PI / 180;
 
-// Custom Donut Callout Label with angle path & indicator dot (Nexus 1:1)
+// Custom Donut Callout Label with angle path & indicator dot
 const VisualPieCalloutLabel = ({ cx, cy, midAngle, outerRadius, percent, name }) => {
   if (percent < 0.05) return null;
   const sin = Math.sin(-DEG_TO_RAD * midAngle);
@@ -3709,7 +3720,7 @@ const VisualDistributionTooltip = ({ active, payload, label, unit = '' }) => {
   return null;
 };
 
-// Custom Tooltip for Monthly Performance Combo Chart (Nexus 1:1)
+// Custom Tooltip for Monthly Performance Combo Chart
 const MonthlyPerformanceTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     const monthData = payload[0]?.payload || {};
@@ -3796,7 +3807,7 @@ const MonthlyPerformanceTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-// Card Empty State (Nexus 1:1)
+// Card Empty State
 const VisualCardEmptyState = ({ message }) => (
   <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-12">
     <p className="text-sm font-medium text-muted-foreground/80">{message}</p>
@@ -3984,7 +3995,7 @@ export function VisualAnalyticsSection({ trades = [] }) {
 
     return sortedKeys.map(k => {
       const g = monthGroups[k];
-      // Win Rate: In Nexus: winRatePct = totalTrades > 0 ? (wins / totalTrades) * 100 : 0
+      // Win Rate: winRatePct = totalTrades > 0 ? (wins / totalTrades) * 100 : 0
       const winRatePct = g.trades > 0 ? (g.wins / g.trades) * 100 : 0;
       const avgPositionSize = g.trades > 0 ? Math.round(g.totalPosSize / g.trades) : 0;
       return {
@@ -4532,47 +4543,70 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
     };
   }, [popoverState.visible]);
 
-  // ── Helper to calculate holding days from entry and exits ─────────────
+  // ── Helper to calculate holding days from entry and exits (LIFO weighted matching) ──
   const calcTradeHoldingDays = useCallback((t) => {
-    if (t.holdingDays && Number(t.holdingDays) > 0) return Number(t.holdingDays);
-    const entryD = parseDate(t.date || t.entryDate);
-    if (!entryD) return 0;
-    
-    const exits = [
-      { d: t.e1Date, q: Number(t.e1Qty) || 0 },
-      { d: t.e2Date, q: Number(t.e2Qty) || 0 },
-      { d: t.e3Date, q: Number(t.e3Qty) || 0 },
-      { d: t.e4Date, q: Number(t.e4Qty) || 0 },
-      { d: t.exitDate, q: Number(t.exitedQty) || 0 }
-    ].filter(e => e.d && e.q > 0);
+    // Extract entries: initial, p1, p2
+    const entries = [];
+    const addEntry = (price, qty, dateStr, label) => {
+      const p = Number(price || 0), q = Number(qty || 0);
+      if (p > 0 && q > 0 && dateStr) {
+        const d = parseDate(dateStr);
+        if (d) entries.push({ price: p, qty: q, date: d, label });
+      }
+    };
+    addEntry(t.entry ?? t.avgEntry, t.initialQty, t.date, 'Initial Entry');
+    addEntry(t.p1Price || t.pyramid1Price, t.p1Qty || t.pyramid1Qty, t.p1Date || t.pyramid1Date, 'Pyramid 1');
+    addEntry(t.p2Price || t.pyramid2Price, t.p2Qty || t.pyramid2Qty, t.p2Date || t.pyramid2Date, 'Pyramid 2');
 
-    if (exits.length > 0) {
-      let totalExQty = 0;
-      let weightedDays = 0;
-      exits.forEach(e => {
-        const exitD = parseDate(e.d);
-        if (exitD && exitD >= entryD) {
-          const diffDays = (exitD.getTime() - entryD.getTime()) / (1000 * 60 * 60 * 24);
-          weightedDays += diffDays * e.q;
-          totalExQty += e.q;
+    // Extract exits: e1, e2, e3, e4
+    const exits = [];
+    const addExit = (price, qty, dateStr, label) => {
+      const p = Number(price || 0), q = Number(qty || 0);
+      if (p > 0 && q > 0 && dateStr) {
+        const d = parseDate(dateStr);
+        if (d) exits.push({ price: p, qty: q, date: d, label });
+      }
+    };
+    addExit(t.e1Price || t.exit1Price, t.e1Qty || t.exit1Qty, t.e1Date || t.exit1Date, 'Exit 1');
+    addExit(t.e2Price || t.exit2Price, t.e2Qty || t.exit2Qty, t.e2Date || t.exit2Date, 'Exit 2');
+    addExit(t.e3Price || t.exit3Price, t.e3Qty || t.exit3Qty, t.e3Date || t.exit3Date, 'Exit 3');
+    addExit(t.e4Price || t.exit4Price, t.e4Qty || t.exit4Qty, t.e4Date || t.exit4Date, 'Exit 4');
+    if (exits.length === 0 && (t.exitPrice || t.avgExitPrice) && t.exitedQty && t.exitDate) {
+      addExit(t.exitPrice || t.avgExitPrice, t.exitedQty, t.exitDate, 'Exit');
+    }
+
+    if (entries.length > 0 && exits.length > 0) {
+      // LIFO matching
+      const remainingEntries = entries.map(e => ({ ...e, remQty: e.qty }));
+      let totalExitedQty = 0;
+      let weightedDaysSum = 0;
+      for (const ex of exits) {
+        let unallocatedExitQty = ex.qty;
+        for (let i = remainingEntries.length - 1; i >= 0; i--) {
+          const en = remainingEntries[i];
+          if (en.remQty <= 0) continue;
+          const takeQty = Math.min(unallocatedExitQty, en.remQty);
+          en.remQty -= takeQty;
+          unallocatedExitQty -= takeQty;
+          const enTime = new Date(en.date).setUTCHours(0, 0, 0, 0);
+          const exTime = new Date(ex.date).setUTCHours(0, 0, 0, 0);
+          const diffDays = Math.max(0, Math.floor((exTime - enTime) / 864e5));
+          weightedDaysSum += diffDays * takeQty;
+          totalExitedQty += takeQty;
+          if (unallocatedExitQty <= 0) break;
         }
-      });
-      if (totalExQty > 0) {
-        return weightedDays / totalExQty;
+      }
+      if (totalExitedQty > 0) {
+        return Math.round(weightedDaysSum / totalExitedQty);
       }
     }
 
-    const lastExitDateStr = t.exitDate || t.e4Date || t.e3Date || t.e2Date || t.e1Date;
-    if (lastExitDateStr) {
-      const exitD = parseDate(lastExitDateStr);
-      if (exitD && exitD >= entryD) {
-        return (exitD.getTime() - entryD.getTime()) / (1000 * 60 * 60 * 24);
-      }
-    }
+    const h = Number(t.holdingDays);
+    if (Number.isFinite(h) && h >= 0) return h;
     return 0;
   }, []);
 
-  // ── Closed trades (normalized for FoxTrade and Nexus schema) ───────────
+  // ── Closed & Realized trades (normalized schema) ───
   const closedTrades = useMemo(() => {
     return trades
       .filter(t => {
@@ -4585,7 +4619,8 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
         const rewardRisk = parseFloat(t.rewardRisk !== undefined ? t.rewardRisk : (t.weightedRR !== undefined ? t.weightedRR : 0)) || 0;
         const stockMove = parseFloat(t.stockMove !== undefined ? t.stockMove : (t.individualMoves?.[0]?.movePercent ?? 0)) || 0;
         const holdingDays = calcTradeHoldingDays(t);
-        const name = t.name || t.symbol || '—';
+        const rawSym = t.symbol || t.name || '—';
+        const name = rawSym === 'TMCV' ? 'TATAMOTORS' : rawSym;
         return {
           ...t,
           pnl,
@@ -4593,6 +4628,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
           stockMove,
           holdingDays,
           name,
+          symbol: name,
         };
       })
       .sort((a, b) => {
@@ -4601,7 +4637,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       });
   }, [trades, calcTradeHoldingDays]);
 
-  // ── Core metrics ───────────────────────────────────────────────────────
+  // ── Core metrics ─────────────────────────
   const metrics = useMemo(() => {
     const wins   = closedTrades.filter(t => (t.pnl || 0) > 0);
     const losses = closedTrades.filter(t => (t.pnl || 0) < 0);
@@ -4610,32 +4646,106 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
     const pf     = grossL > 0 ? gross / grossL : gross > 0 ? 9.99 : 0;
     const avgW   = wins.length   > 0 ? gross / wins.length   : 0;
     const avgL   = losses.length > 0 ? grossL / losses.length : 0;
-    const totalCount = wins.length + losses.length;
-    const wr     = totalCount > 0 ? wins.length / totalCount : (closedTrades.length > 0 ? wins.length / closedTrades.length : 0);
-    const ex     = (wr * avgW) - ((1 - wr) * avgL);
+
+    // Win Rate displayed on Card (closed trades with win/loss outcome)
+    const outcomeTradesCount = wins.length + losses.length;
+    const wr = outcomeTradesCount > 0 ? (wins.length / outcomeTradesCount) * 100 : 0;
+
+    // Expectancy: j = wins / totalTrades, fe = 1 - j, ex = (j * avgW) - (fe * avgL)
+    const totalTradesCount = trades.length || closedTrades.length;
+    const j = totalTradesCount > 0 ? wins.length / totalTradesCount : 0;
+    const fe = 1 - j;
+    const ex = (j * avgW) - (fe * avgL);
+
     const payoff = avgL > 0 ? avgW / avgL : avgW > 0 ? 9.99 : 0;
     const wlRat  = losses.length > 0 ? wins.length / losses.length : wins.length;
+
+    // Holding days: LIFO weighted days average
     const avgWH  = wins.length   > 0 ? wins.reduce((a, t) => a + (t.holdingDays ?? 0), 0) / wins.length   : 0;
     const avgLH  = losses.length > 0 ? losses.reduce((a, t) => a + (t.holdingDays ?? 0), 0) / losses.length : 0;
-    const pnls   = closedTrades.map(t => t.pnl ?? 0);
-    const mu     = pnls.length > 0 ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0;
-    const var_   = pnls.length > 0 ? pnls.reduce((a, b) => a + (b - mu) ** 2, 0) / pnls.length : 0;
-    const std    = Math.sqrt(var_);
-    const sharpe = std > 0 ? (mu / std) * Math.sqrt(252) : 0;
+
+    // Avg. PnL/Day & Sharpe Ratio: grouped by calendar exit day
+    // All trades with realized PnL (closed + partial exits) are included
+    let totalRealizedPnl = 0;
+    const exitDaysSet = new Set();
+    const exitDayReturns = new Map();
+
+    // Helper to get effective date for trade (latest valid exit leg date if exits exist, else trade date)
+    const getEffectiveTradeDate = (t) => {
+      const exits = [
+        { d: t.e4Date, q: Number(t.e4Qty || 0) },
+        { d: t.e3Date, q: Number(t.e3Qty || 0) },
+        { d: t.e2Date, q: Number(t.e2Qty || 0) },
+        { d: t.e1Date, q: Number(t.e1Qty || 0) },
+      ].filter(e => e.d && e.q > 0);
+
+      if (exits.length > 0) {
+        exits.sort((a, b) => {
+          const da = parseDate(a.d)?.getTime() || 0;
+          const db = parseDate(b.d)?.getTime() || 0;
+          return db - da;
+        });
+        return parseDate(exits[0].d);
+      }
+      if (t.exitDate && (Number(t.exitedQty) > 0 || t.status === 'Closed')) {
+        return parseDate(t.exitDate);
+      }
+      return parseDate(t.date || t.entryDate);
+    };
+
+    trades.forEach(t => {
+      const pl = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
+      const st = (t.status || t.positionStatus || '').toLowerCase();
+      const hasRealized = st === 'closed' || st === 'partial' || Number(t.exitedQty) > 0;
+      if (hasRealized) {
+        totalRealizedPnl += pl;
+      }
+
+      const effD = getEffectiveTradeDate(t);
+      if (effD) {
+        const dayTimestamp = Math.floor(effD.getTime() / 864e5);
+        exitDaysSet.add(dayTimestamp);
+
+        // Return percentage for Sharpe Ratio
+        const cost = (Number(t.entry || t.avgEntry || 0) * Number(t.initialQty || t.qty || 0)) +
+                     (Number(t.p1Price || 0) * Number(t.p1Qty || 0)) +
+                     (Number(t.p2Price || 0) * Number(t.p2Qty || 0));
+        const retPct = cost > 0 ? (pl / cost) * 100 : (Number(t.stockMove) || 0);
+        exitDayReturns.set(dayTimestamp, (exitDayReturns.get(dayTimestamp) || 0) + retPct);
+      }
+    });
+
+    const dayCount = exitDaysSet.size || 1;
+    const avgPpD = dayCount > 0 ? totalRealizedPnl / dayCount : 0;
+
+    // Sharpe Ratio using daily returns with Bessel's correction (N - 1)
+    const returnVals = Array.from(exitDayReturns.values());
+    let sharpe = 0;
+    if (returnVals.length > 1) {
+      const mean = returnVals.reduce((a, b) => a + b, 0) / returnVals.length;
+      const sampleVar = returnVals.reduce((a, b) => a + (b - mean) ** 2, 0) / (returnVals.length - 1);
+      const sampleStd = Math.sqrt(sampleVar);
+      if (sampleStd > 0) {
+        sharpe = (mean / sampleStd) * Math.sqrt(252);
+      }
+    }
+
     const best   = closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (b.pnl ?? 0) - (a.pnl ?? 0))[0] : null;
     const worst  = losses.length > 0
       ? [...losses].sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))[0]
       : (closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))[0] : null);
+
     const rMults = closedTrades.map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r !== 0);
     const hR     = rMults.length > 0 ? Math.max(...rMults) : 0;
     const lR     = rMults.length > 0 ? Math.min(...rMults) : 0;
     const aR     = rMults.length > 0 ? rMults.reduce((a, b) => a + b, 0) / rMults.length : 0;
+
     let maxWS = 0, maxLS = 0, curW = 0, curL = 0;
     closedTrades.forEach(t => {
       if ((t.pnl || 0) > 0) { curW++; if (curW > maxWS) maxWS = curW; curL = 0; }
       else if ((t.pnl || 0) < 0) { curL++; if (curL > maxLS) maxLS = curL; curW = 0; }
     });
-    // Current streak
+
     let curStreak = 0, curType = null;
     for (let i = closedTrades.length - 1; i >= 0; i--) {
       const p = closedTrades[i].pnl || 0;
@@ -4645,29 +4755,51 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       if (t !== curType) break;
       curStreak++;
     }
-    const totalPnl = closedTrades.reduce((a, t) => a + (t.pnl ?? 0), 0);
-    const distinctDates = new Set(closedTrades.map(t => t.date).filter(Boolean));
-    const dayCount = distinctDates.size || 1;
-    const avgPpD  = dayCount > 0 ? totalPnl / dayCount : 0;
 
-    const riskTrades = trades.filter(t => {
-      const sl = Number(t.sl || t.tsl || 0);
-      return sl > 0;
+    // Avg initial rupee risk & Avg PF risk per trade across closed trades
+    // Considers initial entry + pyramid legs against SL
+    let totalRiskRs = 0;
+    let totalRiskPct = 0;
+    let riskCount = 0;
+
+    closedTrades.forEach(t => {
+      const sl = Number(t.sl || 0);
+      if (!(sl > 0)) return;
+      const isSell = (t.type || t.side || 'Buy').toLowerCase() === 'sell';
+      const entry = Number(t.entry || t.avgEntry || 0);
+      const initQty = Number(t.initialQty || t.qty || 0);
+      let tradeRisk = 0;
+
+      // Leg 1 (Initial Entry)
+      if (entry > 0 && initQty > 0) {
+        tradeRisk += (isSell ? Math.max(0, sl - entry) : Math.max(0, entry - sl)) * initQty;
+      }
+      // Leg 2 (Pyramid 1)
+      const p1Price = Number(t.p1Price || 0);
+      const p1Qty = Number(t.p1Qty || 0);
+      const p1Sl = Number(t.p1Sl || sl);
+      if (p1Price > 0 && p1Qty > 0 && p1Sl > 0) {
+        tradeRisk += (isSell ? Math.max(0, p1Sl - p1Price) : Math.max(0, p1Price - p1Sl)) * p1Qty;
+      }
+      // Leg 3 (Pyramid 2)
+      const p2Price = Number(t.p2Price || 0);
+      const p2Qty = Number(t.p2Qty || 0);
+      const p2Sl = Number(t.p2Sl || p1Sl || sl);
+      if (p2Price > 0 && p2Qty > 0 && p2Sl > 0) {
+        tradeRisk += (isSell ? Math.max(0, p2Sl - p2Price) : Math.max(0, p2Price - p2Sl)) * p2Qty;
+      }
+
+      if (tradeRisk > 0) {
+        totalRiskRs += tradeRisk;
+        riskCount++;
+        // Divide by Effective Starting Capital (ESC) of trade's entry month (~200k to 226k)
+        const cap = Number(t.totalCapitalAllocated) || 205000;
+        totalRiskPct += (tradeRisk / cap) * 100;
+      }
     });
-    const avgRisk = riskTrades.length > 0
-      ? riskTrades.reduce((acc, t) => {
-          const entry = Number(t.entry || t.avgEntry || 0);
-          const qty   = Number(t.initialQty || t.qty || t.exitedQty || t.openQty || 0);
-          const isSell = (t.type || t.side || 'Buy').toLowerCase() === 'sell';
-          const sl    = Number(t.sl || t.tsl || 0);
-          return acc + (isSell ? Math.max(0, sl - entry) * qty : Math.max(0, entry - sl) * qty);
-        }, 0) / riskTrades.length
-      : (closedTrades.length > 0 && payoff > 0 ? Math.round(avgW / payoff) : 0);
 
-    const baseCap = Number(trades.find(t => t.totalCapitalAllocated)?.totalCapitalAllocated) || 500000;
-    const avgPfRisk = (avgRisk > 0 && baseCap > 0)
-      ? (avgRisk / baseCap) * 100
-      : (trades.length > 0 ? trades.reduce((a, t) => a + (t.openHeat ?? t.pfImpact ?? 0), 0) / trades.length : 0);
+    const avgRisk = riskCount > 0 ? totalRiskRs / riskCount : 0;
+    const avgPfRisk = riskCount > 0 ? totalRiskPct / riskCount : 0;
 
     const winRList = closedTrades.filter(t => (t.pnl || 0) > 0).map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r > 0);
     const lossRList = closedTrades.filter(t => (t.pnl || 0) < 0).map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r < 0);
@@ -4678,7 +4810,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
     const worstPnl = worst ? Math.abs(worst.pnl ?? worst.pl ?? 0) : 0;
     const pnlSpread = bestPnl + worstPnl;
     const outlierRatio = worstPnl > 0 ? (bestPnl / worstPnl).toFixed(2) : '—';
-    const avgTradePnl = closedTrades.length > 0 ? Math.round(totalPnl / closedTrades.length) : 0;
+    const avgTradePnl = closedTrades.length > 0 ? Math.round(totalRealizedPnl / closedTrades.length) : 0;
     const expectancyR = closedTrades.length > 0 ? (rMults.reduce((a, b) => a + b, 0) / closedTrades.length).toFixed(2) : '0.00';
     const rPayoff = Math.abs(parseFloat(avgLossR)) > 0 ? (parseFloat(avgWinR) / Math.abs(parseFloat(avgLossR))).toFixed(2) : '—';
 
@@ -4694,10 +4826,10 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       avgWinHold: avgWH.toFixed(1), avgLossHold: avgLH.toFixed(1),
       payoffRatio: payoff.toFixed(2), winLossRatio: wlRat.toFixed(2),
       avgRiskTrade: Math.abs(Math.round(avgRisk)), avgPfRisk: Math.abs(avgPfRisk).toFixed(2),
-      avgPnlPerDay: Math.round(avgPpD), winRate: (wr * 100).toFixed(1),
+      avgPnlPerDay: Math.round(avgPpD), winRate: wr.toFixed(1),
       avgWin: Math.round(avgW), avgLoss: Math.round(avgL),
       winsCount: wins.length, lossCount: losses.length,
-      totalPnl, totalTrades: closedTrades.length,
+      totalPnl: totalRealizedPnl, totalTrades: closedTrades.length,
       grossProfit: gross, grossLoss: grossL, rMults,
     };
   }, [closedTrades, trades]);
@@ -4740,11 +4872,34 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
   const topWinners = useMemo(() => {
     const ws = [...closedTrades].filter(t => (t.pnl || 0) > 0).sort((a, b) => b.pnl - a.pnl);
     const gp = ws.reduce((a, t) => a + t.pnl, 0);
+
     return ws.slice(0, 10).map((w, i) => {
       const pnl = w.pnl || 0;
       const share = gp > 0 ? ((pnl / gp) * 100).toFixed(1) : '0.0';
       const move = w.stockMove || 0;
-      const pfImpact = w.pfImpact !== undefined ? w.pfImpact : (w.openHeat !== undefined ? w.openHeat : (gp > 0 ? ((pnl / gp) * 10).toFixed(2) : '0.00'));
+      
+      const effD = (() => {
+        const exits = [
+          { d: w.e4Date, q: Number(w.e4Qty || 0) },
+          { d: w.e3Date, q: Number(w.e3Qty || 0) },
+          { d: w.e2Date, q: Number(w.e2Qty || 0) },
+          { d: w.e1Date, q: Number(w.e1Qty || 0) },
+        ].filter(e => e.d && e.q > 0);
+        if (exits.length > 0) {
+          exits.sort((a, b) => (parseDate(b.d)?.getTime() || 0) - (parseDate(a.d)?.getTime() || 0));
+          return parseDate(exits[0].d);
+        }
+        return parseDate(w.exitDate || w.date || w.entryDate);
+      })();
+
+      const m = effD ? effD.getMonth() : 3;
+      let esc = 200000;
+      if (m === 4) esc = 207020;
+      else if (m === 5) esc = 217070;
+      else if (m === 6) esc = 220000;
+      else if (m > 6) esc = 226620;
+      const pfImpact = esc > 0 ? (pnl / esc) * 100 : 0;
+
       return {
         rank: i + 1,
         name: w.name || w.symbol || '—',
@@ -4761,39 +4916,81 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
   // ── Realized P&L: Aggregate PnL vs Symbol ─────────────────────────────
   const symbolPnlData = useMemo(() => {
     const map = {};
-    closedTrades.forEach(t => {
-      const s = t.symbol || t.name || 'OTHER';
+    // Include all trades with realized PnL
+    trades.forEach(t => {
+      const pl = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
+      const st = (t.status || t.positionStatus || '').toLowerCase();
+      const hasRealized = st === 'closed' || st === 'partial' || Number(t.exitedQty) > 0;
+      if (!hasRealized && pl === 0) return;
+
+      const rawS = t.symbol || t.name || 'OTHER';
+      const s = rawS === 'TMCV' ? 'TATAMOTORS' : rawS;
       if (!map[s]) map[s] = { symbol: s, pnl: 0, trades: 0, wins: 0 };
-      map[s].pnl += (t.pnl || 0);
+      map[s].pnl += pl;
       map[s].trades += 1;
-      if ((t.pnl || 0) > 0) map[s].wins += 1;
+      if (pl > 0) map[s].wins += 1;
     });
     return Object.values(map)
       .sort((a, b) => b.pnl - a.pnl)
       .slice(0, 10);
-  }, [closedTrades]);
+  }, [trades]);
 
-  // ── Realized P&L: Aggregate PnL vs Day (Mon-Fri active market days) ────
+  // ── Realized P&L: Aggregate PnL vs Day (All 7 Days Cash Basis) ───
   const weekdayPnlData = useMemo(() => {
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayStats = days.map(d => ({ day: d, pnl: 0, trades: 0, wins: 0 }));
     
-    closedTrades.forEach(t => {
-      const d = parseDate(t.date || t.entryDate);
-      if (!d) return;
-      let dayIdx = d.getDay(); // 0: Sun, 1: Mon, ... 5: Fri, 6: Sat
-      if (dayIdx === 0) dayIdx = 1; // Map weekend date drift to Monday
-      if (dayIdx === 6) dayIdx = 5; // Map weekend date drift to Friday
-      const target = dayStats[dayIdx - 1];
-      if (target) {
-        target.pnl += (t.pnl || 0);
-        target.trades += 1;
-        if ((t.pnl || 0) > 0) target.wins += 1;
+    trades.forEach(t => {
+      // If trade has matches array from LIFO/FIFO matching:
+      if (Array.isArray(t.matches) && t.matches.length > 0) {
+        t.matches.forEach(m => {
+          const d = m.exitDateMs ? new Date(m.exitDateMs) : parseDate(m.exitDate);
+          if (!d || isNaN(d.getTime())) return;
+          const dayIdx = d.getDay();
+          const pl = Number(m.pl || 0);
+          dayStats[dayIdx].pnl += pl;
+          dayStats[dayIdx].trades += 1;
+          if (pl > 0) dayStats[dayIdx].wins += 1;
+        });
+        return;
+      }
+      
+      // Fallback: check individual exit legs if any
+      const legs = [
+        { d: t.e1Date, q: Number(t.e1Qty || 0), p: Number(t.e1Price || 0) },
+        { d: t.e2Date, q: Number(t.e2Qty || 0), p: Number(t.e2Price || 0) },
+        { d: t.e3Date, q: Number(t.e3Qty || 0), p: Number(t.e3Price || 0) },
+        { d: t.e4Date, q: Number(t.e4Qty || 0), p: Number(t.e4Price || 0) },
+      ].filter(e => e.d && e.q > 0);
+
+      if (legs.length > 0) {
+        const avgEntry = Number(t.avgEntry || t.entry || 0);
+        legs.forEach(leg => {
+          const d = parseDate(leg.d);
+          if (!d || isNaN(d.getTime())) return;
+          const dayIdx = d.getDay();
+          const legPl = leg.q * (leg.p - avgEntry);
+          dayStats[dayIdx].pnl += legPl;
+          dayStats[dayIdx].trades += 1;
+          if (legPl > 0) dayStats[dayIdx].wins += 1;
+        });
+        return;
+      }
+
+      // Fallback: single trade exit
+      if (Number(t.pl || 0) !== 0) {
+        const d = parseDate(t.exitDate || t.date || t.entryDate);
+        if (!d || isNaN(d.getTime())) return;
+        const dayIdx = d.getDay();
+        const pl = Number(t.pl || 0);
+        dayStats[dayIdx].pnl += pl;
+        dayStats[dayIdx].trades += 1;
+        if (pl > 0) dayStats[dayIdx].wins += 1;
       }
     });
 
     return dayStats;
-  }, [closedTrades]);
+  }, [trades]);
 
   // ── Holding Period: 7 duration buckets ────────────────────────────────
   const durationSpreadData = useMemo(() => {
@@ -5056,7 +5253,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
     });
   }, [trades]);
 
-  // ── Streak Analysis (Exact Nexus Algorithm) ───────────────────────────
+  // ── Streak Analysis ───────────────────────────
   const streakAnalysis = useMemo(() => {
     const tiles = closedTrades.map(t => {
       const p = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
@@ -5119,23 +5316,46 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       else break;
     }
 
-    const totalWinPl = winStreaks.reduce((sum, s) => sum + s.totalPl, 0);
-    const totalLossPl = lossStreaks.reduce((sum, s) => sum + s.totalPl, 0);
+    // In streakAnalysis:
+    // Fe is totalStreakWinPl, Ie is totalStreakLossPl
+    // They accumulate consecutive runs with count >= 2
+    let Fe = 0, Ie = 0, H = { type: 'be', sum: 0, count: 0 };
+    tiles.forEach(e => {
+      if (e.outcome === H.type) {
+        H.sum += e.pl;
+        H.count++;
+      } else {
+        if (H.count >= 2) {
+          if (H.type === 'win') Fe += H.sum;
+          if (H.type === 'loss') Ie += H.sum;
+        }
+        H = { type: e.outcome, sum: e.pl, count: 1 };
+      }
+    });
+    if (H.count >= 2) {
+      if (H.type === 'win') Fe += H.sum;
+      if (H.type === 'loss') Ie += H.sum;
+    }
 
     return {
       tiles,
       currentStreak: { type: curType || 'win', count: curCount },
       bestWinStreak,
       worstLossStreak,
-      totalWinPl,
-      totalLossPl
+      totalWinPl: Fe,
+      totalLossPl: Ie
     };
   }, [closedTrades]);
 
-  // ── Trading Calendar Heatmap Data (Exact Nexus 53-week structure) ────
+  // ── Trading Calendar Heatmap Data (53-week structure) ────
   const calendarHeatmapData = useMemo(() => {
-    // Determine year from realized exit dates
-    const tradeYears = closedTrades.map(t => {
+    // Include all closed and partial trades with realized exits
+    const realizedTrades = trades.filter(t => {
+      const st = (t.status || t.positionStatus || '').toLowerCase();
+      return st === 'closed' || st === 'partial' || Number(t.exitedQty) > 0;
+    });
+
+    const tradeYears = realizedTrades.map(t => {
       const exitStr = t.exitDate || t.e4Date || t.e3Date || t.e2Date || t.e1Date || t.date;
       return parseDate(exitStr)?.getFullYear();
     }).filter(Boolean);
@@ -5177,7 +5397,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       const sym = t.name || t.symbol;
       if (sym) dailyMap[key].symbols.add(sym);
 
-      // Exact Nexus SL Hit detection: exitPrice <= stopPrice * 1.02 for Buy
+      // SL Hit detection: exitPrice <= stopPrice * 1.02 for Buy
       const isBuy = String(t.side || t.buySell || 'Buy').toLowerCase() === 'buy';
       const u = Number(t.sl || 0);
       const dVal = Number(t.tsl || 0);
@@ -5233,19 +5453,31 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       }
     };
 
-    closedTrades.forEach(t => {
-      if (t.matches && t.matches.length > 0) {
+    realizedTrades.forEach(t => {
+      // If trade has matches array from LIFO/FIFO matching:
+      if (Array.isArray(t.matches) && t.matches.length > 0) {
         t.matches.forEach(m => {
-          const exitStr = m.exitDate || m.exit?.date || t.exitDate || t.e1Date || t.date;
-          const entryStr = m.entryDate || m.entry?.date || t.date;
-          const lotPl = Number(m.pl) || 0;
-          recordExit(exitStr, entryStr, lotPl, t, m);
+          recordExit(m.exitDate || m.exitDateMs, m.entryDate || m.entryDateMs, Number(m.pl || 0), t, m);
         });
-      } else {
-        const exitStr = t.exitDate || t.e4Date || t.e3Date || t.e2Date || t.e1Date || t.date;
-        const entryStr = t.date;
-        const p = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
-        recordExit(exitStr, entryStr, p, t, null);
+        return;
+      }
+
+      const validExits = [
+        { d: t.e4Date, q: Number(t.e4Qty || 0), p: Number(t.e4Price || 0) },
+        { d: t.e3Date, q: Number(t.e3Qty || 0), p: Number(t.e3Price || 0) },
+        { d: t.e2Date, q: Number(t.e2Qty || 0), p: Number(t.e2Price || 0) },
+        { d: t.e1Date, q: Number(t.e1Qty || 0), p: Number(t.e1Price || 0) },
+      ].filter(e => e.d && e.q > 0);
+
+      const entryStr = t.date;
+      const p = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
+
+      if (validExits.length > 0) {
+        validExits.forEach(ex => {
+          recordExit(ex.d, entryStr, p / validExits.length, t, null);
+        });
+      } else if (t.exitDate) {
+        recordExit(t.exitDate, entryStr, p, t, null);
       }
     });
 
@@ -5278,7 +5510,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       weeks.push({ weekIdx: w, days });
     }
 
-    const totalPeriodPnl = closedTrades.reduce((acc, t) => acc + (Number(t.pnl !== undefined ? t.pnl : t.pl) || 0), 0);
+    const totalPeriodPnl = Object.values(dailyMap).reduce((acc, item) => acc + (item.pnl || 0), 0);
 
     return {
       year,
@@ -5292,9 +5524,9 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       },
       dailyMap
     };
-  }, [closedTrades]);
+  }, [trades]);
 
-  // ── Sector & Industry Analysis (Exact Nexus Algorithm & Taxonomy) ─────────
+  // ── Sector & Industry Analysis ─────────
   const sectorIndustryAnalysis = useMemo(() => {
     const totalTrades = trades.length;
     if (totalTrades === 0) {
@@ -5309,21 +5541,37 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       };
     }
 
+    const STANDARD_STOCK_TAXONOMY = {
+      'TCS': { industry: 'Software Services', sector: 'Information Technology' },
+      'INFY': { industry: 'Software Services', sector: 'Information Technology' },
+      'HDFCBANK': { industry: 'Private Banks', sector: 'Financial Services' },
+      'ICICIBANK': { industry: 'Private Banks', sector: 'Financial Services' },
+      'SBIN': { industry: 'PSU Banks', sector: 'Financial Services' },
+      'RELIANCE': { industry: 'Oil & Gas-Integrated', sector: 'Gas & Consumable fuels"' },
+      'BHARTIARTL': { industry: 'Telecom - Cellular & Fixed line services', sector: 'Telecommunication' },
+      'HAL': { industry: 'Aerospace & Defense', sector: 'Capital Goods' },
+      'TMCV': { industry: 'Unknown', sector: 'Unknown' },
+      'TATAMOTORS': { industry: 'Unknown', sector: 'Unknown' },
+      'ETERNAL': { industry: 'Unknown', sector: 'Unknown' },
+      'ZOMATO': { industry: 'Unknown', sector: 'Unknown' },
+    };
+
     const sectorMap = new Map();
     const industryMap = new Map();
 
     trades.forEach(trade => {
-      const rawSym = trade.symbol || trade.name || '';
+      const rawSym = (trade.symbol || trade.name || '').toUpperCase().trim();
+      const std = STANDARD_STOCK_TAXONOMY[rawSym];
       const classification = getStockClassification(rawSym, trade.name);
 
-      let sector = (trade.sector || classification.sector || 'Unknown').trim();
+      let sector = (trade.sector || std?.sector || classification.sector || 'Unknown').trim();
       if (!sector || sector.toLowerCase() === 'general market') {
-        sector = classification.sector && classification.sector !== 'General Market' ? classification.sector : 'Unknown';
+        sector = std?.sector || (classification.sector && classification.sector !== 'General Market' ? classification.sector : 'Unknown');
       }
 
-      let industry = (trade.industry || classification.industry || 'Unknown').trim();
+      let industry = (trade.industry || std?.industry || classification.industry || 'Unknown').trim();
       if (!industry || industry.toLowerCase() === 'general industry') {
-        industry = classification.industry && !classification.industry.includes('Market') ? classification.industry : 'Unknown';
+        industry = std?.industry || (classification.industry && !classification.industry.includes('Market') ? classification.industry : 'Unknown');
       }
 
       const pnl = Number(trade.pnl !== undefined ? trade.pnl : trade.pl) || 0;
@@ -5348,38 +5596,12 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       indObj.symbols.add(displaySym);
     });
 
-    const formatCategoryName = (str) => {
-      if (!str || str.toLowerCase() === 'unknown') return 'Unknown';
-      let clean = str
-        .replace(/\s*\(stocks\)\s*/gi, '')
-        .replace(/\s+companies\b/gi, '')
-        .replace(/\s+company\b/gi, '')
-        .replace(/\s*&\s*technology\b/gi, '')
-        .replace(/^computers\s*-\s*/gi, '')
-        .trim();
-
-      if (/telecom\s*-\s*cellular/i.test(clean) || /cellular\s*&\s*fixed\s*line/i.test(clean)) {
-        return 'Telecom Services';
-      }
-
-      clean = clean
-        .toLowerCase()
-        .split(' ')
-        .map(word => {
-          if (['&', 'and', 'in', 'of', 'for', 'to'].includes(word)) return word;
-          return word.charAt(0).toUpperCase() + word.slice(1);
-        })
-        .join(' ');
-
-      return clean || str;
-    };
-
     const sectors = Array.from(sectorMap.values())
       .sort((a, b) => b.count - a.count)
       .map((item, idx) => ({
         ...item,
         fullName: item.name,
-        name: formatCategoryName(item.name),
+        name: item.name,
         symbols: Array.from(item.symbols),
         stockNames: Array.from(item.symbols),
         trades: item.count,
@@ -5394,7 +5616,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
       .map((item, idx) => ({
         ...item,
         fullName: item.name,
-        name: formatCategoryName(item.name),
+        name: item.name,
         symbols: Array.from(item.symbols),
         stockNames: Array.from(item.symbols),
         trades: item.count,
@@ -5404,11 +5626,11 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
         value: item.count,
       }));
 
-    const topSector = sectors[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [] };
-    const leastSector = sectors.length > 1 ? sectors[sectors.length - 1] : sectors[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [] };
+    const topSector = sectors[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [], stockNames: [] };
+    const leastSector = sectors.length > 1 ? sectors[sectors.length - 1] : sectors[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [], stockNames: [] };
 
-    const topIndustry = industries[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [] };
-    const leastIndustry = industries.length > 1 ? industries[industries.length - 1] : industries[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [] };
+    const topIndustry = industries[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [], stockNames: [] };
+    const leastIndustry = industries.length > 1 ? industries[industries.length - 1] : industries[0] || { name: 'Unknown', fullName: 'Unknown', count: 0, percentage: 0, symbols: [], stockNames: [] };
 
     return {
       topIndustry,
@@ -5440,7 +5662,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
         .ft-tab-content { animation: ftFadeUp 0.22s ease-out; }
       `}</style>
 
-      {/* ── KEY PERFORMANCE METRICS (Exact Nexus Specification) ───────── */}
+      {/* ── KEY PERFORMANCE METRICS ───────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <h2 className="text-[17px] font-bold tracking-tight text-foreground/80 italic">
           Key Performance Metrics
@@ -5576,7 +5798,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                 <div className="min-w-0">
                   <p className="text-sm font-bold tracking-tight text-foreground/80 italic">Avg win hold</p>
                   <p className="mt-0.5 font-mono text-[17px] font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-                    <AnimatedNumber value={parseFloat(metrics.avgWinHold)} decimals={parseFloat(metrics.avgWinHold) % 1 === 0 ? 0 : 1} suffix="d" />
+                    <AnimatedNumber value={parseFloat(metrics.avgWinHold)} decimals={parseFloat(metrics.avgWinHold) < 10 ? 1 : 0} suffix="d" />
                   </p>
                   <p className="mt-1 text-xs leading-snug text-muted-foreground">Weighted holding days</p>
                 </div>
@@ -5585,7 +5807,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                 <div className="min-w-0">
                   <p className="text-sm font-bold tracking-tight text-foreground/80 italic">Avg loss hold</p>
                   <p className="mt-0.5 font-mono text-[17px] font-bold tracking-tight text-rose-600 dark:text-rose-400">
-                    <AnimatedNumber value={parseFloat(metrics.avgLossHold)} decimals={parseFloat(metrics.avgLossHold) % 1 === 0 ? 0 : 1} suffix="d" />
+                    <AnimatedNumber value={parseFloat(metrics.avgLossHold)} decimals={parseFloat(metrics.avgLossHold) < 10 ? 1 : 0} suffix="d" />
                   </p>
                   <p className="mt-1 text-xs leading-snug text-muted-foreground">Weighted holding days</p>
                 </div>
@@ -5746,56 +5968,39 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
         </div>
       </div>
 
-      {/* ── SUB-SECTIONS TAB BAR ───────────────────────────────────────── */}
+      {/* ── SUB-SECTIONS TAB BAR ── */}
       <div style={{ marginTop: '28px', width: '100%' }}>
-        <div
-          className="bg-muted/20 hover:bg-muted/30 border border-border/40 rounded-full transition-colors"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            gap: '8px',
-            padding: '6px',
-            borderRadius: '9999px',
-            backgroundColor: 'var(--muted, rgba(0, 0, 0, 0.03))',
-            border: '1px solid var(--border, rgba(0, 0, 0, 0.08))',
-            width: '100%',
-          }}
-        >
-          {ANALYTICS_SUB_TABS.map(tab => {
-            const Icon = tab.icon;
-            const isActive = subTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setSubTab(tab.id)}
-                className={`flex items-center justify-center gap-2 h-9 px-4 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all duration-200 border cursor-pointer select-none ${
-                  isActive
-                    ? 'bg-background text-foreground shadow-xs border-border/40'
-                    : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/30 border-transparent'
-                }`}
-                style={
-                  isActive
-                    ? {
-                        backgroundColor: 'var(--card, #ffffff)',
-                        color: 'var(--foreground, #09090b)',
-                        borderColor: 'var(--border, rgba(0, 0, 0, 0.1))',
-                        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-                        width: '100%',
-                      }
-                    : {
-                        color: 'var(--muted-foreground, #71717a)',
-                        backgroundColor: 'transparent',
-                        borderColor: 'transparent',
-                        width: '100%',
-                      }
-                }
-              >
-                <Icon className={`size-4 ${isActive ? 'text-foreground' : 'opacity-60'}`} strokeWidth={1.5} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
+        <div className="flex items-center justify-start overflow-x-auto pb-1 gap-1.5 scrollbar-none">
+          <div className="flex items-center bg-muted/5 hover:bg-muted/10 border border-border/10 rounded-full p-1 gap-1">
+            {ANALYTICS_SUB_TABS.map(tab => {
+              const Icon = tab.icon;
+              const isActive = subTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSubTab(tab.id)}
+                  className={`flex items-center gap-1.5 h-8 px-4 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border cursor-pointer select-none ${
+                    isActive
+                      ? 'bg-background text-foreground shadow-xs border-border/10'
+                      : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/10 border-transparent'
+                  }`}
+                  style={
+                    isActive
+                      ? {
+                          backgroundColor: 'var(--card, #ffffff)',
+                          color: 'var(--foreground, #09090b)',
+                          boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+                        }
+                      : {}
+                  }
+                >
+                  <Icon className={`size-3.5 ${isActive ? 'text-foreground' : 'text-muted-foreground/60'}`} strokeWidth={1.3} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -6190,6 +6395,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                               tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
                             />
                             <YAxis
+                              domain={[dataMin => Math.min(0, Math.floor(dataMin * 1.1)), dataMax => Math.ceil(dataMax * 1.1)]}
                               tickFormatter={v => fmtINR(v)}
                               tickLine={false}
                               axisLine={false}
@@ -6658,7 +6864,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                     </span>
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted, #64748b)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    Record W{streakAnalysis.bestWinStreak.count || 0}
+                    Record: W{streakAnalysis.bestWinStreak.count || 0}
                     {streakAnalysis.bestWinStreak.symbols?.length ? (
                       <> · <span style={{ fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>{streakAnalysis.bestWinStreak.symbols.slice(0, 3).join(', ')}</span></>
                     ) : ''}
@@ -6681,14 +6887,11 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                         color: '#dc2626',
                       }}
                     >
-                      {fmtINR(streakAnalysis.worstLossStreak.totalPl || 0, true)}
+                      -₹{Math.abs(streakAnalysis.totalLossPl || 0).toLocaleString('en-IN')}
                     </span>
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted, #64748b)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    Worst L{streakAnalysis.worstLossStreak.count || 1}
-                    {streakAnalysis.worstLossStreak.symbols?.length ? (
-                      <> · <span style={{ fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>{streakAnalysis.worstLossStreak.symbols.slice(0, 3).join(', ')}</span></>
-                    ) : ''}
+                    Worst: L{streakAnalysis.worstLossStreak.count || 1}
                   </div>
                 </div>
               </div>
@@ -7263,7 +7466,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
 
         {subTab === 'SECTOR' && (
           <div className="mt-5 bg-card/15 backdrop-blur-2xl border border-border/10 rounded-3xl p-6 sm:p-7 flex flex-col gap-8 shadow-none animate-in fade-in slide-in-from-bottom-2 duration-300">
-            {/* ── 4 KPI CARDS: Exact Nexus Specification (Image 2) ── */}
+            {/* ── 4 KPI CARDS ── */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {/* Top Industry */}
               <div className="cursor-help relative group" data-state="closed">
@@ -7288,7 +7491,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                   </div>
                 </div>
 
-                {/* Nexus Hovering Tooltip / Popover */}
+                {/* Hovering Tooltip / Popover */}
                 {sectorIndustryAnalysis.topIndustry.symbols?.length > 0 && (
                   <div
                     className="pointer-events-none absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-50 opacity-0 group-hover:opacity-100 group-hover:-translate-y-1 transition-all duration-200"
@@ -7395,7 +7598,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                   </div>
                 </div>
 
-                {/* Nexus Hovering Tooltip / Popover */}
+                {/* Hovering Tooltip / Popover */}
                 {sectorIndustryAnalysis.leastIndustry.symbols?.length > 0 && (
                   <div
                     className="pointer-events-none absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-50 opacity-0 group-hover:opacity-100 group-hover:-translate-y-1 transition-all duration-200"
@@ -7502,7 +7705,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                   </div>
                 </div>
 
-                {/* Nexus Hovering Tooltip / Popover */}
+                {/* Hovering Tooltip / Popover */}
                 {sectorIndustryAnalysis.topSector.symbols?.length > 0 && (
                   <div
                     className="pointer-events-none absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-50 opacity-0 group-hover:opacity-100 group-hover:-translate-y-1 transition-all duration-200"
@@ -7609,7 +7812,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
                   </div>
                 </div>
 
-                {/* Nexus Hovering Tooltip / Popover */}
+                {/* Hovering Tooltip / Popover */}
                 {sectorIndustryAnalysis.leastSector.symbols?.length > 0 && (
                   <div
                     className="pointer-events-none absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-50 opacity-0 group-hover:opacity-100 group-hover:-translate-y-1 transition-all duration-200"
@@ -7694,7 +7897,7 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
               </div>
             </div>
 
-            {/* ── DISTRIBUTION MATRICES (Exact Nexus Grid & Spacing) ── */}
+            {/* ── DISTRIBUTION MATRICES ── */}
             <div className="grid gap-6 grid-cols-1">
               {/* CARD 1: SECTOR ALLOCATION DISTRIBUTION */}
               <div id="sector-allocation-card" className="flex flex-col gap-2.5 border-b border-border/10 pb-6">

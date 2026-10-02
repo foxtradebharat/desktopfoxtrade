@@ -1,4 +1,4 @@
-﻿/**
+/**
  * brokerTokenManager.js
  * ─────────────────────────────────────────────────────────────────────────────
  * Per-broker token lifecycle management with AES-GCM encryption.
@@ -8,7 +8,7 @@
  *   expired     — token exists but past its expiry cutoff (IST-aware)
  *   disconnected — no token stored
  *
- * Per-broker IST expiry windows (matching Nexus production behaviour):
+ * Per-broker IST expiry windows:
  *   Zerodha   : 6:00 AM IST next day  (Kite Connect daily rotation)
  *   Upstox    : 3:30 AM IST next day  (post-settlement window)
  *   Fyers     : 6:00 AM IST next day

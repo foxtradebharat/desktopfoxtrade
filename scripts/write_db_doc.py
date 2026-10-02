@@ -3,7 +3,7 @@ import os
 content = """# 🦊 FoxTrade (foxtrade.in) — Complete Database & Storage Architecture Manual
 
 > **Document Type:** Institutional Database Architecture, Data Models, Storage Hierarchy & Sync Specification  
-> **System Name:** **FoxTrade** (formerly TradeOnTip / Nexus Pro)  
+> **System Name:** **FoxTrade** (TradeOnTip)  
 > **Primary Client Database:** IndexedDB (`foxtrade_v2`)  
 > **Cloud Persistence Model:** 100% Zero-Knowledge User-Owned Google Drive via Restricted Scoped OAuth (`drive.file`)  
 > **Identity Layer:** Firebase Authentication (Strictly for Google Identity Token, Zero Trade Data)  

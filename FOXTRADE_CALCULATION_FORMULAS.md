@@ -178,6 +178,6 @@ Calendar-day quantity-weighted duration:
 ## 4. Drop-In Code Implementation File Reference
 
 The master logic is implemented across:
-- **`src/utils/nexusCalculationEngine.js`**: `matchLots`, `calculateOpenHeat`, `calculateRewardRisk`, `calculateStockMove`, `calculateWeightedHoldingDays`, `enrichTradeWithNexusFormulas`, `calculateDashboardStats`.
+- **`src/utils/foxCalculationEngine.js`**: `matchLots`, `calculateOpenHeat`, `calculateRewardRisk`, `calculateStockMove`, `calculateWeightedHoldingDays`, `enrichTradeWithFoxFormulas`, `calculateDashboardStats`.
 - **`src/Dashboard.jsx`**: `enrichTradeWithLegs`, `metrics`.
 - **`src/utils/fundManagementCalculations.js`**: Monthly capital performance and CAGR compounding chain.

@@ -44,6 +44,13 @@ import { idbGet, idbPut, STORES } from './foxtradeDB.js';
 import { getDeviceId, getConfig, setConfig } from './configStore.js';
 import { clearDoneOps } from './operationsQueue.js';
 import { syncPendingImages } from './imageStore.js';
+import {
+  getCalendarNotes,
+  getIndependentNotes,
+  saveCalendarNotes,
+  saveIndependentNotes,
+} from './noteStore.js';
+import { getValidAccessToken, subscribeToTokenExpired } from './tokenManager.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -61,6 +68,31 @@ let _isSyncing    = false;
 const _syncListeners = new Set();
 let _lastSyncError = null;
 const _syncErrorListeners = new Set();
+
+/**
+ * Listeners that fire when a CRDT Drive merge produces new/updated trades.
+ * Used by dbService.js to notify UI subscribers in real-time after cross-device sync.
+ */
+const _mergeListeners = new Set();
+
+/**
+ * Subscribe to CRDT merge events — fires when a Drive sync merges remote trades
+ * that were added or changed by another device. Use this to refresh the UI without
+ * requiring a page reload.
+ *
+ * @param {(mergedTrades: object[], portfolioId: string) => void} callback
+ * @returns {() => void} unsubscribe function
+ */
+export function subscribeToMergedTrades(callback) {
+  _mergeListeners.add(callback);
+  return () => _mergeListeners.delete(callback);
+}
+
+function _notifyMerge(mergedTrades, portfolioId) {
+  _mergeListeners.forEach(cb => {
+    try { cb(mergedTrades, portfolioId); } catch (_) {}
+  });
+}
 
 /**
  * Subscribe to live syncing state changes (for UI cloud icon animation).
@@ -101,6 +133,11 @@ export function setSyncError(error) {
 export function getLastSyncError() {
   return _lastSyncError;
 }
+
+// Automatically bridge token expiration into sync error state
+subscribeToTokenExpired(() => {
+  setSyncError('Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.');
+});
 
 // ── Compression helpers ───────────────────────────────────────────────────────
 
@@ -283,6 +320,11 @@ export function mergeFoxyChats(local = [], remote = []) {
   if (!Array.isArray(local) || local.length === 0) return Array.isArray(remote) ? remote : [];
   if (!Array.isArray(remote) || remote.length === 0) return local;
 
+  const getContentLength = (chat) => {
+    if (!Array.isArray(chat?.messages)) return 0;
+    return chat.messages.reduce((sum, m) => sum + (m?.content?.length || m?.text?.length || 0), 0);
+  };
+
   const map = new Map();
   for (const c of local) {
     if (c && c.id) map.set(c.id, c);
@@ -294,10 +336,18 @@ export function mergeFoxyChats(local = [], remote = []) {
     if (!lc) {
       map.set(rc.id, rc);
     } else {
-      const lcLen = lc.messages?.length || 0;
-      const rcLen = rc.messages?.length || 0;
-      if (rcLen > lcLen || (rc.updatedAt || 0) > (lc.updatedAt || 0)) {
+      const lcChars = getContentLength(lc);
+      const rcChars = getContentLength(rc);
+      if (rcChars > lcChars) {
         map.set(rc.id, rc);
+      } else if (lcChars > rcChars) {
+        // Keep local with more content
+      } else {
+        const lcLen = lc.messages?.length || 0;
+        const rcLen = rc.messages?.length || 0;
+        if (rcLen > lcLen || (rc.updatedAt || 0) > (lc.updatedAt || 0)) {
+          map.set(rc.id, rc);
+        }
       }
     }
   }
@@ -335,11 +385,17 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
   let notes = null;
   let independentNotes = null;
   try {
-    const rawNotes = localStorage.getItem('foxtrade_notes_v2');
-    if (rawNotes) notes = JSON.parse(rawNotes);
-    const rawInd = localStorage.getItem('foxtrade_independent_notes_v2');
-    if (rawInd) independentNotes = JSON.parse(rawInd);
-  } catch {}
+    const rawCalendar = await getCalendarNotes();
+    if (rawCalendar && typeof rawCalendar === 'object' && Object.keys(rawCalendar).length > 0) {
+      notes = rawCalendar;
+    }
+    const rawInd = await getIndependentNotes();
+    if (Array.isArray(rawInd) && rawInd.length > 0) {
+      independentNotes = rawInd;
+    }
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading notes for backup:', err);
+  }
 
   let foxyChats = null;
   let foxyCommitments = null;
@@ -419,14 +475,15 @@ export async function parseDrivePayload(buffer) {
  * @returns {Promise<{success: boolean, merged: boolean, tradeCount: number, error?: string}>}
  */
 export async function saveToDrive(portfolioId, trades, accessToken, forceOverwrite = false) {
-  if (!accessToken || accessToken === 'demo-token') return { success: true, mode: 'local' };
+  const validToken = (await getValidAccessToken().catch(() => null)) || accessToken;
+  if (!validToken || validToken === 'demo-token') return { success: true, mode: 'local' };
 
   setSyncingState(true);
   try {
     const deviceId = await getDeviceId();
     const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    const folderId = await getOrCreateFolder(accessToken, FOLDER_NAME);
-    const existing = await findBackupFile(accessToken, fileName);
+    const folderId = await getOrCreateFolder(validToken, FOLDER_NAME);
+    const existing = await findBackupFile(validToken, fileName);
 
     // Read sync cursor — tells us what we last synced
     const cursor   = await idbGet(STORES.SYNC_CURSORS, portfolioId);
@@ -439,11 +496,23 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
     // Only merge if not forcing overwrite AND local has trades (never resurrect onto empty slate)
     if (!forceOverwrite && trades && trades.length > 0 && existing && lastETag && existing.modifiedTime !== lastETag) {
       console.log('[SyncEngine] Remote changed since last sync — merging...');
-      const remoteTrades = await loadFromDrive(portfolioId, accessToken);
+      const remoteTrades = await loadFromDrive(portfolioId, validToken);
       if (remoteTrades.length > 0) {
         finalTrades = mergeTradeArrays(trades, remoteTrades);
         merged      = true;
         console.log(`[SyncEngine] Merged: local=${trades.length} remote=${remoteTrades.length} result=${finalTrades.length}`);
+
+        // ── Write merged result back to IDB + notify UI immediately ───────────
+        // This is the fix for Critical Bug 3: without this, the UI only sees
+        // the remote changes on the next manual reload.
+        try {
+          const { bulkPutTrades } = await import('./tradeStore.js');
+          await bulkPutTrades(portfolioId, finalTrades, true /* skipQueue — already synced */);
+          // Fire merge listeners — dbService.js picks this up and notifies React subscribers
+          _notifyMerge(finalTrades.filter(t => !t.deletedAt), portfolioId);
+        } catch (mergeWriteErr) {
+          console.warn('[SyncEngine] Merge write-back to IDB failed:', mergeWriteErr.message);
+        }
       }
     }
 
@@ -462,7 +531,7 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
 
     const uploadResp = await fetch(uploadUrl, {
       method,
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${validToken}` },
       body: form,
     });
 
@@ -485,7 +554,7 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
     await clearDoneOps().catch(() => {});
 
     // Sync pending chart images to Drive charts folder
-    syncPendingImages(accessToken, portfolioId).catch((err) => {
+    syncPendingImages(validToken, portfolioId).catch((err) => {
       console.warn('[SyncEngine] Background image sync notice:', err.message);
     });
 
@@ -511,20 +580,24 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
  * @returns {Promise<object[]>} trade array
  */
 export async function loadFromDrive(portfolioId, accessToken) {
-  if (!accessToken) return [];
+  const validToken = (await getValidAccessToken().catch(() => null)) || accessToken;
+  if (!validToken || validToken === 'demo-token') return [];
 
   try {
     const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    const existing = await findBackupFile(accessToken, fileName);
-    if (!existing) {
+    const existing = await findBackupFile(validToken, fileName);
+
+    // Determine which Drive file to download: current name or legacy name
+    let fileToDownload = existing;
+    if (!fileToDownload) {
       // Try legacy filename from old driveService.js
-      const legacy = await findBackupFile(accessToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
+      const legacy = await findBackupFile(validToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
       if (!legacy) return [];
-      existing.id = legacy.id; // reuse download logic
+      fileToDownload = legacy;
     }
 
-    const resp = await fetch(`${DRIVE_API}/${existing.id}?alt=media`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const resp = await fetch(`${DRIVE_API}/${fileToDownload.id}?alt=media`, {
+      headers: { Authorization: `Bearer ${validToken}` },
     });
     if (!resp.ok) return [];
 
@@ -532,16 +605,21 @@ export async function loadFromDrive(portfolioId, accessToken) {
     const payload = await parseDrivePayload(buffer);
     if (!payload) return [];
 
-    // Restore notebook and independent notes if present in Drive backup
+    // Restore calendar and independent notes if present in Drive backup
+    // Persists to both IDB and localStorage, and notifies active UI subscribers
     if (payload.notes && typeof payload.notes === 'object') {
       try {
-        localStorage.setItem('foxtrade_notes_v2', JSON.stringify(payload.notes));
-      } catch {}
+        await saveCalendarNotes(payload.notes);
+      } catch (e) {
+        console.warn('[SyncEngine] Failed to restore calendar notes:', e);
+      }
     }
     if (Array.isArray(payload.independentNotes)) {
       try {
-        localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify(payload.independentNotes));
-      } catch {}
+        await saveIndependentNotes(payload.independentNotes);
+      } catch (e) {
+        console.warn('[SyncEngine] Failed to restore independent notes:', e);
+      }
     }
 
     // Restore Foxy AI chats with smart merge

@@ -19,7 +19,7 @@
    - Staggered Trailing Stop-Loss (TSL)
    - MAE & MFE Tracking
 6. [Mathematical Specifications & Calculation Engines](#6-mathematical-specifications--calculation-engines)
-   - Win Rate (Nexus Parity Method)
+   - Win Rate (Standard Decided Method)
    - Gross Realized P&L & Net Realized P&L
    - Brokerage & Regulatory Charges Model (STT, GST, Stamp Duty, SEBI)
    - Capital at Risk (% & ₹)
@@ -36,7 +36,7 @@
    - Net P&L Trajectory Curve
    - Benchmark Alpha & Beta Comparison (NIFTY 50, BANK NIFTY, NIFTY MIDCAP)
    - Setup & Emotional Analysis
-9. [Deep Analytics (Nexus Parity Hub)](#9-deep-analytics-nexus-parity-hub)
+9. [Deep Analytics Hub](#9-deep-analytics-hub)
    - Institutional Metrics (Sharpe, Sortino, Calmar, CAGR)
    - Recovery Factor & Max Run-up
 10. [Fund Management & Capital Allocation Engine](#10-fund-management--capital-allocation-engine)
@@ -107,25 +107,65 @@ The system features 3 distinct theme modes managed via CSS variables in [`src/in
 
 ## 3. State Management & Data Persistence Architecture
 
-### 3.1 Local Storage Hierarchy
-All user state is managed reactively with immediate persistence to `localStorage`:
+> **Primary Storage Engine**: IndexedDB `foxtrade_v2` (DB version 3) — NOT localStorage.
 
-| Key | Purpose | Structure |
+### 3.1 IndexedDB Schema (`foxtrade_v2`, v3)
+
+All trade data, config, and chart images live exclusively in the user's browser IndexedDB and their own Google Drive. Zero trade data ever touches any third-party server.
+
+| Store | Key | Purpose |
 | :--- | :--- | :--- |
-| `tradeontip_trades_v5` | All trades across all portfolios | Array of `Trade` objects |
-| `tradeontip_portfolios` | Portfolio workspaces metadata | Array of `{ id, name, description, baseCapital, currency, createdAt }` |
-| `tradeontip_active_portfolio_id` | Active workspace ID | String (e.g. `'portfolio-default'`) |
-| `tradeontip_theme` | Selected theme | `'light'` \| `'dark'` \| `'pitch-black'` |
-| `tradeontip_settings` | User typography & display settings | `{ fontFamily, fontWeight, fontSize, scale, costBasisMethod }` |
-| `tradeontip_columns` | Visible columns in Journal Table | Array of column IDs |
-| `tradeontip_fund_management` | Monthly capital additions & withdrawals | Map of `{ monthIndex: { added, withdrawn } }` |
-| `tradeontip_playbooks` | User-defined trading strategies | Array of Playbook strategy definitions |
-| `tradeontip_charges_map` | Custom broker charges configuration | Map of tax/brokerage rate overrides |
+| `trades` | `id` | Per-trade records with CRDT metadata (`version`, `deviceId`, `clientUpdatedAt`, `deletedAt`) |
+| `operations_queue` | `qid` (auto) | Offline crash-safe write queue — every write enqueued here before Drive sync |
+| `sync_cursors` | `portfolioId` | Last Drive sync ETag per portfolio for conflict detection |
+| `chart_images` | `id` | Binary WebP image blobs (never base64'd into backup JSON) |
+| `app_config` | `key` | All critical config: tokens, portfolios, notes, AI settings |
+| `monthly_perf` | `pid_year_month` | Monthly performance ledger per portfolio/year |
+| `ohlc_cache` | `symbolTimeframe` | Candlestick price cache with `expiresAt` TTL index |
 
-### 3.2 Auto-Repair Mechanism
+### 3.2 Data Flow
+
+```
+User Action → IDB Write (instant) → Operations Queue (crash-safe) → 15s debounce → Drive Sync
+Drive Sync → CRDT merge (LWW per trade) → Write back to IDB → Notify UI subscribers
+```
+
+### 3.3 localStorage Usage (Legacy / Mirror Only)
+
+localStorage is only used as:
+- A **migration source** for users upgrading from v1 (read once, then discarded)
+- A **secondary mirror** for notes and tokens (IDB is always primary)
+- A **theme and display settings** store (non-critical, can be re-entered)
+
+### 3.4 Auto-Repair Mechanism
 On application startup, [`Dashboard.jsx`](file:///d:/tradeontip/src/Dashboard.jsx) runs an automatic validation routine:
 - Detects missing or duplicate `tradeNo` entries within each portfolio.
 - Auto-renumbers trades consecutively from `1` to `N` to guarantee zero desynchronization between table row numbering and stat cards.
+- `purgeExpiredOhlcCache()` runs at module load to clear stale candlestick cache entries.
+
+### 3.5 Fully Structured Stores: Notes & AI Chat Engines
+
+1. **Trade Engine (`tradeStore.js`)**:
+   - IndexedDB store: `trades` (keyPath: `id`)
+   - Fully indexed by `portfolioId`, `status`, `symbol`, and `updatedAt`.
+   - Per-trade CRDT metadata: `version`, `deviceId`, `clientUpdatedAt`, `deletedAt`.
+
+2. **Note Engine (`noteStore.js`)**:
+   - IndexedDB store: `app_config` (keys: `notes_v2`, `independent_notes_v2`)
+   - Dual-tier architecture: synchronous local cache for zero-latency UI re-renders + asynchronous IndexedDB writes.
+   - Normalized schemas:
+     - `CalendarNotesMap`: keyed by `YYYY-MM-DD` with sanitized `scopedNotes` and `mood`.
+     - `IndependentNote`: typed records (`id`, `title`, `content`, `category`, `priority`, `progress`, `status`, `isPinned`, timestamps).
+   - Real-time reactivity via `subscribeToCalendarNotes` and `subscribeToIndependentNotes`.
+   - Auto-dispatches Google Drive background sync on every edit.
+   - Zero external leakage (all Firestore sync references removed).
+
+3. **Foxy AI Store (`foxyStore.js`)**:
+   - IndexedDB store: `app_config` (keys: `foxy_ai_chats`, `foxy_trader_commitments`)
+   - Normalized schemas:
+     - `ChatSession`: `{ id, title, createdAt, updatedAt, messages: [ { id, sender, text, timestamp } ] }`.
+     - `TraderCommitments`: deduplicated behavioral rules array (max 20 rules).
+   - Auto-dispatches Google Drive sync on every conversation turn or rule addition.
 
 ---
 
@@ -186,7 +226,7 @@ $$\text{Open Qty} = \text{Total Position Qty} - \text{Total Exited Qty}$$
 
 All mathematical formulas in FoxTrade are calibrated against verified institutional trade data.
 
-### 6.1 Win Rate (Nexus Parity Method)
+### 6.1 Win Rate (Standard Decided Method)
 Breakeven trades (where Gross Realized P&L is exactly ₹0.00) are excluded from the denominator:
 $$\text{Decided Trades} = \{ t \in \text{Closed Trades} \mid \text{P\&L}(t) \neq 0 \}$$
 $$\text{Wins} = \{ t \in \text{Decided Trades} \mid \text{P\&L}(t) > 0 \}$$
@@ -263,7 +303,7 @@ Located in [`src/components/Pages/AnalyticsPage.jsx`](file:///d:/tradeontip/src/
 
 ---
 
-## 9. Deep Analytics (Nexus Parity Hub)
+## 9. Deep Analytics Hub
 
 Located in [`src/components/Pages/DeepAnalyticsPage.jsx`](file:///d:/tradeontip/src/components/Pages/DeepAnalyticsPage.jsx):
 
@@ -471,7 +511,7 @@ tradeontip/
 │   │       ├── TaxAnalyticsPage.jsx
 │   │       └── TaxInputDialog.jsx
 │   ├── data/
-│   │   └── nexusImportedTrades.json
+│   │   └── foxtradeImportedTrades.json
 │   ├── services/
 │   │   ├── brokerApiService.js
 │   │   ├── dbService.js
@@ -485,7 +525,7 @@ tradeontip/
 │       ├── brokerChargesService.js
 │       ├── fundManagementCalculations.js
 │       ├── indianCurrencyFormatter.js
-│       ├── nexusCalculationEngine.js
+│       ├── foxCalculationEngine.js
 │       ├── securityMaster.js
 │       ├── tradeDeduplicationEngine.js
 │       └── tradeImportEngine.js

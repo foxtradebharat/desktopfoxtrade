@@ -33,6 +33,8 @@ import { db } from '../../services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { formatIndianRupee, formatIndianNumber } from '../../utils/indianCurrencyFormatter';
 import { calculateCharges, getChargesMap } from '../../utils/brokerChargesService';
+import { getStoredCapitalChanges, getPreviousYearEndingCapital } from '../../utils/fundManagementCalculations';
+import { matchLots } from '../../utils/foxCalculationEngine';
 
 /**
  * Robust date parser supporting ISO strings, YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY
@@ -78,7 +80,7 @@ function parseDateParts(dateStr) {
  * Extract realized P/L and check if trade has realized outcome
  */
 function getTradeRealizedPl(t) {
-  return Number(t.grossPnl ?? t.pl ?? t.pnl ?? 0);
+  return Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pl ?? t.pnl ?? 0);
 }
 
 function isTradeRealized(t) {
@@ -108,10 +110,86 @@ function getTradeCharges(t) {
   };
 }
 
+/**
+ * Decompose a trade into exact lot-matched exit events (Cash Basis)
+ */
+function getTradeExitMatches(t, costBasisMethod = 'fifo') {
+  // If trade already has pre-computed lot matches (from journal / trade entry)
+  if (Array.isArray(t.matches) && t.matches.length > 0) {
+    return t.matches.map((m) => ({
+      exitDate: m.exitDate || m.exit?.date || t.date || '',
+      exitTime: m.exit?.time || '15:00:00',
+      pl: Number(m.pl || 0),
+      qty: Number(m.matchedQty || m.qty || 0),
+      trade: t,
+    }));
+  }
+
+  const side = (t.type || t.side || 'Buy');
+
+  // Entry lots
+  const entryLots = [];
+  const initialQty = parseFloat(t.qty || t.initialQty) || 0;
+  const initialPrice = parseFloat(t.entry || t.avgEntry) || 0;
+  if (initialQty > 0 && initialPrice > 0) {
+    entryLots.push({
+      id: 'initial',
+      price: initialPrice,
+      qty: initialQty,
+      date: t.date || t.entryDate || ''
+    });
+  }
+  for (let i = 1; i <= 4; i++) {
+    const pQty = parseFloat(t[`p${i}Qty`]) || 0;
+    const pPrice = parseFloat(t[`p${i}Price`]) || 0;
+    const pDate = t[`p${i}Date`] || t.date || t.entryDate || '';
+    if (pQty > 0 && pPrice > 0) {
+      entryLots.push({
+        id: `p${i}`,
+        price: pPrice,
+        qty: pQty,
+        date: pDate
+      });
+    }
+  }
+
+  // Exit lots - strictly require qty > 0 and price > 0 and date
+  const exitLots = [
+    { id: 'e1', price: parseFloat(t.e1Price) || 0, qty: parseFloat(t.e1Qty) || 0, date: t.e1Date, time: t.e1Time },
+    { id: 'e2', price: parseFloat(t.e2Price) || 0, qty: parseFloat(t.e2Qty) || 0, date: t.e2Date, time: t.e2Time },
+    { id: 'e3', price: parseFloat(t.e3Price) || 0, qty: parseFloat(t.e3Qty) || 0, date: t.e3Date, time: t.e3Time },
+    { id: 'e4', price: parseFloat(t.e4Price) || 0, qty: parseFloat(t.e4Qty) || 0, date: t.e4Date, time: t.e4Time },
+  ].filter(l => l.qty > 0 && l.price > 0 && l.date);
+
+  if (exitLots.length > 0 && entryLots.length > 0) {
+    const res = matchLots(entryLots, exitLots, costBasisMethod, side);
+    if (res && res.matches && res.matches.length > 0) {
+      return res.matches.map(m => ({
+        exitDate: m.exitDate || t.date || '',
+        exitTime: m.exit?.time || '15:00:00',
+        pl: Number(m.pl || 0),
+        qty: Number(m.matchedQty || m.qty || 0),
+        trade: t
+      }));
+    }
+  }
+
+  // Fallback for single-exit / legacy trades
+  const pl = getTradeRealizedPl(t);
+  const exitDate = t.exitDate || t.closeDate || t.e1Date || t.date || t.entryDate || '';
+  return [{
+    exitDate,
+    exitTime: t.time || '15:00:00',
+    pl,
+    qty: Number(t.exitedQty || t.qty || 1),
+    trade: t
+  }];
+}
+
 export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0 }) {
   const [selectedYear, setSelectedYear] = useState('2026');
   const [periodMode, setPeriodMode] = useState('calendar'); // 'calendar' (Jan-Dec) | 'fy' (Apr-Mar)
-  const [dateAttribution, setDateAttribution] = useState('entry'); // 'entry' (Nexus style) | 'exit' (Accounting style)
+  const [dateAttribution, setDateAttribution] = useState('exit'); // 'exit' (Accounting / Cash Basis style) | 'entry' (Trade Entry style)
   const [isAutoChargesEnabled, setIsAutoChargesEnabled] = useState(() => {
     try {
       return localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
@@ -261,32 +339,99 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
     ];
   }, [periodMode]);
 
+  // Resolve active portfolio & capital additions/withdrawals for accurate ESC baseline
+  const activePortfolioId = typeof window !== 'undefined'
+    ? (localStorage.getItem('tradeontip_active_portfolio_id') || 'portfolio-default')
+    : 'portfolio-default';
+
+  const capitalChanges = useMemo(() => {
+    return getStoredCapitalChanges(activePortfolioId, selectedYear);
+  }, [activePortfolioId, selectedYear]);
+
+  const prevYearEndingCapital = useMemo(() => {
+    return getPreviousYearEndingCapital(trades, selectedYear, activePortfolioId);
+  }, [trades, selectedYear, activePortfolioId]);
+
   // 3. Compute Monthly Breakdown & Running Trajectory
   const { monthlyBreakdown, chartData } = useMemo(() => {
-    const baseline = Number(portfolioValue) > 0 ? Number(portfolioValue) : 0;
+    // 1. Group trade contributions by month (0-indexed 0..11)
+    const monthMatches = Array.from({ length: 12 }, () => ({
+      grossPl: 0,
+      contributingTrades: [],
+      matchEvents: [],
+    }));
 
+    trades.forEach((t) => {
+      if (!isTradeRealized(t)) return;
+
+      if (dateAttribution === 'exit') {
+        const matches = getTradeExitMatches(t, 'fifo');
+
+        matches.forEach((m) => {
+          const parsed = parseDateParts(m.exitDate);
+          if (!parsed) return;
+          if (selectedYear !== 'All' && String(parsed.year) !== String(selectedYear)) return;
+
+          const mIdx = parsed.month;
+          if (mIdx >= 0 && mIdx < 12) {
+            monthMatches[mIdx].grossPl += m.pl;
+            monthMatches[mIdx].matchEvents.push({
+              ...m,
+              dateMs: new Date(Number(parsed.year), parsed.month, parsed.day).getTime(),
+            });
+
+            // Only trades with non-zero PL contribute to month trade count
+            if (m.pl !== 0 && !monthMatches[mIdx].contributingTrades.includes(t)) {
+              monthMatches[mIdx].contributingTrades.push(t);
+            }
+          }
+        });
+      } else {
+        // Trade Entry Date Attribution
+        const parsed = parseDateParts(t.date || t.entryDate);
+        if (!parsed) return;
+        if (selectedYear !== 'All' && String(parsed.year) !== String(selectedYear)) return;
+
+        const mIdx = parsed.month;
+        if (mIdx >= 0 && mIdx < 12) {
+          const pl = getTradeRealizedPl(t);
+          monthMatches[mIdx].grossPl += pl;
+          monthMatches[mIdx].contributingTrades.push(t);
+          monthMatches[mIdx].matchEvents.push({
+            exitDate: t.date || t.entryDate,
+            exitTime: t.time || '15:00:00',
+            pl,
+            qty: Number(t.exitedQty || t.qty || 1),
+            trade: t,
+            dateMs: new Date(Number(parsed.year), parsed.month, parsed.day).getTime(),
+          });
+        }
+      }
+    });
+
+    // 2. Track monthly running capital & compute stats
+    let runningCapital = prevYearEndingCapital;
     let runningCumulativeNetPl = 0;
 
-    const breakdown = monthSequence.map((m) => {
-      // Filter trades belonging to this month & year
-      const monthTrades = trades.filter((t) => {
-        if (!isTradeRealized(t)) return false;
+    const breakdown = monthSequence.map((m, seqIdx) => {
+      const added = parseFloat(capitalChanges[m.index]?.added) || 0;
+      const withdrawn = parseFloat(capitalChanges[m.index]?.withdrawn) || 0;
 
-        const dateString =
-          dateAttribution === 'exit'
-            ? t.e3Date || t.e2Date || t.e1Date || t.exitDate || t.closeDate || t.date
-            : t.date || t.entryDate;
+      let startingCapital = runningCapital;
+      if (seqIdx === 0) {
+        startingCapital = prevYearEndingCapital + added - withdrawn;
+      } else {
+        startingCapital = runningCapital + added - withdrawn;
+      }
+      if (startingCapital <= 0 && Number(portfolioValue) > 0) {
+        startingCapital = Number(portfolioValue);
+      }
 
-        const parsed = parseDateParts(dateString);
-        if (!parsed) return false;
+      const monthData = monthMatches[m.index];
+      const monthTrades = monthData.contributingTrades;
+      const grossPl = monthData.grossPl;
 
-        if (selectedYear !== 'All' && parsed.year !== selectedYear) return false;
-        return parsed.month === m.index;
-      });
-
-      const grossPl = monthTrades.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
-
-      // Auto-calculate exact trade charges for this month's trades
+      // Auto charges calculation if toggle is enabled
       const autoTradeCharges = {
         stt: 0,
         stampDuty: 0,
@@ -340,33 +485,48 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
 
       const netPl = grossPl - taxPaid;
 
-      const pfImpact = (grossPl / baseline) * 100;
-      const netPfImpact = (netPl / baseline) * 100;
+      // Advance capital
+      runningCapital = startingCapital + netPl;
 
-      const wins = monthTrades.filter((t) => getTradeRealizedPl(t) > 0);
+      // Monthly PF impact calculated against this month's starting capital
+      const pfImpact = startingCapital > 0 ? (grossPl / startingCapital) * 100 : 0;
+      const netPfImpact = startingCapital > 0 ? (netPl / startingCapital) * 100 : 0;
+
+      // Closed positions rule for Win Rate & Payoff metrics
+      const closedTrades = monthTrades.filter(
+        (t) => String(t.positionStatus || t.status || '').toLowerCase() === 'closed'
+      );
+      const wins = closedTrades.filter(
+        (t) => (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl) > 0 || getTradeRealizedPl(t) > 0)
+      );
+      const losses = closedTrades.filter(
+        (t) => (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl) < 0 || getTradeRealizedPl(t) < 0)
+      );
+
       const winRate = monthTrades.length > 0 ? (wins.length / monthTrades.length) * 100 : 0;
 
-      const sumWins = wins.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
+      const sumWins = wins.reduce(
+        (acc, t) => acc + (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl ?? 0) || getTradeRealizedPl(t)),
+        0
+      );
       const avgProfit = wins.length > 0 ? sumWins / wins.length : 0;
 
-      const losses = monthTrades.filter((t) => getTradeRealizedPl(t) < 0);
-      const sumLosses = losses.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
+      const sumLosses = losses.reduce(
+        (acc, t) => acc + (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl ?? 0) || getTradeRealizedPl(t)),
+        0
+      );
       const avgLoss = losses.length > 0 ? Math.abs(sumLosses / losses.length) : 0;
 
-      let avgWinLossRatio = '0.00';
-      if (losses.length === 0) {
-        avgWinLossRatio = wins.length > 0 ? '∞' : '0.00';
-      } else if (avgLoss > 0) {
-        avgWinLossRatio = (avgProfit / avgLoss).toFixed(2);
-      }
+      const avgWinLossRatio = avgLoss === 0 ? '0.00' : (avgProfit / avgLoss).toFixed(2);
 
       runningCumulativeNetPl += netPl;
-      const cummPLpct = (runningCumulativeNetPl / baseline) * 100;
+      const cummPLpct = startingCapital > 0 ? (runningCumulativeNetPl / startingCapital) * 100 : 0;
 
       return {
         month: m.label,
         shortMonth: m.short,
         monthIdx: m.index,
+        startingCapital,
         grossPl: parseFloat(grossPl.toFixed(2)),
         taxes: taxPaid,
         taxPct: grossPl > 0 ? parseFloat(((taxPaid / grossPl) * 100).toFixed(2)) : 0,
@@ -374,13 +534,16 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
         pfImpact: parseFloat(pfImpact.toFixed(2)),
         netPfImpact: parseFloat(netPfImpact.toFixed(2)),
         trades: monthTrades.length,
-        winRate: parseFloat(winRate.toFixed(1)),
+        winRate: Math.round(winRate),
         avgProfit: parseFloat(avgProfit.toFixed(1)),
         avgLoss: parseFloat(avgLoss.toFixed(1)),
         avgWinLossRatio,
         cummPLpct: parseFloat(cummPLpct.toFixed(3)),
+        plPercent: parseFloat(pfImpact.toFixed(2)),
         autoTradeCharges,
         isAutoApplied,
+        contributingTrades: monthTrades,
+        matchEvents: monthData.matchEvents,
       };
     });
 
@@ -388,83 +551,62 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
       monthlyBreakdown: breakdown,
       chartData: breakdown,
     };
-  }, [trades, taxesData, detailedTaxesData, isAutoChargesEnabled, selectedYear, periodMode, dateAttribution, portfolioValue, monthSequence]);
+  }, [trades, taxesData, detailedTaxesData, isAutoChargesEnabled, selectedYear, periodMode, dateAttribution, portfolioValue, monthSequence, capitalChanges, prevYearEndingCapital]);
 
   // 4. Calculate Tax Summary Metrics
   const summaryMetrics = useMemo(() => {
-    const baseline = Number(portfolioValue) > 0 ? Number(portfolioValue) : 0;
     const totalGross = monthlyBreakdown.reduce((acc, m) => acc + m.grossPl, 0);
     const totalTaxes = monthlyBreakdown.reduce((acc, m) => acc + m.taxes, 0);
     const totalNet = totalGross - totalTaxes;
 
-    const realizedSorted = trades
-      .filter((t) => isTradeRealized(t))
-      .map((t) => {
-        const dateStr =
-          dateAttribution === 'exit'
-            ? t.e3Date || t.e2Date || t.e1Date || t.exitDate || t.closeDate || t.date
-            : t.date || t.entryDate;
-        const parsed = parseDateParts(dateStr);
-        const timeMs = parsed
-          ? new Date(Number(parsed.year), parsed.month, parsed.day).getTime()
-          : 0;
-        return {
-          ...t,
-          parsedDate: parsed,
-          timeMs,
-          realizedPnl: getTradeRealizedPl(t),
-        };
-      })
-      .filter((t) => (selectedYear === 'All' ? true : t.parsedDate?.year === selectedYear))
-      .sort((a, b) => a.timeMs - b.timeMs);
+    const monthStartingCapMap = {};
+    monthlyBreakdown.forEach((m) => {
+      monthStartingCapMap[m.monthIdx] = m.startingCapital || Number(portfolioValue) || 200000;
+    });
 
-    let peakRealized = 0;
+    const allEvents = [];
+    monthlyBreakdown.forEach((m) => {
+      (m.matchEvents || []).forEach((ev) => {
+        const monthCap = monthStartingCapMap[m.monthIdx] || Number(portfolioValue) || 200000;
+        const pfImpact = monthCap > 0 ? (ev.pl / monthCap) * 100 : 0;
+        allEvents.push({
+          ...ev,
+          monthCap,
+          pfImpact,
+        });
+      });
+    });
+
+    allEvents.sort((a, b) => {
+      if (a.dateMs !== b.dateMs) return a.dateMs - b.dateMs;
+      return (a.exitTime || '').localeCompare(b.exitTime || '');
+    });
+
+    let runningCumPf = 0;
     let runningRealized = 0;
+    let peakRealized = 0;
     let maxDrawdownAmt = 0;
     let maxCummPF = 0;
-    let minCummPF = Infinity;
-    let hasHadFirstProfit = false;
+    let minCummPF = 0;
 
-    if (realizedSorted.length > 0) {
-      realizedSorted.forEach((t) => {
-        runningRealized += t.realizedPnl;
-        if (runningRealized > peakRealized) peakRealized = runningRealized;
+    allEvents.forEach((ev) => {
+      runningCumPf += ev.pfImpact;
+      runningRealized += ev.pl;
 
-        const dd = peakRealized - runningRealized;
-        if (dd > maxDrawdownAmt) maxDrawdownAmt = dd;
+      if (runningCumPf > maxCummPF) maxCummPF = runningCumPf;
+      if (runningCumPf < minCummPF) minCummPF = runningCumPf;
 
-        const currentPF = (runningRealized / baseline) * 100;
-        if (currentPF > maxCummPF) maxCummPF = currentPF;
+      if (runningRealized > peakRealized) peakRealized = runningRealized;
+      const dd = peakRealized - runningRealized;
+      if (dd > maxDrawdownAmt) maxDrawdownAmt = dd;
+    });
 
-        if (runningRealized > 0) {
-          hasHadFirstProfit = true;
-        }
-
-        if (hasHadFirstProfit && currentPF < minCummPF) {
-          minCummPF = currentPF;
-        }
-      });
-    } else {
-      let runningPnl = 0;
-      monthlyBreakdown.forEach((m) => {
-        if (m.trades > 0 || m.grossPl !== 0) {
-          runningPnl += m.grossPl;
-          if (runningPnl > peakRealized) peakRealized = runningPnl;
-
-          const dd = peakRealized - runningPnl;
-          if (dd > maxDrawdownAmt) maxDrawdownAmt = dd;
-
-          const pf = (runningPnl / baseline) * 100;
-          if (pf > maxCummPF) maxCummPF = pf;
-          if (runningPnl > 0) hasHadFirstProfit = true;
-          if (hasHadFirstProfit && pf < minCummPF) minCummPF = pf;
-        }
-      });
-    }
-
-    const currentGiveback = Math.max(0, peakRealized - runningRealized);
-    const givebackPct = baseline > 0 ? (currentGiveback / baseline) * 100 : 0;
-    const drawdownPct = baseline > 0 ? (maxDrawdownAmt / baseline) * 100 : 0;
+    const currentRealized = runningRealized;
+    const currentGiveback = Math.max(0, peakRealized - currentRealized);
+    const givebackPct = peakRealized > 0 ? (currentGiveback / peakRealized) * 100 : 0;
+    const currentDrawdownAmt = Math.max(0, peakRealized - currentRealized);
+    const currentDrawdownPct = peakRealized > 0 ? (currentDrawdownAmt / peakRealized) * 100 : 0;
+    const isAtPeak = currentDrawdownAmt <= 0 || currentDrawdownPct < 0.001;
 
     return {
       totalGross,
@@ -472,17 +614,18 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
       totalNet,
       taxPercentOfGross: totalGross > 0 ? (totalTaxes / totalGross) * 100 : 0,
       maxCummPF: maxCummPF.toFixed(2),
-      minCummPF: (minCummPF === Infinity ? 0 : minCummPF).toFixed(2),
-      drawdownPct: drawdownPct.toFixed(2),
-      drawdownAmt: maxDrawdownAmt.toFixed(2),
-      isAtPeak: maxDrawdownAmt === 0 || drawdownPct === 0,
+      minCummPF: minCummPF.toFixed(2),
+      drawdownPct: currentDrawdownPct.toFixed(2),
+      drawdownAmt: currentDrawdownAmt.toFixed(2),
+      maxHistoricalDrawdownAmt: maxDrawdownAmt.toFixed(2),
+      isAtPeak,
       givebackPct: givebackPct.toFixed(2),
       givebackAmt: currentGiveback.toFixed(2),
       peakRealized: peakRealized.toFixed(2),
-      currentRealized: runningRealized.toFixed(2),
-      isAtRealizedPeak: currentGiveback === 0,
+      currentRealized: currentRealized.toFixed(2),
+      isAtRealizedPeak: currentGiveback <= 0,
     };
-  }, [monthlyBreakdown, trades, selectedYear, dateAttribution, portfolioValue]);
+  }, [monthlyBreakdown, portfolioValue]);
 
   // 5. Table Summary Totals Row
   const tableTotals = useMemo(() => {
@@ -490,22 +633,36 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
     const totalGross = monthlyBreakdown.reduce((acc, m) => acc + m.grossPl, 0);
     const totalTaxes = monthlyBreakdown.reduce((acc, m) => acc + m.taxes, 0);
     const totalNet = totalGross - totalTaxes;
-    const baseline = Number(portfolioValue) > 0 ? Number(portfolioValue) : 0;
+    const janStartingCap = monthlyBreakdown[0]?.startingCapital || Number(portfolioValue) || 200000;
 
-    const allWins = trades.filter((t) => isTradeRealized(t) && getTradeRealizedPl(t) > 0);
+    const allContributingTrades = Array.from(
+      new Set(monthlyBreakdown.flatMap((m) => m.contributingTrades || []))
+    );
+    const closedContributing = allContributingTrades.filter(
+      (t) => String(t.positionStatus || t.status || '').toLowerCase() === 'closed'
+    );
+    const allWins = closedContributing.filter(
+      (t) => (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl) > 0 || getTradeRealizedPl(t) > 0)
+    );
+    const allLosses = closedContributing.filter(
+      (t) => (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl) < 0 || getTradeRealizedPl(t) < 0)
+    );
+
     const totalWinRate = totalTrades > 0 ? (allWins.length / totalTrades) * 100 : 0;
-
-    const sumProfit = allWins.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
+    const sumProfit = allWins.reduce(
+      (acc, t) => acc + (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl ?? 0) || getTradeRealizedPl(t)),
+      0
+    );
     const overallAvgProfit = allWins.length > 0 ? sumProfit / allWins.length : 0;
 
-    const allLosses = trades.filter((t) => isTradeRealized(t) && getTradeRealizedPl(t) < 0);
-    const sumLoss = allLosses.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
+    const sumLoss = allLosses.reduce(
+      (acc, t) => acc + (Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl ?? t.pnl ?? 0) || getTradeRealizedPl(t)),
+      0
+    );
     const overallAvgLoss = allLosses.length > 0 ? Math.abs(sumLoss / allLosses.length) : 0;
 
     let overallRatio = '0.00';
-    if (allLosses.length === 0) {
-      overallRatio = allWins.length > 0 ? '∞' : '0.00';
-    } else if (overallAvgLoss > 0) {
+    if (allLosses.length > 0 && overallAvgLoss > 0) {
       overallRatio = (overallAvgProfit / overallAvgLoss).toFixed(2);
     }
 
@@ -514,15 +671,15 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
       totalGross,
       totalTaxes,
       totalNet,
-      grossPfImpact: (totalGross / baseline) * 100,
-      netPfImpact: (totalNet / baseline) * 100,
+      grossPfImpact: janStartingCap > 0 ? (totalGross / janStartingCap) * 100 : 0,
+      netPfImpact: janStartingCap > 0 ? (totalNet / janStartingCap) * 100 : 0,
       taxPct: totalGross > 0 ? (totalTaxes / totalGross) * 100 : 0,
       winRate: totalWinRate,
       avgProfit: overallAvgProfit,
       avgLoss: overallAvgLoss,
       avgRatio: overallRatio,
     };
-  }, [monthlyBreakdown, trades, portfolioValue]);
+  }, [monthlyBreakdown, portfolioValue]);
 
   // Active dialog month data
   const activeDialogRow = useMemo(() => {
@@ -1242,9 +1399,9 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
                               paddingTop: '6px',
                             }}
                           >
-                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Cumulative PF %:</span>
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>P/L %:</span>
                             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#10b981' }}>
-                              {data.cummPLpct}%
+                              {data.plPercent > 0 ? `+${data.plPercent}%` : `${data.plPercent}%`}
                             </span>
                           </div>
                         </div>
@@ -1259,7 +1416,7 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
                 <Line
                   yAxisId="right"
                   type="monotone"
-                  dataKey="cummPLpct"
+                  dataKey="plPercent"
                   stroke="var(--text-primary)"
                   strokeWidth={2.5}
                   dot={{ r: 3.5, fill: 'var(--text-primary)', strokeWidth: 1.5, stroke: 'var(--bg-surface)' }}
@@ -1354,7 +1511,7 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
                     color: '#10b981',
                   }}
                 >
-                  +{summaryMetrics.maxCummPF}%
+                  {summaryMetrics.maxCummPF}%
                 </span>
               </div>
 
@@ -1995,7 +2152,7 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
               <button
                 type="button"
                 onClick={() => setDateAttribution('entry')}
-                title="Attribution by trade entry date (Nexus journal standard)"
+                title="Attribution by trade entry date (FoxTrade journal standard)"
                 style={{
                   padding: '4px 10px',
                   borderRadius: '6px',
@@ -2464,18 +2621,32 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
                   <td style={{ padding: '13px 20px', whiteSpace: 'nowrap' }}>
                     <span
                       style={{
-                        fontFamily: 'var(--font-mono)',
-                        fontWeight: 600,
-                        padding: row.avgWinLossRatio !== '0.00' && row.avgWinLossRatio !== '—' ? '2px 8px' : '0',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '2px 8px',
                         borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        fontFamily: 'var(--font-mono)',
                         backgroundColor:
-                          row.avgWinLossRatio !== '0.00' && row.avgWinLossRatio !== '—'
-                            ? 'var(--color-green-bg)'
-                            : 'transparent',
+                          parseFloat(row.avgWinLossRatio) >= 2
+                            ? 'rgba(16, 185, 129, 0.12)'
+                            : parseFloat(row.avgWinLossRatio) >= 1
+                            ? 'rgba(59, 130, 246, 0.12)'
+                            : 'rgba(244, 63, 94, 0.12)',
                         color:
-                          row.avgWinLossRatio !== '0.00' && row.avgWinLossRatio !== '—'
+                          parseFloat(row.avgWinLossRatio) >= 2
                             ? '#10b981'
-                            : 'var(--text-muted)',
+                            : parseFloat(row.avgWinLossRatio) >= 1
+                            ? '#3b82f6'
+                            : '#f43f5e',
+                        border: `1px solid ${
+                          parseFloat(row.avgWinLossRatio) >= 2
+                            ? 'rgba(16, 185, 129, 0.25)'
+                            : parseFloat(row.avgWinLossRatio) >= 1
+                            ? 'rgba(59, 130, 246, 0.25)'
+                            : 'rgba(244, 63, 94, 0.25)'
+                        }`,
                       }}
                     >
                       {row.avgWinLossRatio}
@@ -2540,8 +2711,39 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
                 <td style={{ padding: '16px 16px', fontFamily: 'var(--font-mono)', color: '#f43f5e' }}>
                   ₹{Math.round(tableTotals.avgLoss).toLocaleString('en-IN')}
                 </td>
-                <td style={{ padding: '16px 20px', fontFamily: 'var(--font-mono)', color: '#10b981' }}>
-                  {tableTotals.avgRatio}
+                <td style={{ padding: '16px 20px', whiteSpace: 'nowrap' }}>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      fontFamily: 'var(--font-mono)',
+                      backgroundColor:
+                        parseFloat(tableTotals.avgRatio) >= 2
+                          ? 'rgba(16, 185, 129, 0.12)'
+                          : parseFloat(tableTotals.avgRatio) >= 1
+                          ? 'rgba(59, 130, 246, 0.12)'
+                          : 'rgba(244, 63, 94, 0.12)',
+                      color:
+                        parseFloat(tableTotals.avgRatio) >= 2
+                          ? '#10b981'
+                          : parseFloat(tableTotals.avgRatio) >= 1
+                          ? '#3b82f6'
+                          : '#f43f5e',
+                      border: `1px solid ${
+                        parseFloat(tableTotals.avgRatio) >= 2
+                          ? 'rgba(16, 185, 129, 0.25)'
+                          : parseFloat(tableTotals.avgRatio) >= 1
+                          ? 'rgba(59, 130, 246, 0.25)'
+                          : 'rgba(244, 63, 94, 0.25)'
+                      }`,
+                    }}
+                  >
+                    {tableTotals.avgRatio}
+                  </span>
                 </td>
               </tr>
             </tfoot>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   BookOpenCheck, BarChart2, Activity, Calculator, Wallet, 
   BrainCircuit, Pencil, Cloud, Settings, Compass, Sparkles, Target
@@ -9,7 +9,12 @@ import RestoreBackupModal from './RestoreBackupModal';
 import FoxTradeLogo from './FoxTradeLogo';
 import PlaybookIcon from './Playbook/PlaybookIcon';
 import FoxyAiIcon from './FoxyAiIcon';
-import { subscribeToSyncStatus, subscribeToSyncError, setSyncError } from '../db/index.js';
+import { 
+  subscribeToSyncStatus, 
+  subscribeToSyncError, 
+  subscribeToTokenExpired, 
+  setSyncError 
+} from '../db/index.js';
 import { saveTradesToDrive } from '../services/driveService.js';
 import { getValidAccessToken } from '../db/tokenManager.js';
 import { bulkPutTrades } from '../db/tradeStore.js';
@@ -71,12 +76,51 @@ export default function BottomDock({
     return subscribeToSyncStatus(setIsSyncing);
   }, []);
 
+  const lastToastErrRef = useRef(null);
+
+  const notifyUserOfSyncError = useCallback((errText) => {
+    if (!errText || !onShowToast) return;
+    if (lastToastErrRef.current === errText) return; // avoid duplicate toast spam
+    lastToastErrRef.current = errText;
+
+    const isAuth = errText.toLowerCase().includes('expired') || 
+                   errText.toLowerCase().includes('401') || 
+                   errText.toLowerCase().includes('token') ||
+                   errText.toLowerCase().includes('reconnect');
+
+    onShowToast({
+      id: Date.now(),
+      type: 'error',
+      title: isAuth ? 'Google Drive Disconnected' : 'Google Drive Sync Issue',
+      description: isAuth
+        ? 'Your session expired. Click the red cloud icon to reconnect your Google Drive.'
+        : errText.slice(0, 160)
+    });
+  }, [onShowToast]);
+
   // Subscribe to Google Drive sync errors
   useEffect(() => {
-    return subscribeToSyncError(setSyncErrorState);
-  }, []);
+    return subscribeToSyncError((err) => {
+      setSyncErrorState(err);
+      if (err) {
+        notifyUserOfSyncError(err);
+      } else {
+        lastToastErrRef.current = null;
+      }
+    });
+  }, [notifyUserOfSyncError]);
 
-  // Exact tabs matching Nexus Journal order with dedicated Playbook engine
+  // Subscribe to Google Drive token expiration events
+  useEffect(() => {
+    return subscribeToTokenExpired(() => {
+      const msg = 'Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.';
+      setSyncErrorState(msg);
+      setSyncError(msg);
+      notifyUserOfSyncError(msg);
+    });
+  }, [notifyUserOfSyncError]);
+
+  // Navigation tabs with dedicated Playbook engine
   const navTabs = [
     { id: 'journal', label: 'Journal', icon: BookOpenCheck },
     { id: 'analytics', label: 'Analytics', icon: BarChart2 },
@@ -198,9 +242,9 @@ export default function BottomDock({
                 width: '32px',
                 height: '32px',
                 borderRadius: '50%',
-                border: syncError ? '1px solid rgba(239, 68, 68, 0.35)' : 'none',
+                border: syncError ? '1.5px solid #ef4444' : 'none',
                 backgroundColor: syncError 
-                  ? 'rgba(239, 68, 68, 0.12)' 
+                  ? 'rgba(239, 68, 68, 0.16)' 
                   : isSyncing 
                     ? 'rgba(59, 130, 246, 0.1)' 
                     : 'transparent',
@@ -218,9 +262,13 @@ export default function BottomDock({
                 position: 'relative'
               }}>
               <Cloud 
-                size={15} 
-                strokeWidth={1.5} 
+                size={16} 
+                strokeWidth={syncError ? 2.2 : 1.5} 
                 className={isSyncing ? 'animate-pulse' : ''}
+                style={{
+                  color: syncError ? '#ef4444' : undefined,
+                  filter: syncError ? 'drop-shadow(0 0 5px rgba(239, 68, 68, 0.7))' : undefined
+                }}
               />
               {isSyncing && (
                 <span style={{
@@ -235,16 +283,30 @@ export default function BottomDock({
                 }} />
               )}
               {syncError && !isSyncing && (
-                <span style={{
-                  position: 'absolute',
-                  top: '4px',
-                  right: '4px',
-                  width: '7px',
-                  height: '7px',
-                  borderRadius: '50%',
-                  backgroundColor: '#ef4444',
-                  boxShadow: '0 0 8px #ef4444'
-                }} />
+                <>
+                  <span style={{
+                    position: 'absolute',
+                    top: '3px',
+                    right: '3px',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: '#ef4444',
+                    boxShadow: '0 0 8px #ef4444',
+                    zIndex: 2
+                  }} />
+                  <span className="animate-ping" style={{
+                    position: 'absolute',
+                    top: '3px',
+                    right: '3px',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: '#ef4444',
+                    opacity: 0.75,
+                    zIndex: 1
+                  }} />
+                </>
               )}
             </button>
 
@@ -405,7 +467,7 @@ export default function BottomDock({
             />
           </div>
 
-          {/* Broker Integration Badge (7+ Supported Brokers matching Nexus Journal) */}
+          {/* Broker Integration Badge (7+ Supported Brokers) */}
           <div 
             onClick={onOpenBrokerConnections}
             title="Supported Brokers & Imports (7+ Available)"

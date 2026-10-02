@@ -33,7 +33,9 @@ import {
   getConfig,
   setConfig,
   mergeFoxyChats,
-  mergeFoxyCommitments
+  mergeFoxyCommitments,
+  saveCalendarNotes,
+  saveIndependentNotes,
 } from '../db/index.js';
 import { requestAccessToken } from '../services/googleDrive.js';
 
@@ -449,12 +451,12 @@ export default function RestoreBackupModal({
         remoteTrades = data?.trades || [];
       }
 
-      // Restore daily & notebook notes from backup if available
+      // Restore daily & notebook notes from backup to both localStorage and IndexedDB
       if (backupPayload?.notes && typeof backupPayload.notes === 'object') {
-        try { localStorage.setItem('foxtrade_notes_v2', JSON.stringify(backupPayload.notes)); } catch {}
+        try { await saveCalendarNotes(backupPayload.notes); } catch {}
       }
       if (Array.isArray(backupPayload?.independentNotes)) {
-        try { localStorage.setItem('foxtrade_independent_notes_v2', JSON.stringify(backupPayload.independentNotes)); } catch {}
+        try { await saveIndependentNotes(backupPayload.independentNotes); } catch {}
       }
 
       // Restore Foxy AI chats with smart merge if present

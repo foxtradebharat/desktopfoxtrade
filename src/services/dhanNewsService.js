@@ -1,4 +1,4 @@
-import defaultNews from '../data/nexusAuthenticNews.js';
+import defaultNews from '../data/foxtradeAuthenticNews.js';
 
 const DHAN_LIVE_NEWS_URL = 'https://news-live.dhan.co/v3/news/getLiveNews';
 
@@ -132,7 +132,7 @@ export async function fetchLiveIndianCorporateNews() {
       return defaultNews;
     }
 
-    // Map raw Dhan items matching Nexus Journal structure
+    // Map raw Dhan items matching FoxTrade News Feed structure
     const mapped = rawList.map((item, idx) => {
       const symbol = (item.sm_symbol || item.display_symbol || '').trim();
       const title = item.news_object?.title || '';

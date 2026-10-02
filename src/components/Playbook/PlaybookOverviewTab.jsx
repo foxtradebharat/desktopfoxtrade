@@ -341,7 +341,7 @@ export default function PlaybookOverviewTab({
         </div>
       )}
 
-      {/* ── Key Performance Metrics (4 Spacious Cards Matching Nexus Journal) ── */}
+      {/* ── Key Performance Metrics (4 Spacious Cards) ── */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
@@ -1239,7 +1239,7 @@ export default function PlaybookOverviewTab({
         );
       })()}
 
-      {/* ── Dual Side-by-Side Vertical Bar Charts (Exact Nexus Analytics Layout) ── */}
+      {/* ── Dual Side-by-Side Vertical Bar Charts ── */}
       {(() => {
         const defaultDaily = [
           { day: 'Sun', dayName: 'Sunday', trades: 0, wins: 0, pnl: 0, winRate: 0 },

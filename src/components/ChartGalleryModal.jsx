@@ -222,7 +222,7 @@ export default function ChartGalleryModal({
 }) {
   const isDark = themeMode === 'dark' || themeMode === 'pitch-black';
 
-  // Modal & View States (Exact Nexus 1:1)
+  // Modal & View States
   const [isGridView, setIsGridView] = useState(() => {
     try {
       return localStorage.getItem('chartViewer:isGridView') === 'true';
@@ -243,7 +243,7 @@ export default function ChartGalleryModal({
   const [isDragging, setIsDragging] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Filters (Exact Nexus 1:1)
+  // Filters
   const [filterType, setFilterType] = useState('all'); // 'all' | 'beforeEntry' | 'afterExit'
   const [outcomeFilter, setOutcomeFilter] = useState('all'); // 'all' | 'win' | 'loss' | 'breakeven'
   const [setupFilter, setSetupFilter] = useState('all');
@@ -261,7 +261,7 @@ export default function ChartGalleryModal({
     } catch {}
   }, [isGridView, showFilters]);
 
-  // Extract all trade images into Nexus-compatible normalized image items
+  // Extract all trade images into normalized image items
   const allImages = useMemo(() => {
     const list = [];
     (trades || []).forEach((t, tradeIdx) => {
@@ -346,7 +346,7 @@ export default function ChartGalleryModal({
     });
   }, [allImages, filterType, outcomeFilter, setupFilter, symbolSearch, dateRange]);
 
-  // Group images by trade (Exact Nexus U(images) grouping)
+  // Group images by trade
   const groupedTrades = useMemo(() => {
     const map = new Map();
     filteredImages.forEach((img, index) => {
@@ -378,7 +378,7 @@ export default function ChartGalleryModal({
     return Array.from(map.values());
   }, [filteredImages]);
 
-  // Find active group and groupIndex from currentIndex (Exact Nexus W(groups, currentIndex))
+  // Find active group and groupIndex from currentIndex
   const { currentGroup, groupIndex } = useMemo(() => {
     if (groupedTrades.length === 0) return { currentGroup: null, groupIndex: -1 };
     const gIdx = groupedTrades.findIndex(g => g.entry?.index === currentIndex || g.exit?.index === currentIndex);
@@ -401,7 +401,7 @@ export default function ChartGalleryModal({
                            Boolean(dateRange.end) || 
                            Boolean(symbolSearch.trim());
 
-  // Navigation handlers (Exact Nexus)
+  // Navigation handlers
   const navigatePrevious = useCallback(() => {
     if (groupIndex > 0) {
       const prevGrp = groupedTrades[groupIndex - 1];
@@ -418,7 +418,7 @@ export default function ChartGalleryModal({
     }
   }, [groupIndex, groupedTrades]);
 
-  // Keyboard navigation (Exact Nexus)
+  // Keyboard navigation
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e) => {
@@ -440,7 +440,7 @@ export default function ChartGalleryModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, navigateNext, navigatePrevious, onClose]);
 
-  // Fullscreen toggle (Exact Nexus)
+  // Fullscreen toggle
   const toggleFullscreen = useCallback(async () => {
     try {
       if (document.fullscreenElement) {
@@ -459,7 +459,7 @@ export default function ChartGalleryModal({
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  // Download Handler (Exact Nexus canvas stitching algorithm)
+  // Download Handler (Canvas stitching algorithm)
   const handleDownloadCurrent = useCallback(async () => {
     if (!currentGroup) return;
     const items = [currentGroup.entry, currentGroup.exit].filter(Boolean);
@@ -530,7 +530,7 @@ export default function ChartGalleryModal({
 
   const handleMouseUp = () => setIsDragging(false);
 
-  // Wheel zoom handler (Exact Nexus)
+  // Wheel zoom handler
   const handleWheel = (e) => {
     if (isGridView || filteredImages.length === 0) return;
     e.preventDefault();
@@ -548,7 +548,7 @@ export default function ChartGalleryModal({
 
   if (!isOpen) return null;
 
-  // Counter text (Exact Nexus)
+  // Counter text
   const counterText = isGridView 
     ? `${groupedTrades.length}` 
     : (groupIndex >= 0 ? `${groupIndex + 1}/${groupedTrades.length}` : '0/0');
@@ -576,7 +576,7 @@ export default function ChartGalleryModal({
         fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
       }}
     >
-      {/* ── 1. EXACT NEXUS TOP HEADER ──────────────────────────────────────── */}
+      {/* ── 1. TOP HEADER ─────────────────────────────────────────────────── */}
       <div 
         style={{
           display: 'flex',
@@ -620,7 +620,7 @@ export default function ChartGalleryModal({
           </span>
         </div>
 
-        {/* Right: Actions Toolbar (Exact Nexus 1:1) */}
+        {/* Right: Actions Toolbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexShrink: 0 }}>
           {/* Counter */}
           <div style={{
@@ -807,7 +807,7 @@ export default function ChartGalleryModal({
         </div>
       </div>
 
-      {/* ── 2. EXACT NEXUS FILTER BAR ──────────────────────────────────────── */}
+      {/* ── 2. FILTER BAR ─────────────────────────────────────────────────── */}
       {showFilters && (
         <div style={{
           display: 'flex',
@@ -941,9 +941,9 @@ export default function ChartGalleryModal({
         </div>
       )}
 
-      {/* ── 3. MAIN CONTENT: EXACT NEXUS VIEWPORTS ─────────────────────────── */}
+      {/* ── 3. MAIN CONTENT: VIEWPORTS ────────────────────────────────────── */}
       {filteredImages.length === 0 ? (
-        /* EXACT 1:1 NEXUS EMPTY STATE */
+        /* EMPTY STATE */
         <div style={{
           display: 'flex',
           flexDirection: 'column',
@@ -957,7 +957,7 @@ export default function ChartGalleryModal({
           <div style={{ fontSize: '14px' }}>No chart images found</div>
         </div>
       ) : isGridView ? (
-        /* EXACT 1:1 NEXUS GRID VIEW */
+        /* GRID VIEW */
         <div style={{
           flex: 1,
           overflowY: 'auto',
@@ -1128,7 +1128,7 @@ export default function ChartGalleryModal({
           </div>
         </div>
       ) : (
-        /* EXACT 1:1 NEXUS DUAL-PANEL SLIDE VIEW */
+        /* DUAL-PANEL SLIDE VIEW */
         <div 
           onWheel={handleWheel}
           style={{
@@ -1141,7 +1141,7 @@ export default function ChartGalleryModal({
             backgroundColor: isDark ? '#0b0f19' : '#ffffff'
           }}
         >
-          {/* Side-by-side split grid (Exact Nexus 1:1) */}
+          {/* Side-by-side split grid */}
           {currentGroup && (
             <div style={{
               position: 'absolute',
@@ -1168,7 +1168,7 @@ export default function ChartGalleryModal({
                   cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                 }}
               >
-                {/* Floating pill badge (Exact Nexus) */}
+                {/* Floating pill badge */}
                 <span style={{
                   position: 'absolute',
                   top: '16px',
@@ -1223,7 +1223,7 @@ export default function ChartGalleryModal({
                   cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                 }}
               >
-                {/* Floating pill badge (Exact Nexus) */}
+                {/* Floating pill badge */}
                 <span style={{
                   position: 'absolute',
                   top: '16px',
@@ -1264,7 +1264,7 @@ export default function ChartGalleryModal({
             </div>
           )}
 
-          {/* Left Arrow Chevron (Exact Nexus button style) */}
+          {/* Left Arrow Chevron (button style) */}
           <div style={{ position: 'absolute', insetBlock: 0, left: 0, display: 'flex', alignItems: 'center', zIndex: 20 }}>
             <button
               onClick={navigatePrevious}
@@ -1289,7 +1289,7 @@ export default function ChartGalleryModal({
             </button>
           </div>
 
-          {/* Right Arrow Chevron (Exact Nexus button style) */}
+          {/* Right Arrow Chevron (button style) */}
           <div style={{ position: 'absolute', insetBlock: 0, right: 0, display: 'flex', alignItems: 'center', zIndex: 20 }}>
             <button
               onClick={navigateNext}

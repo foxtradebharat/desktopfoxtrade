@@ -7,8 +7,7 @@
  * If the browser crashes or the tab closes mid-save, the queue persists
  * in IndexedDB and is drained automatically on the next app open.
  *
- * This eliminates the #1 Nexus problem: trades entered just before closing
- * the tab being silently lost (their 60s debounce timer never fires).
+ * This eliminates data loss if a tab is closed mid-save.
  *
  * Operation lifecycle:
  *   enqueue() → status: 'pending'
@@ -19,7 +18,7 @@
  *   clearDoneOps() — called periodically to keep the queue lean
  */
 
-import { getDB, STORES } from './foxtradeDB.js';
+import { getDB, STORES, idbCountByCompoundIndex } from './foxtradeDB.js';
 
 // ── Types (JSDoc only) ────────────────────────────────────────────────────────
 
@@ -185,13 +184,23 @@ export async function clearDoneOps() {
 
 /**
  * Count pending operations (used for UI badge — "X unsynced changes").
+ * Uses the compound [status, portfolioId] index added in DB v3 for O(1) lookup.
+ * Falls back to full-scan for pre-v3 databases.
  * @param {string} [portfolioId]
  * @returns {Promise<number>}
  */
 export async function getPendingCount(portfolioId) {
+  if (portfolioId) {
+    // Fast path: compound index lookup (DB v3+)
+    return idbCountByCompoundIndex(
+      STORES.OPERATIONS_QUEUE,
+      'status_portfolioId',
+      ['pending', portfolioId]
+    );
+  }
+  // No portfolioId — count all pending ops across all portfolios
   const db  = await getDB();
-  let   ops = await getAllByIndex(db, STORES.OPERATIONS_QUEUE, 'status', 'pending');
-  if (portfolioId) ops = ops.filter(op => op.portfolioId === portfolioId);
+  const ops = await getAllByIndex(db, STORES.OPERATIONS_QUEUE, 'status', 'pending');
   return ops.length;
 }
 

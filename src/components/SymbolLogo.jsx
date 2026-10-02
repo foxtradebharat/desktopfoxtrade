@@ -16,11 +16,12 @@ export const getAvatarColor = (name) => {
 import { getCorporateActionDetails } from '../utils/securityMaster.js';
 
 export default function SymbolLogo({ symbol = '', companyName = '', size = 28, style = {} }) {
-  const cleanSymbol = symbol.trim().toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '').replace(/[^A-Z0-9]/g, '');
-  const ca = getCorporateActionDetails(cleanSymbol);
+  const safeSymbol = String(symbol || '');
+  const cleanSymbol = safeSymbol.trim().toUpperCase().replace(/\.(NS|BO|NSE|BSE)$/i, '').replace(/[^A-Z0-9]/g, '');
+  const ca = cleanSymbol ? getCorporateActionDetails(cleanSymbol) : null;
   const logoFallback = ca?.logoFallback;
 
-  const slug = (companyName || symbol)
+  const slug = String(companyName || symbol || '')
     .replace(/[^a-zA-Z0-9 ]/g, '')
     .toLowerCase()
     .trim()

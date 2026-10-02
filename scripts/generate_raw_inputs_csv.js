@@ -400,10 +400,10 @@ const csvRows = [
 
 const csvContent = csvRows.join("\n");
 
-fs.writeFileSync("d:/tradeontip/nexus_10_stocks_raw_inputs.csv", csvContent, "utf8");
+fs.writeFileSync("d:/tradeontip/fox_10_stocks_raw_inputs.csv", csvContent, "utf8");
 try {
-  fs.writeFileSync("C:/Users/iMAC/Downloads/nexus_10_stocks_raw_inputs.csv", csvContent, "utf8");
-  console.log("Successfully written to C:/Users/iMAC/Downloads/nexus_10_stocks_raw_inputs.csv");
+  fs.writeFileSync("C:/Users/iMAC/Downloads/fox_10_stocks_raw_inputs.csv", csvContent, "utf8");
+  console.log("Successfully written to C:/Users/iMAC/Downloads/fox_10_stocks_raw_inputs.csv");
 } catch (e) {
   console.log("Error writing to Downloads:", e.message);
 }

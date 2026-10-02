@@ -360,7 +360,7 @@ export default function PlaybookEngine({
 
           {/* Institutional Mode Status Badge — non-interactive indicator */}
           <div
-            title="Institutional Playbook Mode — all metrics follow Nexus Trading Journal standards"
+            title="Institutional Playbook Mode — all metrics follow systematic FoxTrade standards"
             style={{
               display: 'flex',
               alignItems: 'center',

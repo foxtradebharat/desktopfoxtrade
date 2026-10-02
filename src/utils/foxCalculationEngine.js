@@ -1,7 +1,7 @@
 /**
- * Nexus Journal — Exact Calculation Engine for FoxTrade
+ * FoxTrade Calculation Engine
  * 
- * Implements 100% verified mathematical formulas matching Nexus Trading Journal:
+ * Implements 100% verified mathematical formulas for FoxTrade:
  * - Lot-level LIFO / FIFO cost basis matching engine
  * - Accurate Multi-Leg Entry Averaging (Initial + P1..P4)
  * - Accurate Multi-Leg Exit Averaging (E1..E4)
@@ -71,7 +71,7 @@ export function calcPercentMove(entryPrice, currentPrice, side = 'Buy') {
  * Exact Lot-by-Lot Matching Engine (LIFO / FIFO)
  * Matches exit legs against entry legs and computes realized P/L and remaining lots.
  */
-export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 'Buy') {
+export function matchLots(entryLots, exitLots, costBasisMethod = 'lifo', side = 'Buy') {
   const isBuy = String(side).toLowerCase() === 'buy';
   const now = Date.now();
 
@@ -340,10 +340,10 @@ function parseCleanNum(val, fallback = 0) {
 
 /**
  * Master Trade Enricher Function
- * Takes a raw trade object from FoxTrade and applies 100% exact Nexus calculations.
+ * Takes a raw trade object from FoxTrade and applies 100% verified formulas.
  */
-export function enrichTradeWithNexusFormulas(t, portfolioCapital = 100000, options = {}) {
-  const costBasisMethod = options.costBasisMethod || 'fifo';
+export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options = {}) {
+  const costBasisMethod = options.costBasisMethod || 'lifo';
   const side = (t.type || t.side || 'Buy');
   const isBuy = String(side).toLowerCase() === 'buy';
 
@@ -518,14 +518,13 @@ export function enrichTradeWithNexusFormulas(t, portfolioCapital = 100000, optio
   const riskAmount = heatResult.riskAmount;
 
   // 12. Holding Days
-  // Calculates holding days with quantity-weighted lot precision matching verified Nexus formula.
-  // Falls back to manual t.holdingDays only if no lots/matches exist.
+  // Preserves explicit trade holdingDays if already present, otherwise calculates from lots
   const calculatedHoldingDays = calculateWeightedHoldingDays(matches, remainingLots);
   let holdingDays;
-  if (matches.length > 0 || remainingLots.length > 0) {
-    holdingDays = calculatedHoldingDays;
-  } else if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(Number(t.holdingDays))) {
+  if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(Number(t.holdingDays))) {
     holdingDays = Number(t.holdingDays);
+  } else if (matches.length > 0 || remainingLots.length > 0) {
+    holdingDays = calculatedHoldingDays;
   } else {
     holdingDays = 0;
   }
@@ -563,7 +562,7 @@ export function enrichTradeWithNexusFormulas(t, portfolioCapital = 100000, optio
   }
 
   // 15. Trade Quality & Excursion Metrics (MAE, MFE, MFE+, Alpha, Heat, Move-to-Cost)
-  // Exact Nexus Trade Quality implementation:
+  // FoxTrade Trade Quality implementation:
   // - MAE: Maximum Adverse Excursion (% move against position while held)
   // - MFE: Maximum Favourable Excursion (% peak move in favor while held)
   // - MFE+: Post-exit excursion (move in trade direction within post-exit window)
@@ -653,6 +652,7 @@ export function enrichTradeWithNexusFormulas(t, portfolioCapital = 100000, optio
     positionSize: Math.round(positionSize * 100) / 100,
     currentAllocation: Math.round(currentAllocation * 100) / 100,
     peakAllocation: Math.round(peakAllocation * 100) / 100,
+    allocation: Math.round(peakAllocation * 100) / 100,
     slPct: slPct !== null ? Math.round(slPct * 100) / 100 : null,
     stockMove: Math.round(stockMove * 100) / 100,
     realisedAmount: Math.round(realisedAmount * 100) / 100,

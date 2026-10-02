@@ -9,7 +9,14 @@
  */
 
 // ── Core DB ───────────────────────────────────────────────────────────────────
-export { getDB, resetDB, STORES, idbClearStore } from './foxtradeDB.js';
+export {
+  getDB,
+  resetDB,
+  STORES,
+  idbClearStore,
+  purgeExpiredOhlcCache,
+  idbCountByCompoundIndex,
+} from './foxtradeDB.js';
 
 // ── Trade Store ───────────────────────────────────────────────────────────────
 export {
@@ -67,6 +74,7 @@ export {
   initPageHideFlush,
   subscribeToSyncStatus,
   subscribeToSyncError,
+  subscribeToMergedTrades,
   setSyncError,
   getLastSyncError,
   listDriveBackups,
@@ -85,6 +93,10 @@ export {
   getStoredEmail,
   exchangeAuthCode,
   storeDirectToken,
+  subscribeToTokenExpired,
+  withAutoRefresh,
+  initTokenKeepalive,
+  getTokenStatus,
 } from './tokenManager.js';
 
 // ── Image Store ───────────────────────────────────────────────────────────────
@@ -97,3 +109,30 @@ export {
   syncPendingImages,
   getImageCountMap,
 } from './imageStore.js';
+
+// ── Note Store ────────────────────────────────────────────────────────────────
+export {
+  getCalendarNotes,
+  getCalendarNotesSync,
+  saveCalendarNotes,
+  saveDayNote,
+  deleteDayNote,
+  getIndependentNotes,
+  getIndependentNotesSync,
+  saveIndependentNotes,
+  putIndependentNote,
+  deleteIndependentNote,
+  subscribeToCalendarNotes,
+  subscribeToIndependentNotes,
+  initNoteStore,
+} from './noteStore.js';
+
+// ── Foxy AI Store ─────────────────────────────────────────────────────────────
+export {
+  getFoxyChatHistory,
+  saveFoxyChatHistory,
+  deleteFoxyChat,
+  getTraderCommitments,
+  saveTraderCommitments,
+  addTraderCommitment,
+} from './foxyStore.js';

@@ -166,14 +166,27 @@ export async function setPortfolios(portfolios) {
 
 /**
  * Get monthly performance data for a portfolio/year.
+ * Reads from the dedicated monthly_perf store (keyPath = `{portfolioId}_{year}_all`).
+ * Falls back to app_config keys and localStorage for migration.
  * @param {string} portfolioId
  * @param {string|number} year
  * @returns {Promise<object|null>}
  */
 export async function getMonthlyPerf(portfolioId, year) {
-  const key = `monthly_${portfolioId}_${year}`;
-  const fromIDB = await getConfig(key);
-  if (fromIDB) return fromIDB;
+  const storeKey = `${portfolioId}_${year}_all`;
+  try {
+    const rec = await idbGet(STORES.MONTHLY_PERF, storeKey);
+    if (rec) return rec.data;
+  } catch {}
+
+  // Migration: check old app_config key
+  const legacyKey = `monthly_${portfolioId}_${year}`;
+  const fromIDB = await getConfig(legacyKey);
+  if (fromIDB) {
+    // Migrate into proper store
+    await setMonthlyPerf(portfolioId, year, fromIDB);
+    return fromIDB;
+  }
 
   // Migration: check localStorage
   try {
@@ -181,7 +194,7 @@ export async function getMonthlyPerf(portfolioId, year) {
              || localStorage.getItem(`foxtrade_monthly_${portfolioId}_${year}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      await setConfig(key, parsed);
+      await setMonthlyPerf(portfolioId, year, parsed);
       return parsed;
     }
   } catch {}
@@ -191,14 +204,26 @@ export async function getMonthlyPerf(portfolioId, year) {
 
 /**
  * Save monthly performance data for a portfolio/year.
+ * Writes to the dedicated monthly_perf store.
  * @param {string} portfolioId
  * @param {string|number} year
  * @param {object} data
  * @returns {Promise<void>}
  */
 export async function setMonthlyPerf(portfolioId, year, data) {
-  const key = `monthly_${portfolioId}_${year}`;
-  await setConfig(key, data);
+  const storeKey = `${portfolioId}_${year}_all`;
+  try {
+    await idbPut(STORES.MONTHLY_PERF, {
+      pid_year_month: storeKey,
+      portfolioId,
+      year: String(year),
+      data,
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn(`[ConfigStore] setMonthlyPerf failed, falling back to app_config:`, err.message);
+    await setConfig(`monthly_${portfolioId}_${year}`, data);
+  }
   try {
     localStorage.setItem(`tradeontip_monthly_${portfolioId}_${year}`, JSON.stringify(data));
   } catch {}

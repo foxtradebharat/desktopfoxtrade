@@ -3,9 +3,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Chart image management — binary blobs in IDB + separate files in Google Drive.
  *
- * Key improvement over Nexus:
- *   Nexus: Base64-encodes images into the backup JSON → 30MB+ files at scale
- *   FoxTrade: Images stored as binary files in Drive → backup JSON stays tiny
+ * Design:
+ *   Images stored as binary files in Drive → backup JSON stays tiny
  *
  * Local storage: IDB chart_images store (Blob objects — no encoding)
  * Cloud storage: Google Drive /FoxTrade Backups/charts/{portfolioId}/ folder
@@ -229,27 +228,54 @@ export async function syncPendingImages(accessToken, portfolioId) {
 
   for (const img of unsynced) {
     try {
-      const metadata = { name: img.filename, parents: [folderId] };
-      const form     = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      form.append('file',     img.blob);
-
-      const resp = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id`, {
-        method:  'POST',
+      // Check if file already exists in Drive (prevents duplicate files on retry)
+      const searchQ = encodeURIComponent(
+        `name='${img.filename}' and '${folderId}' in parents and trashed=false`
+      );
+      const searchResp = await fetch(`${DRIVE_API}?q=${searchQ}&fields=files(id)&pageSize=1`, {
         headers: { Authorization: `Bearer ${accessToken}` },
-        body:    form,
       });
+      const existingFile = searchResp.ok
+        ? (await searchResp.json()).files?.[0] || null
+        : null;
 
-      if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
-      const { id: driveFileId } = await resp.json();
-
-      // Update IDB record with Drive file ID
-      await idbPut(STORES.CHART_IMAGES, {
-        ...img,
-        driveFileId,
-        driveFilePath: `FoxTrade Backups/charts/${portfolioId}/${img.filename}`,
-        syncedToDrive: true,
-      });
+      const form = new FormData();
+      if (existingFile) {
+        // File already exists — PATCH to update it (no duplicate)
+        const metadata = { name: img.filename };
+        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+        form.append('file',     img.blob);
+        const resp = await fetch(
+          `${DRIVE_UPLOAD_API}/${existingFile.id}?uploadType=multipart&fields=id`,
+          { method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}` }, body: form }
+        );
+        if (!resp.ok) throw new Error(`Update failed: ${resp.status}`);
+        const { id: driveFileId } = await resp.json();
+        await idbPut(STORES.CHART_IMAGES, {
+          ...img,
+          driveFileId,
+          driveFilePath: `FoxTrade Backups/charts/${portfolioId}/${img.filename}`,
+          syncedToDrive: true,
+        });
+      } else {
+        // New file — POST to create
+        const metadata = { name: img.filename, parents: [folderId] };
+        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+        form.append('file',     img.blob);
+        const resp = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          body:    form,
+        });
+        if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+        const { id: driveFileId } = await resp.json();
+        await idbPut(STORES.CHART_IMAGES, {
+          ...img,
+          driveFileId,
+          driveFilePath: `FoxTrade Backups/charts/${portfolioId}/${img.filename}`,
+          syncedToDrive: true,
+        });
+      }
 
       uploaded++;
     } catch (err) {

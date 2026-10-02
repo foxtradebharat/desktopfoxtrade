@@ -1,7 +1,16 @@
 import React, { useState } from 'react';
 import { BarChart3, Sparkles } from 'lucide-react';
 
-export default function FoxyResponseRenderer({ content, onImportTrades, isStreaming = false }) {
+export default function FoxyResponseRenderer({ content, onImportTrades, isStreaming = false, isDark: propIsDark, themeMode }) {
+  const isDark = propIsDark !== undefined
+    ? propIsDark
+    : (themeMode === 'dark' || themeMode === 'pitch-black' || 
+       (typeof document !== 'undefined' && (document.documentElement.classList.contains('dark') || document.documentElement.getAttribute('data-theme') === 'dark' || document.documentElement.getAttribute('data-theme') === 'pitch-black')));
+  const isPitchBlack = themeMode === 'pitch-black' ||
+    (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'pitch-black');
+
+  const styles = getStyles(isDark, isPitchBlack);
+
   if (!content) {
     if (isStreaming) {
       return (
@@ -44,20 +53,20 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
         // Check if bold text is a P/L indicator
         if (inner.startsWith('▲') || inner.startsWith('+₹') || inner.includes('+')) {
           return (
-            <strong key={i} style={{ fontWeight: 700, color: '#16a34a' }}>
+            <strong key={i} style={{ fontWeight: 700, color: isDark ? '#4ade80' : '#16a34a' }}>
               {inner}
             </strong>
           );
         }
         if (inner.startsWith('▼') || inner.startsWith('-₹') || (inner.includes('-') && inner.includes('₹'))) {
           return (
-            <strong key={i} style={{ fontWeight: 700, color: '#dc2626' }}>
+            <strong key={i} style={{ fontWeight: 700, color: isDark ? '#f87171' : '#dc2626' }}>
               {inner}
             </strong>
           );
         }
         return (
-          <strong key={i} style={{ fontWeight: 700, color: '#111827' }}>
+          <strong key={i} style={{ fontWeight: 700, color: isDark ? '#f8fafc' : '#111827' }}>
             {inner}
           </strong>
         );
@@ -77,14 +86,14 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
         return subParts.map((sp, j) => {
           if (sp.startsWith('▲')) {
             return (
-              <span key={`${i}-${j}`} style={{ color: '#16a34a', fontWeight: 600 }}>
+              <span key={`${i}-${j}`} style={{ color: isDark ? '#4ade80' : '#16a34a', fontWeight: 600 }}>
                 {sp}
               </span>
             );
           }
           if (sp.startsWith('▼')) {
             return (
-              <span key={`${i}-${j}`} style={{ color: '#dc2626', fontWeight: 600 }}>
+              <span key={`${i}-${j}`} style={{ color: isDark ? '#f87171' : '#dc2626', fontWeight: 600 }}>
                 {sp}
               </span>
             );
@@ -98,6 +107,7 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
   };
 
   // Smart table row tokenizer that NEVER splits commas inside numbers or parentheses
+  // Smart table row tokenizer that NEVER splits commas inside numbers or parentheses
   const smartSplitRow = (rowStr, expectedCount) => {
     if (!rowStr) return [];
 
@@ -109,20 +119,40 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
 
     // 3. Protect commas inside Indian / currency numbers: e.g. 19,350 or 1,45,391 or ₹14,596.75
     // A numeric comma is followed by exactly 3 digits, or 2 digits before a 3-digit group.
-    // Must NOT match between a number and the next column (e.g. '350,5.7R' or '350,23-01-2024').
-    safe = safe.replace(/(\d{1,3}),(\d{3})(?!\d)/g, '$1§COMMA§$2');
+    // Must NOT match between a number and the next column (e.g. '1,100%' or '350,5.7R').
+    safe = safe.replace(/(₹?\d{1,3}),(\d{3})(?!\d|%|[a-zA-Z])/g, '$1§COMMA§$2');
     for (let iter = 0; iter < 3; iter++) {
-      safe = safe.replace(/(\d{1,2}),(\d{2})(?=§COMMA§)/g, '$1§COMMA§$2');
+      safe = safe.replace(/(₹?\d{1,2}),(\d{2})(?=§COMMA§)/g, '$1§COMMA§$2');
     }
 
     // 4. Split by remaining unescaped commas
     let cells = safe.split(',').map(c => c.replace(/§COMMA§/g, ',').trim());
 
-    // 5. If cells count exceeds expectedCount, merge extra cells into the last cell (remediation column)
+    // 5. Repair accidental comma fusion if cell count is below expected (e.g. "1,100%" -> "1", "100%")
+    if (expectedCount && cells.length < expectedCount) {
+      const repaired = [];
+      for (const c of cells) {
+        const m = c.match(/^(\d+)[,\s]+(\d+(\.\d+)?%)$/);
+        if (m && (repaired.length + cells.length) <= expectedCount) {
+          repaired.push(m[1]);
+          repaired.push(m[2]);
+        } else {
+          repaired.push(c);
+        }
+      }
+      cells = repaired;
+    }
+
+    // 6. If cells count exceeds expectedCount, merge extra cells into the last cell (remediation column)
     if (expectedCount && cells.length > expectedCount) {
       const head = cells.slice(0, expectedCount - 1);
       const tail = cells.slice(expectedCount - 1).join(', ');
       cells = [...head, tail];
+    }
+
+    // 7. Pad missing cells if any
+    while (expectedCount && cells.length < expectedCount) {
+      cells.push('—');
     }
 
     return cells;
@@ -143,7 +173,11 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
         lower.includes('profit') ||
         lower.includes('amount') ||
         lower.includes('friction') ||
-        lower.includes('tax')
+        lower.includes('tax') ||
+        lower.includes('rupee') ||
+        lower.includes('capital') ||
+        lower.includes('balance') ||
+        lower.includes('drawdown')
       ) {
         return { align: 'right', type: 'financial' };
       }
@@ -155,7 +189,14 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
         lower.includes('wr') ||
         lower.includes('win rate') ||
         lower.includes('rate') ||
-        lower.includes('grade')
+        lower.includes('grade') ||
+        lower.includes('r-multiple') ||
+        lower.includes('r multiple') ||
+        lower.includes('expectancy') ||
+        lower.includes('net r') ||
+        lower.includes('ratio') ||
+        lower.includes('multiplier') ||
+        lower === 'r'
       ) {
         return { align: 'center', type: 'metric' };
       }
@@ -193,72 +234,114 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, rIdx) => (
-                <tr
-                  key={rIdx}
-                  style={rIdx % 2 === 0 ? styles.trEven : styles.trOdd}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = rIdx % 2 === 0 ? '#ffffff' : '#fafbfc'}
-                >
-                  {row.map((cell, cIdx) => {
-                    const raw = (cell || '').trim();
-                    const meta = colMeta[cIdx] || { align: 'left', type: 'category' };
+              {rows.map((row, rIdx) => {
+                const isEven = rIdx % 2 === 0;
+                const normalBg = isEven ? styles.trEven.backgroundColor : styles.trOdd.backgroundColor;
+                const hoverBg = isPitchBlack ? '#1c1c1c' : (isDark ? '#2d3a4f' : '#f1f5f9');
 
-                    // Financial detection: negative or positive
-                    const isNegative = raw.startsWith('▼') || raw.startsWith('-₹') || (raw.includes('-') && raw.includes('₹'));
-                    const isPositive = raw.startsWith('▲') || raw.startsWith('+₹') || (raw.includes('+') && raw.includes('₹'));
-                    const isTradeCount = /^\d+\s*trades?$/i.test(raw);
+                return (
+                  <tr
+                    key={rIdx}
+                    style={{
+                      backgroundColor: normalBg,
+                      transition: 'background-color 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = normalBg;
+                    }}
+                  >
+                    {row.map((cell, cIdx) => {
+                      const raw = (cell || '').trim();
+                      const meta = colMeta[cIdx] || { align: 'left', type: 'category' };
 
-                    let cellContent;
+                      // Financial detection: negative or positive
+                      const isNegative = raw.startsWith('▼') || raw.startsWith('-₹') || (raw.includes('-') && raw.includes('₹'));
+                      const isPositive = raw.startsWith('▲') || raw.startsWith('+₹') || (raw.includes('+') && raw.includes('₹'));
+                      const isTradeCount = /^\d+\s*trades?$/i.test(raw);
 
-                    if (isNegative) {
-                      cellContent = (
-                        <span style={styles.pillNegative}>
-                          {raw}
-                        </span>
-                      );
-                    } else if (isPositive) {
-                      cellContent = (
-                        <span style={styles.pillPositive}>
-                          {raw}
-                        </span>
-                      );
-                    } else if (isTradeCount) {
-                      cellContent = (
-                        <span style={styles.pillNeutral}>
-                          {raw}
-                        </span>
-                      );
-                    } else if (meta.type === 'category') {
-                      cellContent = (
-                        <span style={{ fontWeight: 600, color: '#0f172a' }}>
-                          {parseInline(raw)}
-                        </span>
-                      );
-                    } else if (meta.type === 'action') {
-                      cellContent = (
-                        <span style={{ color: '#334155', lineHeight: '1.5' }}>
-                          {parseInline(raw)}
-                        </span>
-                      );
-                    } else {
-                      cellContent = parseInline(raw);
-                    }
+                      let cellContent;
 
-                    return (
-                      <td
-                        key={cIdx}
-                        style={{
-                          ...styles.td,
-                          textAlign: meta.align
-                        }}
-                      >
-                        {cellContent}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                      if (isNegative) {
+                        cellContent = (
+                          <span style={styles.pillNegative}>
+                            {raw}
+                          </span>
+                        );
+                      } else if (isPositive) {
+                        cellContent = (
+                          <span style={styles.pillPositive}>
+                            {raw}
+                          </span>
+                        );
+                      } else if (isTradeCount) {
+                        cellContent = (
+                          <span style={styles.pillNeutral}>
+                            {raw}
+                          </span>
+                        );
+                      } else if (meta.type === 'category') {
+                        cellContent = (
+                          <span style={{ fontWeight: 700, color: isDark ? '#f8fafc' : '#0f172a' }}>
+                            {parseInline(raw)}
+                          </span>
+                        );
+                      } else if (meta.type === 'action') {
+                        cellContent = (
+                          <span style={{ color: isDark ? '#cbd5e1' : '#334155', lineHeight: '1.5' }}>
+                            {parseInline(raw)}
+                          </span>
+                        );
+                      } else if (meta.type === 'metric') {
+                        const isPositiveR = /^\+?(\d+(\.\d+)?)R$/i.test(raw) && parseFloat(raw) > 0;
+                        const isNegativeR = /^-(\d+(\.\d+)?)R$/i.test(raw);
+                        const color = isPositiveR
+                          ? (isDark ? '#4ade80' : '#16a34a')
+                          : isNegativeR
+                          ? (isDark ? '#f87171' : '#dc2626')
+                          : (isDark ? '#f8fafc' : '#0f172a');
+                        cellContent = (
+                          <span style={{ fontWeight: 600, color }}>
+                            {parseInline(raw)}
+                          </span>
+                        );
+                      } else if (meta.type === 'financial') {
+                        const isZero = raw === '₹0' || raw.startsWith('₹0') || raw === '0';
+                        cellContent = (
+                          <span style={{
+                            fontWeight: 600,
+                            color: isZero
+                              ? (isDark ? '#94a3b8' : '#64748b')
+                              : (isDark ? '#f8fafc' : '#0f172a')
+                          }}>
+                            {parseInline(raw)}
+                          </span>
+                        );
+                      } else {
+                        cellContent = (
+                          <span style={{ color: isDark ? '#f8fafc' : '#1e293b' }}>
+                            {parseInline(raw)}
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <td
+                          key={cIdx}
+                          style={{
+                            ...styles.td,
+                            textAlign: meta.align
+                          }}
+                        >
+                          {cellContent}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -452,11 +535,11 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
           <div style={styles.importHeader}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={styles.importBadge}>1-CLICK IMPORT READY</span>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: isDark ? '#f8fafc' : '#111827' }}>
                 {rawTrades.length} Trade{rawTrades.length > 1 ? 's' : ''} Parsed & Verified
               </span>
             </div>
-            <span style={{ fontSize: '12px', color: '#6b7280' }}>
+            <span style={{ fontSize: '12px', color: isDark ? '#94a3b8' : '#6b7280' }}>
               NSE/BSE Broker Contract Note
             </span>
           </div>
@@ -467,10 +550,10 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
                 <span style={{ fontWeight: 700, color: t.side === 'Sell' ? styles.colors.red : styles.colors.green }}>
                   {t.side || 'BUY'}
                 </span>
-                <span style={{ fontWeight: 700, color: '#111827' }}>{t.symbol}</span>
-                <span style={{ color: '#4b5563' }}>Qty: {t.qty}</span>
-                <span style={{ color: '#4b5563' }}>@ ₹{t.price}</span>
-                {t.sl ? <span style={{ color: '#9ca3af', fontSize: '11px' }}>SL: ₹{t.sl}</span> : null}
+                <span style={{ fontWeight: 700, color: isDark ? '#f8fafc' : '#111827' }}>{t.symbol}</span>
+                <span style={{ color: isDark ? '#cbd5e1' : '#4b5563' }}>Qty: {t.qty}</span>
+                <span style={{ color: isDark ? '#cbd5e1' : '#4b5563' }}>@ ₹{t.price}</span>
+                {t.sl ? <span style={{ color: isDark ? '#94a3b8' : '#9ca3af', fontSize: '11px' }}>SL: ₹{t.sl}</span> : null}
               </div>
             ))}
           </div>
@@ -676,371 +759,383 @@ export default function FoxyResponseRenderer({ content, onImportTrades, isStream
   );
 }
 
-const styles = {
-  colors: {
-    green: '#16a34a',
-    red: '#dc2626',
-    blue: '#2563eb',
-    orange: '#d97706',
-    gray: '#64748b',
-    border: '#e2e8f0',
-    bgLight: '#f8fafc'
-  },
-  container: {
-    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-    lineHeight: 1.65,
-    color: '#334155',
-    fontSize: '13.5px'
-  },
-  text: {
-    margin: '0 0 10px 0',
-    color: '#334155'
-  },
-  boldHeading: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginTop: '18px',
-    marginBottom: '8px'
-  },
-  headingAccent: {
-    width: '3.5px',
-    height: '15px',
-    borderRadius: '2px',
-    backgroundColor: '#3b82f6',
-    flexShrink: 0
-  },
-  headingTitle: {
-    fontSize: '14.5px',
-    fontWeight: 700,
-    color: '#0f172a',
-    letterSpacing: '-0.15px'
-  },
-  pointerItem: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '9px',
-    margin: '4px 0 6px 0'
-  },
-  pointerBullet: {
-    color: '#3b82f6',
-    fontSize: '16px',
-    lineHeight: '1.45',
-    fontWeight: 700,
-    flexShrink: 0,
-    userSelect: 'none'
-  },
-  pointerContent: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: '13.5px',
-    lineHeight: 1.6,
-    color: '#334155'
-  },
-  hairlineDivider: {
-    height: '1px',
-    backgroundColor: '#f1f5f9',
-    margin: '14px 0'
-  },
-  code: {
-    backgroundColor: '#f1f5f9',
-    padding: '2px 6px',
-    borderRadius: '5px',
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
-    fontSize: '12px',
-    color: '#0f172a',
-    border: '1px solid #e2e8f0'
-  },
-  metricsRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
-    margin: '10px 0 14px 0'
-  },
-  metricCard: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '8px',
-    backgroundColor: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '20px',
-    padding: '6px 14px',
-    fontSize: '12.5px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
-  },
-  metricLabel: {
-    color: '#64748b',
-    fontWeight: 500,
-    fontSize: '12px'
-  },
-  metricValue: {
-    fontWeight: 700,
-    fontSize: '13px'
-  },
-  tableCard: {
-    margin: '18px 0',
-    borderRadius: '14px',
-    border: '1px solid #e2e8f0',
-    backgroundColor: '#ffffff',
-    boxShadow: '0 2px 10px rgba(0, 0, 0, 0.03)',
-    overflow: 'hidden'
-  },
-  tableScrollWrapper: {
-    overflowX: 'auto',
-    width: '100%'
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    textAlign: 'left',
-    fontSize: '13px'
-  },
-  th: {
-    backgroundColor: '#f8fafc',
-    color: '#475569',
-    padding: '12px 18px',
-    fontWeight: 700,
-    fontSize: '11px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    borderBottom: '1px solid #e2e8f0',
-    whiteSpace: 'nowrap'
-  },
-  td: {
-    padding: '13px 18px',
-    borderBottom: '1px solid #f1f5f9',
-    color: '#1e293b',
-    fontSize: '13px',
-    lineHeight: '1.5',
-    verticalAlign: 'middle'
-  },
-  trEven: {
-    backgroundColor: '#ffffff',
-    transition: 'background-color 0.15s ease'
-  },
-  trOdd: {
-    backgroundColor: '#fafbfc',
-    transition: 'background-color 0.15s ease'
-  },
-  pillNegative: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '3px 9px',
-    borderRadius: '6px',
-    backgroundColor: '#fef2f2',
-    border: '1px solid #fecaca',
-    color: '#dc2626',
-    fontWeight: 700,
-    fontSize: '12px',
-    whiteSpace: 'nowrap',
-    letterSpacing: '-0.1px'
-  },
-  pillPositive: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '3px 9px',
-    borderRadius: '6px',
-    backgroundColor: '#f0fdf4',
-    border: '1px solid #bbf7d0',
-    color: '#16a34a',
-    fontWeight: 700,
-    fontSize: '12px',
-    whiteSpace: 'nowrap',
-    letterSpacing: '-0.1px'
-  },
-  pillNeutral: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '3px 9px',
-    borderRadius: '6px',
-    backgroundColor: '#f1f5f9',
-    border: '1px solid #e2e8f0',
-    color: '#475569',
-    fontWeight: 600,
-    fontSize: '11.5px',
-    whiteSpace: 'nowrap'
-  },
-  verdictCard: {
-    border: '1px solid #e2e8f0',
-    borderRadius: '12px',
-    padding: '14px 16px',
-    margin: '14px 0',
-    backgroundColor: '#ffffff',
-    boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
-  },
-  verdictHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '10px'
-  },
-  verdictScore: {
-    fontSize: '1.25rem',
-    fontWeight: 800,
-    color: '#0f172a'
-  },
-  verdictLabel: {
-    fontWeight: 700,
-    fontSize: '12.5px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em'
-  },
-  verdictBarContainer: {
-    height: '6px',
-    backgroundColor: '#f1f5f9',
-    borderRadius: '9999px',
-    overflow: 'hidden'
-  },
-  verdictBarFill: {
-    height: '100%',
-    borderRadius: '9999px',
-    transition: 'width 0.4s ease'
-  },
-  chartWrapper: {
-    backgroundColor: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '14px',
-    padding: '16px 18px',
-    margin: '16px 0',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
-  },
-  chartHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '16px',
-    paddingBottom: '10px',
-    borderBottom: '1px solid #f1f5f9'
-  },
-  chartTitle: {
-    fontSize: '13px',
-    fontWeight: 700,
-    color: '#0f172a'
-  },
-  chartBadge: {
-    fontSize: '11px',
-    fontWeight: 600,
-    color: '#64748b',
-    backgroundColor: '#f8fafc',
-    padding: '2px 8px',
-    borderRadius: '6px',
-    border: '1px solid #e2e8f0'
-  },
-  chartBarsArea: {
-    display: 'flex',
-    alignItems: 'flex-end',
-    gap: '16px',
-    height: '150px',
-    padding: '14px 10px 6px 10px',
-    overflowX: 'auto'
-  },
-  barColumn: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    height: '100%',
-    flex: '1 1 0%',
-    minWidth: '42px',
-    maxWidth: '56px',
-    justifyContent: 'flex-end'
-  },
-  barValueBadge: {
-    fontSize: '10.5px',
-    fontWeight: 700,
-    marginBottom: '6px',
-    textAlign: 'center',
-    whiteSpace: 'nowrap'
-  },
-  barTrack: {
-    width: '100%',
-    maxWidth: '32px',
-    height: '84px',
-    backgroundColor: '#f1f5f9',
-    borderRadius: '6px 6px 0 0',
-    display: 'flex',
-    alignItems: 'flex-end',
-    overflow: 'hidden'
-  },
-  barFill: {
-    width: '100%',
-    borderRadius: '6px 6px 0 0',
-    transition: 'height 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
-  },
-  barLabel: {
-    fontSize: '11px',
-    fontWeight: 600,
-    color: '#64748b',
-    marginTop: '6px',
-    textAlign: 'center',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: '56px'
-  },
-  importCard: {
-    border: '1px solid #bbf7d0',
-    backgroundColor: '#f0fdf4',
-    borderRadius: '12px',
-    padding: '16px',
-    margin: '14px 0',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
-  },
-  importHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: '8px',
-    marginBottom: '10px'
-  },
-  importBadge: {
-    backgroundColor: '#dcfce7',
-    color: '#15803d',
-    padding: '3px 8px',
-    borderRadius: '6px',
-    fontSize: '11px',
-    fontWeight: 800,
-    letterSpacing: '0.04em'
-  },
-  importTradeList: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
-    marginTop: '6px'
-  },
-  importTradePill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    backgroundColor: '#ffffff',
-    border: '1px solid #dcfce7',
-    padding: '4px 10px',
-    borderRadius: '6px',
-    fontSize: '12px'
-  },
-  importButton: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '8px 16px',
-    fontSize: '13px',
-    fontWeight: 700,
-    boxShadow: '0 1px 3px rgba(22,163,74,0.3)',
-    transition: 'all 0.15s ease'
-  },
-  streamingCursor: {
-    display: 'inline-block',
-    width: '7px',
-    height: '14px',
-    backgroundColor: '#2563eb',
-    verticalAlign: '-1px',
-    marginLeft: '4px',
-    borderRadius: '1px',
-    animation: 'foxyBlink 0.8s ease-in-out infinite'
-  }
-};
+function getStyles(isDark = false, isPitchBlack = false) {
+  const bgCard = isPitchBlack ? '#0a0a0a' : isDark ? '#1e293b' : '#ffffff';
+  const bgSurface = isPitchBlack ? '#121212' : isDark ? '#0f172a' : '#f8fafc';
+  const bgHover = isPitchBlack ? '#171717' : isDark ? '#283548' : '#fafbfc';
+  const borderColor = isPitchBlack ? '#1f1f1f' : isDark ? '#334155' : '#e2e8f0';
+  const borderLight = isPitchBlack ? '#141414' : isDark ? '#243042' : '#f1f5f9';
+  const textPrimary = isPitchBlack ? '#ffffff' : isDark ? '#f8fafc' : '#0f172a';
+  const textSecondary = isPitchBlack ? '#d4d4d4' : isDark ? '#cbd5e1' : '#334155';
+  const textMuted = isPitchBlack ? '#737373' : isDark ? '#94a3b8' : '#64748b';
+
+  return {
+    colors: {
+      green: isDark ? '#22c55e' : '#16a34a',
+      red: isDark ? '#ef4444' : '#dc2626',
+      blue: isDark ? '#3b82f6' : '#2563eb',
+      orange: isDark ? '#f59e0b' : '#d97706',
+      gray: textMuted,
+      border: borderColor,
+      bgLight: bgSurface
+    },
+    container: {
+      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      lineHeight: 1.65,
+      color: textSecondary,
+      fontSize: '13.5px'
+    },
+    text: {
+      margin: '0 0 10px 0',
+      color: textSecondary
+    },
+    boldHeading: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      marginTop: '18px',
+      marginBottom: '8px'
+    },
+    headingAccent: {
+      width: '3.5px',
+      height: '15px',
+      borderRadius: '2px',
+      backgroundColor: '#3b82f6',
+      flexShrink: 0
+    },
+    headingTitle: {
+      fontSize: '14.5px',
+      fontWeight: 700,
+      color: textPrimary,
+      letterSpacing: '-0.15px'
+    },
+    pointerItem: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '9px',
+      margin: '4px 0 6px 0'
+    },
+    pointerBullet: {
+      color: '#3b82f6',
+      fontSize: '16px',
+      lineHeight: '1.45',
+      fontWeight: 700,
+      flexShrink: 0,
+      userSelect: 'none'
+    },
+    pointerContent: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: '13.5px',
+      lineHeight: 1.6,
+      color: textSecondary
+    },
+    hairlineDivider: {
+      height: '1px',
+      backgroundColor: borderLight,
+      margin: '14px 0'
+    },
+    code: {
+      backgroundColor: bgSurface,
+      padding: '2px 6px',
+      borderRadius: '5px',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+      fontSize: '12px',
+      color: isDark ? '#93c5fd' : '#0f172a',
+      border: `1px solid ${borderColor}`
+    },
+    metricsRow: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '8px',
+      margin: '10px 0 14px 0'
+    },
+    metricCard: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '8px',
+      backgroundColor: bgCard,
+      border: `1px solid ${borderColor}`,
+      borderRadius: '20px',
+      padding: '6px 14px',
+      fontSize: '12.5px',
+      boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.03)'
+    },
+    metricLabel: {
+      color: textMuted,
+      fontWeight: 500,
+      fontSize: '12px'
+    },
+    metricValue: {
+      fontWeight: 700,
+      fontSize: '13px'
+    },
+    tableCard: {
+      margin: '18px 0',
+      borderRadius: '14px',
+      border: `1px solid ${borderColor}`,
+      backgroundColor: bgCard,
+      boxShadow: isDark ? '0 4px 14px rgba(0, 0, 0, 0.4)' : '0 2px 10px rgba(0, 0, 0, 0.03)',
+      overflow: 'hidden'
+    },
+    tableScrollWrapper: {
+      overflowX: 'auto',
+      width: '100%'
+    },
+    table: {
+      width: '100%',
+      borderCollapse: 'collapse',
+      textAlign: 'left',
+      fontSize: '13px'
+    },
+    th: {
+      backgroundColor: bgSurface,
+      color: textMuted,
+      padding: '12px 18px',
+      fontWeight: 700,
+      fontSize: '11px',
+      textTransform: 'uppercase',
+      letterSpacing: '0.06em',
+      borderBottom: `1px solid ${borderColor}`,
+      whiteSpace: 'nowrap'
+    },
+    td: {
+      padding: '13px 18px',
+      borderBottom: `1px solid ${borderLight}`,
+      color: isDark ? '#f1f5f9' : '#1e293b',
+      fontSize: '13px',
+      lineHeight: '1.5',
+      verticalAlign: 'middle'
+    },
+    trEven: {
+      backgroundColor: bgCard,
+      transition: 'background-color 0.15s ease'
+    },
+    trOdd: {
+      backgroundColor: bgHover,
+      transition: 'background-color 0.15s ease'
+    },
+    pillNegative: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '4px',
+      padding: '3px 9px',
+      borderRadius: '6px',
+      backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fef2f2',
+      border: `1px solid ${isDark ? 'rgba(239, 68, 68, 0.35)' : '#fecaca'}`,
+      color: isDark ? '#f87171' : '#dc2626',
+      fontWeight: 700,
+      fontSize: '12px',
+      whiteSpace: 'nowrap',
+      letterSpacing: '-0.1px'
+    },
+    pillPositive: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '4px',
+      padding: '3px 9px',
+      borderRadius: '6px',
+      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#f0fdf4',
+      border: `1px solid ${isDark ? 'rgba(16, 185, 129, 0.35)' : '#bbf7d0'}`,
+      color: isDark ? '#34d399' : '#16a34a',
+      fontWeight: 700,
+      fontSize: '12px',
+      whiteSpace: 'nowrap',
+      letterSpacing: '-0.1px'
+    },
+    pillNeutral: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '3px 9px',
+      borderRadius: '6px',
+      backgroundColor: bgSurface,
+      border: `1px solid ${borderColor}`,
+      color: textSecondary,
+      fontWeight: 600,
+      fontSize: '11.5px',
+      whiteSpace: 'nowrap'
+    },
+    verdictCard: {
+      border: `1px solid ${borderColor}`,
+      borderRadius: '12px',
+      padding: '14px 16px',
+      margin: '14px 0',
+      backgroundColor: bgCard,
+      boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 6px rgba(0,0,0,0.03)'
+    },
+    verdictHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '10px'
+    },
+    verdictScore: {
+      fontSize: '1.25rem',
+      fontWeight: 800,
+      color: textPrimary
+    },
+    verdictLabel: {
+      fontWeight: 700,
+      fontSize: '12.5px',
+      textTransform: 'uppercase',
+      letterSpacing: '0.04em'
+    },
+    verdictBarContainer: {
+      height: '6px',
+      backgroundColor: bgSurface,
+      borderRadius: '9999px',
+      overflow: 'hidden'
+    },
+    verdictBarFill: {
+      height: '100%',
+      borderRadius: '9999px',
+      transition: 'width 0.4s ease'
+    },
+    chartWrapper: {
+      backgroundColor: bgCard,
+      border: `1px solid ${borderColor}`,
+      borderRadius: '14px',
+      padding: '16px 18px',
+      margin: '16px 0',
+      boxShadow: isDark ? '0 4px 14px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.03)'
+    },
+    chartHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '16px',
+      paddingBottom: '10px',
+      borderBottom: `1px solid ${borderLight}`
+    },
+    chartTitle: {
+      fontSize: '13px',
+      fontWeight: 700,
+      color: textPrimary
+    },
+    chartBadge: {
+      fontSize: '11px',
+      fontWeight: 600,
+      color: textMuted,
+      backgroundColor: bgSurface,
+      padding: '2px 8px',
+      borderRadius: '6px',
+      border: `1px solid ${borderColor}`
+    },
+    chartBarsArea: {
+      display: 'flex',
+      alignItems: 'flex-end',
+      gap: '16px',
+      height: '150px',
+      padding: '14px 10px 6px 10px',
+      overflowX: 'auto'
+    },
+    barColumn: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      height: '100%',
+      flex: '1 1 0%',
+      minWidth: '42px',
+      maxWidth: '56px',
+      justifyContent: 'flex-end'
+    },
+    barValueBadge: {
+      fontSize: '10.5px',
+      fontWeight: 700,
+      marginBottom: '6px',
+      textAlign: 'center',
+      whiteSpace: 'nowrap'
+    },
+    barTrack: {
+      width: '100%',
+      maxWidth: '32px',
+      height: '84px',
+      backgroundColor: bgSurface,
+      borderRadius: '6px 6px 0 0',
+      display: 'flex',
+      alignItems: 'flex-end',
+      overflow: 'hidden'
+    },
+    barFill: {
+      width: '100%',
+      borderRadius: '6px 6px 0 0',
+      transition: 'height 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
+    },
+    barLabel: {
+      fontSize: '11px',
+      fontWeight: 600,
+      color: textMuted,
+      marginTop: '6px',
+      textAlign: 'center',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      maxWidth: '56px'
+    },
+    importCard: {
+      border: `1px solid ${isDark ? '#065f46' : '#bbf7d0'}`,
+      backgroundColor: isDark ? 'rgba(6, 78, 59, 0.2)' : '#f0fdf4',
+      borderRadius: '12px',
+      padding: '16px',
+      margin: '14px 0',
+      boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.03)'
+    },
+    importHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: '8px',
+      marginBottom: '10px'
+    },
+    importBadge: {
+      backgroundColor: isDark ? '#064e3b' : '#dcfce7',
+      color: isDark ? '#6ee7b7' : '#15803d',
+      padding: '3px 8px',
+      borderRadius: '6px',
+      fontSize: '11px',
+      fontWeight: 800,
+      letterSpacing: '0.04em'
+    },
+    importTradeList: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '8px',
+      marginTop: '6px'
+    },
+    importTradePill: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '6px',
+      backgroundColor: bgCard,
+      border: `1px solid ${isDark ? '#065f46' : '#dcfce7'}`,
+      color: textPrimary,
+      padding: '4px 10px',
+      borderRadius: '6px',
+      fontSize: '12px'
+    },
+    importButton: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '6px',
+      color: '#ffffff',
+      border: 'none',
+      borderRadius: '8px',
+      padding: '8px 16px',
+      fontSize: '13px',
+      fontWeight: 700,
+      boxShadow: '0 1px 3px rgba(22,163,74,0.3)',
+      transition: 'all 0.15s ease'
+    },
+    streamingCursor: {
+      display: 'inline-block',
+      width: '7px',
+      height: '14px',
+      backgroundColor: '#2563eb',
+      verticalAlign: '-1px',
+      marginLeft: '4px',
+      borderRadius: '1px',
+      animation: 'foxyBlink 0.8s ease-in-out infinite'
+    }
+  };
+}

@@ -164,24 +164,21 @@ function PnLSparkline({ trades = [] }) {
    ───────────────────────────────────────────────────────────── */
 function SemiGauge({ value = 0, maxValue = 100, color = '#10b981', hideValues = false, suffix = '%', label = null, gradId = 'sg-grad', filterId = 'sg-glow' }) {
   const animRef = useRef(null);
-  const [displayed, setDisplayed] = useState(0);
-
-  const trackColor = 'var(--border-color, #e5e7eb)';
-  const SIZE = 110;
-  const CX = SIZE / 2;
-  const CY = SIZE / 2;
-  const R = 40;
-  const STROKE = 7;
-  const circumference = Math.PI * R;
-
   // Clamp pct 0–100
   const pct = Math.min(100, Math.max(0, (value / maxValue) * 100));
+  const [displayed, setDisplayed] = useState(pct);
+  const prevPctRef = useRef(pct);
 
   useEffect(() => {
-    let start = null;
-    const from = 0;
+    const from = prevPctRef.current;
     const to = pct;
-    const duration = 1200;
+    prevPctRef.current = to;
+    if (Math.abs(from - to) < 0.05) {
+      setDisplayed(to);
+      return;
+    }
+    let start = null;
+    const duration = 300;
     if (animRef.current) cancelAnimationFrame(animRef.current);
     const step = (ts) => {
       if (!start) start = ts;
@@ -193,6 +190,14 @@ function SemiGauge({ value = 0, maxValue = 100, color = '#10b981', hideValues = 
     animRef.current = requestAnimationFrame(step);
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [pct]);
+
+  const trackColor = 'var(--border-color, #e5e7eb)';
+  const SIZE = 110;
+  const CX = SIZE / 2;
+  const CY = SIZE / 2;
+  const R = 40;
+  const STROKE = 7;
+  const circumference = Math.PI * R;
 
   const fillLength = (displayed / 100) * circumference;
   const gapLength = circumference - fillLength;
@@ -438,7 +443,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
     return Math.max(0, baseCap - invested);
   }, [metrics?.portfolioCapital, metrics?.totalInvested, totalInvestedInOpen]);
 
-  // Active open trade displayed in % INVESTED card header matching Nexus Journal
+  // Active open trade displayed in % INVESTED card header
   const activeInvestedTrade = useMemo(() => {
     if (openTradesList.length === 0) return null;
     return openTradesList[investedSymbolIdx % openTradesList.length];
@@ -466,7 +471,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
     return ['ALL TIME', ...Array.from(years).sort((a, b) => b.localeCompare(a))];
   }, [trades]);
 
-  // Dynamic Month-by-Month PF Impact Breakdown Calculation matching Nexus Journal 1:1
+  // Dynamic Month-by-Month PF Impact Breakdown Calculation
   const monthlyBreakdownData = useMemo(() => {
     const baseCap = metrics?.portfolioCapital || metrics?.currentPfCapital || 200000;
     const capitalChanges = selectedPfYear !== 'ALL TIME' ? getStoredCapitalChanges('portfolio-default', selectedPfYear) : {};
@@ -589,7 +594,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         backgroundColor: 'var(--bg-surface, #ffffff)', border: '1px solid var(--border-color, #e5e7eb)',
                         borderRadius: '10px', boxShadow: '0 10px 25px -4px rgba(0,0,0,0.14)',
                         padding: '8px 12px', zIndex: 100, width: '170px', fontSize: '10.5px',
-                        animation: 'nexusTooltipPop 0.14s ease-out'
+                        animation: 'foxTooltipPop 0.14s ease-out'
                       }}>
                       {/* Invisible Hover Bridge */}
                       <div style={{ position: 'absolute', top: '-10px', left: 0, right: 0, height: '10px', background: 'transparent' }} />
@@ -665,7 +670,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         zIndex: 100,
                         width: '280px',
                         fontSize: '11px',
-                        animation: 'nexusTooltipPop 0.14s ease-out'
+                        animation: 'foxTooltipPop 0.14s ease-out'
                       }}>
                       {/* Invisible Hover Bridge */}
                       <div style={{ position: 'absolute', top: '-10px', left: 0, right: 0, height: '10px', background: 'transparent' }} />
@@ -890,7 +895,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                   zIndex: 100,
                   fontSize: '12px',
                   color: 'var(--text-primary)',
-                  animation: 'nexusTooltipPop 0.14s ease-out'
+                  animation: 'foxTooltipPop 0.14s ease-out'
                 }}
               >
                 <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '2px', color: 'var(--text-primary)' }}>
@@ -1035,7 +1040,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                     <Info size={14} color="var(--text-muted)" />
                   </button>
 
-                  {/* Scrollable Gross PF Impact Overlay Popover Matching Nexus 1:1 */}
+                  {/* Scrollable Gross PF Impact Overlay Popover */}
                   {activePopover === 'grossImpact' && (
                     <div 
                       onClick={(e) => e.stopPropagation()}
@@ -1055,7 +1060,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         overflow: 'hidden',
                         fontSize: '11px',
                         color: 'var(--text-primary)',
-                        animation: 'nexusTooltipPop 0.14s ease-out'
+                        animation: 'foxTooltipPop 0.14s ease-out'
                       }}
                     >
                       {/* Invisible Hover Bridge */}
@@ -1246,7 +1251,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                     <Info size={14} color="var(--text-muted)" />
                   </button>
 
-                  {/* Unrealized P/L Popover Matching Nexus 1:1 */}
+                  {/* Unrealized P/L Popover */}
                   {activePopover === 'unrealized' && (
                     <div 
                       onClick={(e) => e.stopPropagation()}
@@ -1265,7 +1270,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         zIndex: 100,
                         fontSize: '11px',
                         color: 'var(--text-primary)',
-                        animation: 'nexusTooltipPop 0.14s ease-out'
+                        animation: 'foxTooltipPop 0.14s ease-out'
                       }}
                     >
                       {/* Invisible Hover Bridge */}
@@ -1416,7 +1421,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         backgroundColor: 'var(--bg-surface, #ffffff)', border: '1px solid var(--border-color, #e5e7eb)',
                         borderRadius: '10px', boxShadow: '0 10px 25px -4px rgba(0,0,0,0.14)',
                         padding: '8px 12px', zIndex: 100, width: '170px', fontSize: '10.5px',
-                        animation: 'nexusTooltipPop 0.14s ease-out'
+                        animation: 'foxTooltipPop 0.14s ease-out'
                       }}>
                       {/* Invisible Hover Bridge */}
                       <div style={{ position: 'absolute', top: '-10px', left: 0, right: 0, height: '10px', background: 'transparent' }} />
@@ -1524,7 +1529,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
           </div>
         )}
 
-        {/* ── CARD 9: % INVESTED (Exact Nexus 1:1 Parity) ── */}
+        {/* ── CARD 9: % INVESTED ── */}
         {isEnabled('pctInvested') && (
           <div style={{
             backgroundColor: 'var(--bg-card)',
@@ -1572,7 +1577,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
               )}
             </div>
 
-            {/* Nexus 1:1 Floating Right Edge (i) Button & Popover (Opening ABOVE) */}
+            {/* Floating Right Edge (i) Button & Popover (Opening ABOVE) */}
             <div 
               onMouseEnter={() => openPopover('invested')}
               onMouseLeave={closePopoverWithGrace}
@@ -1635,7 +1640,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                     zIndex: 200,
                     fontSize: '10.5px',
                     color: 'var(--text-primary)',
-                    animation: 'nexusTooltipPop 0.14s ease-out'
+                    animation: 'foxTooltipPop 0.14s ease-out'
                   }}
                 >
                   {/* Invisible Hover Bridge */}
@@ -1819,7 +1824,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                   zIndex: 160,
                   fontSize: '11px',
                   color: 'var(--text-primary)',
-                  animation: 'nexusTooltipPop 0.14s ease-out'
+                  animation: 'foxTooltipPop 0.14s ease-out'
                 }}
               >
                 {/* Upward Pointer Arrow */}
@@ -1931,7 +1936,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                             maxHeight: '170px',
                             overflowY: 'auto',
                             scrollbarWidth: 'thin',
-                            animation: 'nexusTooltipPop 0.12s ease-out'
+                            animation: 'foxTooltipPop 0.12s ease-out'
                           }}
                         >
                           {['ALL MONTHS', ...ALL_MONTH_NAMES].map(m => {
@@ -2028,7 +2033,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                             maxHeight: '160px',
                             overflowY: 'auto',
                             scrollbarWidth: 'thin',
-                            animation: 'nexusTooltipPop 0.12s ease-out'
+                            animation: 'foxTooltipPop 0.12s ease-out'
                           }}
                         >
                           {availableYears.map(yr => {

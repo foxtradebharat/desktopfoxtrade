@@ -1,8 +1,7 @@
 /**
  * brokerLogos.js
  * 
- * Official broker logos extracted directly from Nexus Journal (nexusjournal.co.in).
- * Matches Nexus's broker registry and logo mappings 1:1.
+ * Official broker logos and mappings for FoxTrade.
  */
 
 export const BROKER_LOGOS = {
@@ -18,10 +17,10 @@ export const BROKER_LOGOS = {
   icici: 'https://encrypted-tbn2.gstatic.com/faviconV2?url=https://secure.icicidirect.com&client=VFE&size=64&type=FAVICON&fallback_opts=TYPE,SIZE,URL&nfrp=2',
   sharekhan: 'https://www.sharekhan.com/MediaGalary/image/Press-Release-Blog-Post_H-202411291304334580910.png',
   ibkr: 'https://www.interactivebrokers.com/images/common/logos/ibkr/interactive-brokers.svg',
-  prostocks: 'https://www.nexusjournal.co.in/prostocks-logo.svg',
+  prostocks: '/prostocks-logo.svg',
 };
 
-// Nexus-compatible alias lookup
+// Normalized broker alias lookup
 const BROKER_ALIASES = {
   angel: 'angelone',
   angelone: 'angelone',

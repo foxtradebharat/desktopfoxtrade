@@ -1,4 +1,4 @@
-# FoxTrade vs. Nexus Trading Journal — Analytics Page Audit & Benchmark Report
+# FoxTrade vs. Competitor Journal — Analytics Page Audit & Benchmark Report
 **Target Market:** Indian Stock & Derivative Traders (NSE / BSE / MCX)  
 **Evaluator Perspective:** Active Indian Trader (Equities, F&O Intraday & Swing)  
 **Audit Date:** September 2026  
@@ -11,40 +11,40 @@
 As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and Nifty/BankNifty F&O, evaluating a journal comes down to one core question:  
 > *"Does this analytics page show me the cold, mathematical reality of my execution edge, or is it just vanity charts that hide real losses and Indian regulatory taxes?"*
 
-### Overall Verdict: **FoxTrade is Mathematically & Architecturally Superior (8.6/10 vs 5.8/10)**, but **Nexus holds an edge in sheer visual minimalism and breathing room**.
+### Overall Verdict: **FoxTrade is Mathematically & Architecturally Superior (8.6/10 vs 5.8/10)**, but **Competitor holds an edge in sheer visual minimalism and breathing room**.
 
 * **Why FoxTrade Wins on Analytics Substance:**  
-  FoxTrade’s Analytics engine is fundamentally tailored to how Indian traders actually trade. It solves the biggest single flaw of all generic journals by introducing a real-time **"Net in Bank" vs. "Gross P&L" toggle** (factoring in STT, GST, Stamp Duty, Brokerage, and SEBI turnover fees). Furthermore, FoxTrade completely eliminates Nexus’s glaring **redundancy bug** (where Nexus repeats 5 out of 6 metrics between "Performance Metrics" and "Trade Statistics"), replacing it with an institutional **Trading Edge & Expectancy Matrix** (Expectancy ₹/trade, Profit Factor, Recovery Factor, Max Drawdown in ₹ and %, and Streaks). FoxTrade also introduces **Indian Market Session Timing (09:15–15:30)** and a **Top 5 Leaderboard** with direct TradingView chart triggers.
+  FoxTrade’s Analytics engine is fundamentally tailored to how Indian traders actually trade. It solves the biggest single flaw of all generic journals by introducing a real-time **"Net in Bank" vs. "Gross P&L" toggle** (factoring in STT, GST, Stamp Duty, Brokerage, and SEBI turnover fees). Furthermore, FoxTrade completely eliminates Competitor’s glaring **redundancy bug** (where Competitor repeats 5 out of 6 metrics between "Performance Metrics" and "Trade Statistics"), replacing it with an institutional **Trading Edge & Expectancy Matrix** (Expectancy ₹/trade, Profit Factor, Recovery Factor, Max Drawdown in ₹ and %, and Streaks). FoxTrade also introduces **Indian Market Session Timing (09:15–15:30)** and a **Top 5 Leaderboard** with direct TradingView chart triggers.
 
 * **Where FoxTrade is Currently Lagging (The Unbiased Truth):**  
-  FoxTrade packs significantly more data onto the screen, which can occasionally feel dense compared to Nexus’s ultra-airy, magazine-style spacing. Specifically:
-  1. **Visual Density & Node Clutter:** FoxTrade plots milestone circular dots on every single trade across the performance curve. In active trading accounts with 100+ trades, these dots create visual noise, whereas Nexus displays a sleek, continuous line that only reveals node details on hover.
-  2. **Indian Financial Year (FY) Date Presets:** Indian traders close their books from **April 1 to March 31** (FY 2025–26). Nexus has a simple "All Time" dropdown, but neither app yet offers a dedicated "FY 25-26" or "Q1/Q2/Q3/Q4 Indian Tax Quarter" one-click filter.
+  FoxTrade packs significantly more data onto the screen, which can occasionally feel dense compared to Competitor’s ultra-airy, magazine-style spacing. Specifically:
+  1. **Visual Density & Node Clutter:** FoxTrade plots milestone circular dots on every single trade across the performance curve. In active trading accounts with 100+ trades, these dots create visual noise, whereas Competitor displays a sleek, continuous line that only reveals node details on hover.
+  2. **Indian Financial Year (FY) Date Presets:** Indian traders close their books from **April 1 to March 31** (FY 2025–26). Competitor has a simple "All Time" dropdown, but neither app yet offers a dedicated "FY 25-26" or "Q1/Q2/Q3/Q4 Indian Tax Quarter" one-click filter.
   3. **Segment Segregation (Equity vs F&O):** While FoxTrade has an "NSE EQUITY" badge, options scalpers and swing traders need a dedicated segment filter directly on the Analytics page to isolate F&O trades from Cash delivery trades.
 
 ---
 
 ## 2. Side-by-Side Head-to-Head Comparison Matrix
 
-| Feature / Metric Area | Nexus Trading Journal (`nexusjournal.co.in`) | FoxTrade (`foxtrade.in`) | Superior Product | Key Findings & Impact on Indian Traders |
+| Feature / Metric Area | Competitor Journal (`competitor-journal.co.in`) | FoxTrade (`foxtrade.in`) | Superior Product | Key Findings & Impact on Indian Traders |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Net vs. Gross P&L (Indian Statutory Charges)** | ❌ **Gross Only on Analytics.** Taxes/STT are segregated to a separate page. Traders see misleading inflated profits. | 🟢 **Native Switcher & Live STT Pill.** Instant toggle between "Net in Bank" and "Gross P&L" with total charges displayed. | **FoxTrade** *(Decisive)* | In India, an active F&O scalper making ₹1,00,000 gross often pays ₹30,000+ in STT, GST & exchange turnover. Nexus blurs this reality; FoxTrade shows actual bankable profit. |
+| **1. Net vs. Gross P&L (Indian Statutory Charges)** | ❌ **Gross Only on Analytics.** Taxes/STT are segregated to a separate page. Traders see misleading inflated profits. | 🟢 **Native Switcher & Live STT Pill.** Instant toggle between "Net in Bank" and "Gross P&L" with total charges displayed. | **FoxTrade** *(Decisive)* | In India, an active F&O scalper making ₹1,00,000 gross often pays ₹30,000+ in STT, GST & exchange turnover. Competitor blurs this reality; FoxTrade shows actual bankable profit. |
 | **2. Hero Portfolio Performance Chart** | 🟡 **Basic Area Chart.** Supports Growth, Monthly, Equity, Daily. Green gradient fill. Sparse month X-axis. | 🟢 **Institutional Composed Chart.** Supports Growth, Monthly, Equity (Dual-Axis INR), Daily + Milestone Tooltips. | **FoxTrade** | FoxTrade features dual-axis scaling in Equity mode (Rupee equity on left, benchmark index levels on right). |
 | **3. Benchmark Comparison (`VS` Mode)** | 🔴 **Broken/Incomplete.** Toggle switch exists, but cannot select specific Indian indices. | 🟢 **5 Native Indian Benchmarks.** Toggle between NIFTY 50, BANK NIFTY, NIFTY MIDCAP 150, NIFTY SMALLCAP 100, NIFTY 500. | **FoxTrade** *(Decisive)* | Allows Indian traders to measure their real **Alpha** against the exact index they trade (e.g. Midcap traders vs Nifty Midcap 150). |
-| **4. Metric Structure & Screen Economy** | 🔴 **Major Redundancy Flaw.** Two separate panels ("Performance Metrics" & "Trade Statistics") repeat the exact same 5 metrics. | 🟢 **Zero Duplication Matrix.** 4 distinct panels: Expectancy & Win Edge, Risk & Drawdown, Execution & Duration, Discipline & Streaks. | **FoxTrade** *(Decisive)* | Nexus wastes 33% of the horizontal screen duplicating Win %, Avg Gain, Avg Loss, Position Size, and Holding Days. FoxTrade utilizes every pixel. |
+| **4. Metric Structure & Screen Economy** | 🔴 **Major Redundancy Flaw.** Two separate panels ("Performance Metrics" & "Trade Statistics") repeat the exact same 5 metrics. | 🟢 **Zero Duplication Matrix.** 4 distinct panels: Expectancy & Win Edge, Risk & Drawdown, Execution & Duration, Discipline & Streaks. | **FoxTrade** *(Decisive)* | Competitor wastes 33% of the horizontal screen duplicating Win %, Avg Gain, Avg Loss, Position Size, and Holding Days. FoxTrade utilizes every pixel. |
 | **5. Mathematical Expectancy & Risk Metrics** | 🔴 **Missing.** No Expectancy formula, No Profit Factor, No Recovery Factor, No Max Drawdown in ₹. | 🟢 **Complete Quant Stack.** Expectancy (+₹/trade), Profit Factor, Recovery Factor, Max Drawdown (% & ₹), Open Heat (₹). | **FoxTrade** *(Decisive)* | Essential for systematic traders following Van Tharp, Mark Minervini, or quantitative position sizing models. |
 | **6. Top Performers Section** | 🔴 **Extremely Limited.** Shows only **1** Highest R:R and **1** Lowest R:R trade. No stock grouping. | 🟢 **Top 5 Leaderboard.** Top 5 Wins & Top 5 Losses, groupable by Trade or Stock, sortable by R:R, P/L, Move %, PF Impact. | **FoxTrade** *(Decisive)* | A trader cannot audit alpha with just 1 winner. FoxTrade displays the top 5 alpha generators with setup tags and Dhan logos. |
 | **7. Integrated Chart Audit (`Chart` Button)** | 🔴 **None.** Top performers card is static text; no direct way to inspect the trade chart. | 🟢 **Direct Stock Chart Trigger.** Every item in the leaderboard has an `👁️ Chart` button opening candlestick charts. | **FoxTrade** | Instant feedback loop: click `Chart` to see where you entered and exited on the candlestick chart. |
-| **8. Indian Market Session & Timing Edge** | 🔴 **Completely Absent.** Nexus does not break down performance by time of day or day of week. | 🟢 **Native NSE Timing Engine.** Breaks down Opening Bell (09:15–10:30), Midday Grind (10:30–13:30), Closing Push (13:30–15:30), and Mon–Fri. | **FoxTrade** *(Decisive)* | Indian traders suffer most from midday chop (11:30–13:00). FoxTrade immediately proves where capital is being made vs burned. |
-| **9. Stock Move % & R-Multiple Chart** | 🔴 **Buggy / Inconsistent Scaling.** In testing, Nexus renders an empty skeleton pulse or single-day squished node. | 🟢 **Full-Width Responsive Chart.** Smooth area curve spanning 100% width with custom tooltips listing every stock traded. | **FoxTrade** | FoxTrade's chart renders cleanly across Daily, Weekly, and Monthly aggregations with detailed trade breakdown popups. |
-| **10. UI Cleanliness & Whitespace** | 🟢 **Ultra-Clean & Airy.** Generous padding, subtle typography, non-intrusive aesthetic. | 🟡 **Feature-Dense.** Excellent modern UI, but slightly heavier visual density in the header and matrix. | **Nexus** *(Minor Edge)* | Nexus feels slightly more relaxed on initial glance due to having fewer features and smaller font weights. |
+| **8. Indian Market Session & Timing Edge** | 🔴 **Completely Absent.** Competitor does not break down performance by time of day or day of week. | 🟢 **Native NSE Timing Engine.** Breaks down Opening Bell (09:15–10:30), Midday Grind (10:30–13:30), Closing Push (13:30–15:30), and Mon–Fri. | **FoxTrade** *(Decisive)* | Indian traders suffer most from midday chop (11:30–13:00). FoxTrade immediately proves where capital is being made vs burned. |
+| **9. Stock Move % & R-Multiple Chart** | 🔴 **Buggy / Inconsistent Scaling.** In testing, Competitor renders an empty skeleton pulse or single-day squished node. | 🟢 **Full-Width Responsive Chart.** Smooth area curve spanning 100% width with custom tooltips listing every stock traded. | **FoxTrade** | FoxTrade's chart renders cleanly across Daily, Weekly, and Monthly aggregations with detailed trade breakdown popups. |
+| **10. UI Cleanliness & Whitespace** | 🟢 **Ultra-Clean & Airy.** Generous padding, subtle typography, non-intrusive aesthetic. | 🟡 **Feature-Dense.** Excellent modern UI, but slightly heavier visual density in the header and matrix. | **Competitor** *(Minor Edge)* | Competitor feels slightly more relaxed on initial glance due to having fewer features and smaller font weights. |
 
 ---
 
 ## 3. Deep-Dive Section Analysis: Page-by-Page Audit
 
 ### A. Top Navigation & Header Controls
-* **Nexus:**  
+* **Competitor:**  
   * Navigation bar: `Journal | Analytics | Stock Charts | Tax Analytics | Fund Management | Deep Analytics | Notes`.
   * Right: Countdown timer `Market opens tomorrow at 14h 28m 6s`, Theme toggle, Account settings.
   * Header: Simple `Analytics` heading + `CUSTOMIZE DASHBOARD` button.
@@ -58,7 +58,7 @@ As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and
 ---
 
 ### B. Portfolio Performance Hero Chart
-* **Nexus:**  
+* **Competitor:**  
   * Displays a smooth, green curve with a light gradient fill.
   * Centered title: `Portfolio Performance` with a `+7.67%` pill and `All time` text.
   * Left toggles: `VS` switch and `% | ₹` switch.
@@ -74,11 +74,11 @@ As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and
 
 ---
 
-### C. The Metrics Grid: Eliminating the Nexus Redundancy Bug
-* **The Glaring Flaw in Nexus:**  
-  If you open Nexus side-by-side:
-  * In **Column 1 ("Performance Metrics")**, Nexus lists: `TOTAL TRADES (14)`, `WIN RATE (71.43%)`, `AVG + MOVE (9.16%)`, `AVG - MOVE (3.52%)`, `AVG POSITION SIZE (13.19%)`, `AVG HOLDING DAYS (12.89)`, `PLAN FOLLOWED (0.00%)`, `AVG R (1.02)`, `OPEN POSITIONS (6)`, `CASH (64.56%)`.
-  * In **Column 2 ("Trade Statistics")**, Nexus lists: `WIN % (71.43%)`, `AVG GAIN (9.16%)`, `AVG LOSS (3.52%)`, `AVG POSITION SIZE (13.19%)`, `AVG HOLDING DAYS (12.89)`, `AVG R:R (1.02)`.
+### C. The Metrics Grid: Eliminating the Competitor Redundancy Bug
+* **The Glaring Flaw in Competitor:**  
+  If you open Competitor side-by-side:
+  * In **Column 1 ("Performance Metrics")**, Competitor lists: `TOTAL TRADES (14)`, `WIN RATE (71.43%)`, `AVG + MOVE (9.16%)`, `AVG - MOVE (3.52%)`, `AVG POSITION SIZE (13.19%)`, `AVG HOLDING DAYS (12.89)`, `PLAN FOLLOWED (0.00%)`, `AVG R (1.02)`, `OPEN POSITIONS (6)`, `CASH (64.56%)`.
+  * In **Column 2 ("Trade Statistics")**, Competitor lists: `WIN % (71.43%)`, `AVG GAIN (9.16%)`, `AVG LOSS (3.52%)`, `AVG POSITION SIZE (13.19%)`, `AVG HOLDING DAYS (12.89)`, `AVG R:R (1.02)`.
   * **5 out of 6 items in Column 2 are 100% identical duplicates of Column 1!** This is an enormous waste of prime screen real estate.
 * **FoxTrade's Solution:**  
   FoxTrade replaced this with the **Trading Edge & Expectancy Matrix**, categorized into 4 professional panels:
@@ -96,7 +96,7 @@ As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and
 ---
 
 ### D. Top Performers Leaderboard
-* **Nexus:**  
+* **Competitor:**  
   * Shows only **one** Highest R:R trade and **one** Lowest R:R trade.
   * No way to see the top 3, 5, or 10 trades.
   * No stock symbol aggregation.
@@ -112,7 +112,7 @@ As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and
 ---
 
 ### E. Indian Market Session & Timing Edge
-* **Nexus:** Completely absent.
+* **Competitor:** Completely absent.
 * **FoxTrade:**  
   * Divides the Indian trading day (09:15 to 15:30 IST) into:
     * **Opening Bell (09:15 – 10:30):** High volatility, breakout setups, ORB.
@@ -126,7 +126,7 @@ As an active Indian trader using Zerodha Kite and Dhan to trade NSE Equities and
 ---
 
 ### F. Stock Move % & R-Multiple Distribution Chart
-* **Nexus:**  
+* **Competitor:**  
   * Has a bottom card with "Stock Move %" and "Move | R-MULT" tabs.
   * However, in live production testing, the chart component frequently fails to render properly, scaling to a single point or showing an infinite pulse animation.
 * **FoxTrade:**  
@@ -156,7 +156,7 @@ To cement FoxTrade as the definitive, undisputed trading journal for Indian trad
 
 ### 3. Polish the Performance Curve (Sleek Nodes on Hover)
 * In `AnalyticsPage.jsx`, remove the persistent static dots on the curve (`dot={false}`) and keep `activeDot={{ r: 6, fill: '#10b981', stroke: 'var(--bg-card)', strokeWidth: 2 }}`.
-* This will give FoxTrade the exact ultra-premium, silky-smooth visual aesthetic of Nexus and TradingView, while maintaining all of FoxTrade's superior dual-axis features.
+* This will give FoxTrade the exact ultra-premium, silky-smooth visual aesthetic of Competitor and TradingView, while maintaining all of FoxTrade's superior dual-axis features.
 
 ### 4. Break-Even Win Rate & Edge Margin Indicator
 * In the **Expectancy & Win Edge** card, display:
@@ -174,7 +174,7 @@ To cement FoxTrade as the definitive, undisputed trading journal for Indian trad
 
 ## 5. Summary Conclusion
 
-| Dimension | Nexus Trading Journal | FoxTrade |
+| Dimension | Competitor Journal | FoxTrade |
 | :--- | :--- | :--- |
 | **Mathematical Depth** | 5/10 (Basic stats, duplicated) | **9.5/10 (Institutional Edge & Expectancy)** |
 | **Indian Market Suitability** | 4/10 (No STT/charges on analytics, no indices) | **9.5/10 (Net in bank, STT pill, 5 NSE indices)** |
@@ -184,4 +184,4 @@ To cement FoxTrade as the definitive, undisputed trading journal for Indian trad
 | **OVERALL SCORE** | **5.8 / 10** | **8.6 / 10** |
 
 **Final Verdict:**  
-FoxTrade is already significantly more capable, mathematically rigorous, and relevant to Indian traders than Nexus. By refining the curve visual styling (hiding static dots) and adding Indian Financial Year (FY) and Segment (Cash/F&O) filters, **FoxTrade will stand uncontested as India's finest trading journal.**
+FoxTrade is already significantly more capable, mathematically rigorous, and relevant to Indian traders than Competitor. By refining the curve visual styling (hiding static dots) and adding Indian Financial Year (FY) and Segment (Cash/F&O) filters, **FoxTrade will stand uncontested as India's finest trading journal.**

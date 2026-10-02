@@ -30,7 +30,9 @@ function formatDate(isoStr) {
   return `${day}-${month}-${year}`;
 }
 
-const csvPath = 'C:\\Users\\iMAC\\Downloads\\nexus-journal-cash.csv';
+const csvPath = fs.existsSync('C:\\Users\\iMAC\\Downloads\\foxtrade-journal-cash.csv')
+  ? 'C:\\Users\\iMAC\\Downloads\\foxtrade-journal-cash.csv'
+  : (fs.existsSync('C:\\Users\\iMAC\\Downloads\\journal-cash.csv') ? 'C:\\Users\\iMAC\\Downloads\\journal-cash.csv' : 'C:\\Users\\iMAC\\Downloads\\foxtrade-journal-cash.csv');
 const fileContent = fs.readFileSync(csvPath, 'utf8');
 const lines = fileContent.split(/\r?\n/).filter(l => l.trim().length > 0);
 const headers = parseCSVLine(lines[0]);
@@ -115,6 +117,6 @@ for (let i = 1; i < lines.length; i++) {
   });
 }
 
-const outputPath = path.join(__dirname, '..', 'src', 'data', 'nexusImportedTrades.json');
+const outputPath = path.join(__dirname, '..', 'src', 'data', 'foxtradeImportedTrades.json');
 fs.writeFileSync(outputPath, JSON.stringify(trades, null, 2));
 console.log('Successfully written', trades.length, 'trades to', outputPath);

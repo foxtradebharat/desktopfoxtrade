@@ -9,18 +9,39 @@ import {
 const GREEN  = '#16a34a';
 const YELLOW = '#d97706';
 const RED    = '#dc2626';
-const DARK   = '#111827';
-const MUTED  = '#6b7280';
-const BORDER = '#f0f0f2';
-const BG     = '#f9fafb';
 
-// ─── Verdict config map ────────────────────────────────────────────────────
-const VERDICT_CONFIG = {
-  'GO':          { color: GREEN,   bg: '#f0fdf4', border: '#bbf7d0', icon: CheckCircle,    label: '✅ GO' },
-  'REDUCE SIZE': { color: YELLOW,  bg: '#fffbeb', border: '#fde68a', icon: AlertTriangle,  label: '⚠️ REDUCE SIZE' },
-  'CAUTION':     { color: '#c2410c', bg: '#fff7ed', border: '#fed7aa', icon: AlertTriangle, label: '🟠 CAUTION' },
-  'AVOID':       { color: RED,     bg: '#fef2f2', border: '#fecaca', icon: XCircle,        label: '🚫 AVOID' },
-};
+function getVerdictConfig(isDark) {
+  return {
+    'GO': {
+      color: isDark ? '#4ade80' : GREEN,
+      bg: isDark ? 'rgba(22, 163, 74, 0.18)' : '#f0fdf4',
+      border: isDark ? 'rgba(34, 197, 94, 0.4)' : '#bbf7d0',
+      icon: CheckCircle,
+      label: '✅ GO'
+    },
+    'REDUCE SIZE': {
+      color: isDark ? '#fbbf24' : YELLOW,
+      bg: isDark ? 'rgba(217, 119, 6, 0.18)' : '#fffbeb',
+      border: isDark ? 'rgba(245, 158, 11, 0.4)' : '#fde68a',
+      icon: AlertTriangle,
+      label: '⚠️ REDUCE SIZE'
+    },
+    'CAUTION': {
+      color: isDark ? '#fb923c' : '#c2410c',
+      bg: isDark ? 'rgba(194, 65, 12, 0.18)' : '#fff7ed',
+      border: isDark ? 'rgba(234, 88, 12, 0.4)' : '#fed7aa',
+      icon: AlertTriangle,
+      label: '🟠 CAUTION'
+    },
+    'AVOID': {
+      color: isDark ? '#f87171' : RED,
+      bg: isDark ? 'rgba(220, 38, 38, 0.18)' : '#fef2f2',
+      border: isDark ? 'rgba(239, 68, 68, 0.4)' : '#fecaca',
+      icon: XCircle,
+      label: '🚫 AVOID'
+    },
+  };
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function fmt(n, decimals = 0) {
@@ -28,28 +49,28 @@ function fmt(n, decimals = 0) {
   return Number(n).toLocaleString('en-IN', { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
 }
 
-function StatRow({ label, value, color, sub }) {
+function StatRow({ label, value, color, sub, theme }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '7px 0', borderBottom: `1px solid ${BORDER}` }}>
-      <span style={{ fontSize: 12, color: MUTED, fontWeight: 500 }}>{label}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '7px 0', borderBottom: `1px solid ${theme.border}` }}>
+      <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 500 }}>{label}</span>
       <div style={{ textAlign: 'right' }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: color || DARK }}>{value}</span>
-        {sub && <div style={{ fontSize: 10.5, color: MUTED, marginTop: 1 }}>{sub}</div>}
+        <span style={{ fontSize: 13, fontWeight: 700, color: color || theme.textPrimary }}>{value}</span>
+        {sub && <div style={{ fontSize: 10.5, color: theme.textMuted, marginTop: 1 }}>{sub}</div>}
       </div>
     </div>
   );
 }
 
-function ScoreMeter({ score }) {
+function ScoreMeter({ score, theme }) {
   const pct = Math.max(0, Math.min(100, score));
   const color = pct >= 70 ? GREEN : pct >= 50 ? YELLOW : pct >= 35 ? '#c2410c' : RED;
   return (
     <div style={{ margin: '10px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 11, color: MUTED, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Risk Score</span>
+        <span style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Risk Score</span>
         <span style={{ fontSize: 14, fontWeight: 800, color }}>{Math.round(pct)}/100</span>
       </div>
-      <div style={{ height: 7, borderRadius: 4, background: '#e5e7eb', overflow: 'hidden' }}>
+      <div style={{ height: 7, borderRadius: 4, background: theme.meterTrack, overflow: 'hidden' }}>
         <div style={{
           height: '100%',
           width: `${pct}%`,
@@ -66,13 +87,61 @@ function ScoreMeter({ score }) {
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────
-export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfolioCapital = 0 }) {
+export default function FoxyPreTradePanel({
+  isOpen,
+  onClose,
+  trades = [],
+  portfolioCapital = 0,
+  themeMode,
+  isDark: propIsDark
+}) {
   const [form, setForm] = useState({
     symbol: '', entryPrice: '', slPrice: '', targetPrice: '', quantity: '', setupTag: '', riskMode: 'qty'
   });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState('');
+
+  // Theme resolution: props take priority, with reactive DOM/localStorage fallback
+  const isDark = propIsDark !== undefined
+    ? propIsDark
+    : (themeMode === 'dark' || themeMode === 'pitch-black' ||
+       (typeof document !== 'undefined' && (
+         document.documentElement.classList.contains('dark') ||
+         document.documentElement.getAttribute('data-theme') === 'dark' ||
+         document.documentElement.getAttribute('data-theme') === 'pitch-black'
+       )));
+  const isPitchBlack = themeMode === 'pitch-black' ||
+    (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'pitch-black');
+
+  const theme = {
+    bgPanel: isPitchBlack ? '#000000' : isDark ? '#1e293b' : '#ffffff',
+    bgSection: isPitchBlack ? '#0a0a0a' : isDark ? '#0f172a' : '#f9fafb',
+    bgInput: isPitchBlack ? '#0a0a0a' : isDark ? '#0f172a' : '#f9fafb',
+    border: isPitchBlack ? '#262626' : isDark ? '#334155' : '#f0f0f2',
+    borderInput: isPitchBlack ? '#333333' : isDark ? '#334155' : '#e5e7eb',
+    textPrimary: isPitchBlack ? '#ffffff' : isDark ? '#f8fafc' : '#111827',
+    textSecondary: isPitchBlack ? '#d4d4d4' : isDark ? '#cbd5e1' : '#374151',
+    textMuted: isPitchBlack ? '#a3a3a3' : isDark ? '#94a3b8' : '#6b7280',
+    bgHover: isPitchBlack ? '#171717' : isDark ? '#334155' : '#f3f4f6',
+    toggleActiveBg: isDark ? '#3b82f6' : '#111827',
+    toggleInactiveBg: isPitchBlack ? '#171717' : isDark ? '#334155' : '#f3f4f6',
+    toggleInactiveText: isPitchBlack ? '#a3a3a3' : isDark ? '#94a3b8' : '#6b7280',
+    meterTrack: isDark ? '#334155' : '#e5e7eb',
+  };
+
+  const inputStyle = {
+    width: '100%', padding: '7px 10px', borderRadius: 8, fontSize: 13,
+    border: `1px solid ${theme.borderInput}`, outline: 'none', background: theme.bgInput,
+    color: theme.textPrimary, fontFamily: 'inherit', boxSizing: 'border-box',
+    transition: 'border-color 0.15s ease',
+  };
+
+  const pillBtn = {
+    padding: '6px 12px', borderRadius: 20, border: 'none',
+    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    transition: 'all 0.15s ease', flexShrink: 0
+  };
 
   // Reset when opened
   useEffect(() => {
@@ -259,26 +328,27 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
           recommendations.push('This setup has a statistically poor edge — reconsider or paper trade it first');
         } else if (sWR < 45) {
           score -= 10;
-          keyRisks.push(`"${setupTag || 'Overall'}" setup win rate is ${sWR}% — below the 45% comfort threshold`);
+          keyRisks.push(`Setup "${setupTag || 'overall'}" has a mediocre win rate of ${sWR}% (${setupTrades.length} trades)`);
         }
-      } else if (setupTrades.length < 5) {
-        score -= 5;
-        keyRisks.push(`Insufficient data for "${setupTag || 'this'}" setup (only ${setupTrades.length} historical trades)`);
       }
 
-      score = Math.max(0, Math.round(score));
+      score = Math.max(0, Math.min(100, score));
 
-      const vLabel = score >= 70 ? 'GO' : score >= 50 ? 'REDUCE SIZE' : score >= 35 ? 'CAUTION' : 'AVOID';
+      let verdict;
+      if (score >= 70)      verdict = 'GO';
+      else if (score >= 50) verdict = 'REDUCE SIZE';
+      else if (score >= 35) verdict = 'CAUTION';
+      else                  verdict = 'AVOID';
 
       setResult({
         positionRisk: { capitalAtRisk, projectedRR, dollarRisk, positionValue, posAsPct, rec1pctQty, rec2pctQty, qty, entry, sl, tgt },
-        behavioral: { recentStreak: { type: streakType, count: curStreak }, revengeTradingRisk, revengePct, todayWR, todayDay: dayNames[currentDow], dayStats },
-        setupStats: { winRate: sWR, avgR, totalTrades: setupTrades.length, setupTag: setupTag || 'All Setups' },
-        concentration: { symbolAlreadyOpen, openPositionsCount: openTrades.length, totalOpenRisk },
-        verdict: { label: vLabel, score, keyRisks, recommendations, portfolioCapital: cap },
+        behavioral:   { recentStreak: { type: streakType, count: curStreak }, revengeTradingRisk, revengePct, todayWR, todayDay: dayNames[currentDow] },
+        setupStats:   { winRate: sWR, avgR, totalTrades: setupTrades.length, setupTag: tag || 'All setups' },
+        concentration:{ symbolAlreadyOpen, openPositionsCount: openTrades.length, totalOpenRisk },
+        verdict:      { verdict, score, keyRisks, recommendations }
       });
     } catch (e) {
-      setError('Screening error: ' + e.message);
+      setError(`Screening failed: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -286,7 +356,8 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
 
   if (!isOpen) return null;
 
-  const vc = result ? (VERDICT_CONFIG[result.verdict.label] || VERDICT_CONFIG['CAUTION']) : null;
+  const vcMap = getVerdictConfig(isDark);
+  const vc = result ? (vcMap[result.verdict.verdict] || vcMap['CAUTION']) : null;
 
   return (
     <>
@@ -294,25 +365,29 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
       <div
         onClick={onClose}
         style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.18)',
-          zIndex: 200, backdropFilter: 'blur(2px)'
+          position: 'fixed', inset: 0,
+          background: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.25)',
+          zIndex: 200, backdropFilter: 'blur(3px)'
         }}
       />
 
       {/* Panel */}
       <div style={{
         position: 'fixed', top: 0, right: 0, bottom: 0,
-        width: 420, background: '#ffffff',
-        boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
+        width: 420, maxWidth: '100vw',
+        background: theme.bgPanel,
+        borderLeft: `1px solid ${theme.border}`,
+        boxShadow: isDark ? '-8px 0 40px rgba(0,0,0,0.6)' : '-8px 0 40px rgba(0,0,0,0.12)',
         zIndex: 201, display: 'flex', flexDirection: 'column',
         fontFamily: 'Inter, system-ui, sans-serif',
-        overflowY: 'auto'
+        overflowY: 'auto',
+        color: theme.textPrimary
       }}>
         {/* Header */}
         <div style={{
-          padding: '18px 20px 14px', borderBottom: `1px solid ${BORDER}`,
+          padding: '18px 20px 14px', borderBottom: `1px solid ${theme.border}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          position: 'sticky', top: 0, background: '#ffffff', zIndex: 10
+          position: 'sticky', top: 0, background: theme.bgPanel, zIndex: 10
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
@@ -323,29 +398,36 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
               <ShieldAlert size={17} color="#fff" />
             </div>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: DARK, letterSpacing: '-0.2px' }}>Pre-Trade Screener</div>
-              <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>Institutional risk gatekeeper</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.2px' }}>Pre-Trade Screener</div>
+              <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 1 }}>Institutional risk gatekeeper</div>
             </div>
           </div>
-          <button onClick={onClose} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: MUTED, padding: 4, borderRadius: 6,
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
+          <button
+            onClick={onClose}
+            aria-label="Close Pre-Trade Screener"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: theme.textMuted, padding: 6, borderRadius: 6,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'background-color 0.15s ease'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.bgHover}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          >
             <X size={18} />
           </button>
         </div>
 
         {/* Form */}
-        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${BORDER}` }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 12 }}>
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}` }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 12 }}>
             Trade Details
           </div>
 
           {/* Symbol + Setup */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
             <div>
-              <label style={{ fontSize: 11, color: MUTED, fontWeight: 500, display: 'block', marginBottom: 4 }}>Symbol</label>
+              <label style={{ fontSize: 11, color: theme.textMuted, fontWeight: 500, display: 'block', marginBottom: 4 }}>Symbol</label>
               <input
                 value={form.symbol}
                 onChange={e => handleChange('symbol', e.target.value.toUpperCase())}
@@ -354,7 +436,7 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
               />
             </div>
             <div>
-              <label style={{ fontSize: 11, color: MUTED, fontWeight: 500, display: 'block', marginBottom: 4 }}>Setup Tag</label>
+              <label style={{ fontSize: 11, color: theme.textMuted, fontWeight: 500, display: 'block', marginBottom: 4 }}>Setup Tag</label>
               <input
                 value={form.setupTag}
                 onChange={e => handleChange('setupTag', e.target.value)}
@@ -368,7 +450,7 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
             {[['Entry ₹', 'entryPrice', '182'], ['SL ₹', 'slPrice', '174'], ['Target ₹', 'targetPrice', '210']].map(([label, field, ph]) => (
               <div key={field}>
-                <label style={{ fontSize: 11, color: MUTED, fontWeight: 500, display: 'block', marginBottom: 4 }}>{label}</label>
+                <label style={{ fontSize: 11, color: theme.textMuted, fontWeight: 500, display: 'block', marginBottom: 4 }}>{label}</label>
                 <input
                   type="number"
                   value={form[field]}
@@ -384,11 +466,19 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             <button
               onClick={() => handleChange('riskMode', 'qty')}
-              style={{ ...pillBtn, background: form.riskMode === 'qty' ? DARK : '#f3f4f6', color: form.riskMode === 'qty' ? '#fff' : MUTED }}
+              style={{
+                ...pillBtn,
+                background: form.riskMode === 'qty' ? theme.toggleActiveBg : theme.toggleInactiveBg,
+                color: form.riskMode === 'qty' ? '#fff' : theme.toggleInactiveText
+              }}
             >Qty</button>
             <button
               onClick={() => handleChange('riskMode', 'pct')}
-              style={{ ...pillBtn, background: form.riskMode === 'pct' ? DARK : '#f3f4f6', color: form.riskMode === 'pct' ? '#fff' : MUTED }}
+              style={{
+                ...pillBtn,
+                background: form.riskMode === 'pct' ? theme.toggleActiveBg : theme.toggleInactiveBg,
+                color: form.riskMode === 'pct' ? '#fff' : theme.toggleInactiveText
+              }}
             >% Risk</button>
             <input
               type="number"
@@ -400,13 +490,29 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
           </div>
 
           {portfolioCapital === 0 && (
-            <div style={{ fontSize: 11, color: YELLOW, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }}>
+            <div style={{
+              fontSize: 11,
+              color: isDark ? '#fbbf24' : YELLOW,
+              background: isDark ? 'rgba(217, 119, 6, 0.15)' : '#fffbeb',
+              border: `1px solid ${isDark ? 'rgba(245, 158, 11, 0.35)' : '#fde68a'}`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              marginBottom: 8
+            }}>
               ⚠️ No portfolio capital detected. Calculations will use ₹5L default. Set capital in Fund Management.
             </div>
           )}
 
           {error && (
-            <div style={{ fontSize: 12, color: RED, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }}>
+            <div style={{
+              fontSize: 12,
+              color: isDark ? '#f87171' : RED,
+              background: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fef2f2',
+              border: `1px solid ${isDark ? 'rgba(239, 68, 68, 0.35)' : '#fecaca'}`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              marginBottom: 8
+            }}>
               {error}
             </div>
           )}
@@ -416,7 +522,7 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
             disabled={loading}
             style={{
               width: '100%', padding: '10px', borderRadius: 12, border: 'none',
-              background: loading ? '#e5e7eb' : 'linear-gradient(135deg, #1d4ed8, #2563eb)',
+              background: loading ? (isDark ? '#334155' : '#e5e7eb') : 'linear-gradient(135deg, #1d4ed8, #2563eb)',
               color: '#fff', fontWeight: 700, fontSize: 13.5, cursor: loading ? 'default' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               transition: 'all 0.15s ease', letterSpacing: '-0.1px'
@@ -442,97 +548,117 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
                 <span style={{ fontSize: 18, fontWeight: 900, color: vc.color, letterSpacing: '-0.5px' }}>
                   {vc.label}
                 </span>
-                <span style={{ fontSize: 11, color: vc.color, fontWeight: 600, background: vc.border, padding: '2px 8px', borderRadius: 20 }}>
+                <span style={{
+                  fontSize: 11,
+                  color: vc.color,
+                  fontWeight: 600,
+                  background: isDark ? 'rgba(0,0,0,0.3)' : vc.border,
+                  padding: '2px 8px',
+                  borderRadius: 20
+                }}>
                   Confidence {result.verdict.score}/100
                 </span>
               </div>
-              <ScoreMeter score={result.verdict.score} />
+              <ScoreMeter score={result.verdict.score} theme={theme} />
             </div>
 
             {/* Position Risk Summary */}
-            <Section title="Position Risk" icon={DollarSign}>
+            <Section title="Position Risk" icon={DollarSign} theme={theme}>
               <StatRow label="Capital at Risk"
                 value={`${result.positionRisk.capitalAtRisk.toFixed(2)}%`}
                 color={result.positionRisk.capitalAtRisk > 2.5 ? RED : result.positionRisk.capitalAtRisk > 1.5 ? YELLOW : GREEN}
                 sub={`₹${fmt(result.positionRisk.dollarRisk)} max loss`}
+                theme={theme}
               />
               <StatRow label="Risk:Reward Ratio"
                 value={`1 : ${result.positionRisk.projectedRR.toFixed(2)}`}
                 color={result.positionRisk.projectedRR >= 2 ? GREEN : result.positionRisk.projectedRR >= 1.5 ? YELLOW : RED}
+                theme={theme}
               />
               <StatRow label="Position Size"
                 value={`${fmt(result.positionRisk.qty)} shares`}
                 sub={`₹${fmt(result.positionRisk.positionValue)} (${result.positionRisk.posAsPct.toFixed(1)}% of portfolio)`}
+                theme={theme}
               />
               <StatRow label="Recommended (1% Risk)"
                 value={`${fmt(result.positionRisk.rec1pctQty)} shares`}
                 color={GREEN}
                 sub={`₹${fmt(portfolioCapital * 0.01 || 5000)} max risk`}
+                theme={theme}
               />
               <StatRow label="Recommended (2% Risk)"
                 value={`${fmt(result.positionRisk.rec2pctQty)} shares`}
                 color={YELLOW}
                 sub={`₹${fmt(portfolioCapital * 0.02 || 10000)} max risk`}
+                theme={theme}
               />
             </Section>
 
             {/* Behavioral State */}
-            <Section title="Your Behavioral State" icon={Activity}>
+            <Section title="Your Behavioral State" icon={Activity} theme={theme}>
               <StatRow label="Recent Streak"
                 value={result.behavioral.recentStreak.type ? `${result.behavioral.recentStreak.count} ${result.behavioral.recentStreak.type}S` : '—'}
                 color={result.behavioral.recentStreak.type === 'LOSS' ? RED : GREEN}
+                theme={theme}
               />
               <StatRow label="Revenge Trading Risk"
                 value={result.behavioral.revengeTradingRisk}
                 color={result.behavioral.revengeTradingRisk === 'HIGH' ? RED : result.behavioral.revengeTradingRisk === 'MEDIUM' ? YELLOW : GREEN}
                 sub={`${Math.round(result.behavioral.revengePct)}% of post-loss trades were hasty`}
+                theme={theme}
               />
               <StatRow label={`Win Rate on ${result.behavioral.todayDay}s`}
                 value={result.behavioral.todayWR !== null ? `${result.behavioral.todayWR}%` : 'Insufficient data'}
-                color={result.behavioral.todayWR !== null ? (result.behavioral.todayWR >= 50 ? GREEN : result.behavioral.todayWR >= 40 ? YELLOW : RED) : MUTED}
+                color={result.behavioral.todayWR !== null ? (result.behavioral.todayWR >= 50 ? GREEN : result.behavioral.todayWR >= 40 ? YELLOW : RED) : theme.textMuted}
+                theme={theme}
               />
             </Section>
 
             {/* Setup Stats */}
-            <Section title={`Setup: "${result.setupStats.setupTag}"`} icon={BarChart2}>
+            <Section title={`Setup: "${result.setupStats.setupTag}"`} icon={BarChart2} theme={theme}>
               <StatRow label="Historical Win Rate"
                 value={result.setupStats.winRate !== null ? `${result.setupStats.winRate}%` : 'No data'}
-                color={result.setupStats.winRate !== null ? (result.setupStats.winRate >= 50 ? GREEN : result.setupStats.winRate >= 40 ? YELLOW : RED) : MUTED}
+                color={result.setupStats.winRate !== null ? (result.setupStats.winRate >= 50 ? GREEN : result.setupStats.winRate >= 40 ? YELLOW : RED) : theme.textMuted}
                 sub={`${result.setupStats.totalTrades} trades in journal`}
+                theme={theme}
               />
               <StatRow label="Avg R-Multiple"
                 value={result.setupStats.avgR !== null ? `${result.setupStats.avgR >= 0 ? '+' : ''}${result.setupStats.avgR.toFixed(2)}R` : '—'}
-                color={result.setupStats.avgR !== null ? (result.setupStats.avgR >= 0.5 ? GREEN : result.setupStats.avgR >= 0 ? YELLOW : RED) : MUTED}
+                color={result.setupStats.avgR !== null ? (result.setupStats.avgR >= 0.5 ? GREEN : result.setupStats.avgR >= 0 ? YELLOW : RED) : theme.textMuted}
+                theme={theme}
               />
             </Section>
 
             {/* Concentration */}
-            <Section title="Portfolio Concentration" icon={Target}>
+            <Section title="Portfolio Concentration" icon={Target} theme={theme}>
               <StatRow label="Symbol Already Open"
                 value={result.concentration.symbolAlreadyOpen ? 'YES — Doubling Up' : 'No'}
                 color={result.concentration.symbolAlreadyOpen ? RED : GREEN}
+                theme={theme}
               />
               <StatRow label="Total Open Positions"
                 value={String(result.concentration.openPositionsCount)}
                 color={result.concentration.openPositionsCount >= 6 ? RED : result.concentration.openPositionsCount >= 4 ? YELLOW : GREEN}
+                theme={theme}
               />
               <StatRow label="Total Open Portfolio Risk"
                 value={`${Number(result.concentration.totalOpenRisk).toFixed(2)}%`}
                 color={result.concentration.totalOpenRisk > 8 ? RED : result.concentration.totalOpenRisk > 5 ? YELLOW : GREEN}
+                theme={theme}
               />
             </Section>
 
             {/* Key Risks */}
             {result.verdict.keyRisks.length > 0 && (
               <div style={{ marginBottom: 14 }}>
-                <SectionTitle title="Key Risks Identified" icon={AlertTriangle} />
+                <SectionTitle title="Key Risks Identified" icon={AlertTriangle} theme={theme} />
                 {result.verdict.keyRisks.map((risk, i) => (
                   <div key={i} style={{
                     display: 'flex', gap: 8, padding: '7px 0',
-                    borderBottom: i < result.verdict.keyRisks.length - 1 ? `1px solid ${BORDER}` : 'none'
+                    borderBottom: i < result.verdict.keyRisks.length - 1 ? `1px solid ${theme.border}` : 'none'
                   }}>
                     <div style={{ width: 5, borderRadius: 4, background: RED, flexShrink: 0, marginTop: 3 }} />
-                    <span style={{ fontSize: 12, color: '#374151', lineHeight: 1.5 }}>{risk}</span>
+                    <span style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.5 }}>{risk}</span>
                   </div>
                 ))}
               </div>
@@ -541,14 +667,14 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
             {/* Recommendations */}
             {result.verdict.recommendations.length > 0 && (
               <div style={{ marginBottom: 14 }}>
-                <SectionTitle title="Recommendations" icon={Zap} />
+                <SectionTitle title="Recommendations" icon={Zap} theme={theme} />
                 {result.verdict.recommendations.map((rec, i) => (
                   <div key={i} style={{
                     display: 'flex', gap: 8, padding: '7px 0',
-                    borderBottom: i < result.verdict.recommendations.length - 1 ? `1px solid ${BORDER}` : 'none'
+                    borderBottom: i < result.verdict.recommendations.length - 1 ? `1px solid ${theme.border}` : 'none'
                   }}>
                     <div style={{ width: 5, borderRadius: 4, background: GREEN, flexShrink: 0, marginTop: 3 }} />
-                    <span style={{ fontSize: 12, color: '#374151', lineHeight: 1.5 }}>{rec}</span>
+                    <span style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.5 }}>{rec}</span>
                   </div>
                 ))}
               </div>
@@ -562,39 +688,25 @@ export default function FoxyPreTradePanel({ isOpen, onClose, trades = [], portfo
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
-function SectionTitle({ title, icon: Icon }) {
+function SectionTitle({ title, icon: Icon, theme }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-      <Icon size={13} color={MUTED} />
-      <span style={{ fontSize: 11, fontWeight: 700, color: MUTED, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{title}</span>
+      <Icon size={13} color={theme.textMuted} />
+      <span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{title}</span>
     </div>
   );
 }
 
-function Section({ title, icon, children }) {
+function Section({ title, icon, children, theme }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <SectionTitle title={title} icon={icon} />
-      <div style={{ background: BG, borderRadius: 10, padding: '0 12px', border: `1px solid ${BORDER}` }}>
+      <SectionTitle title={title} icon={icon} theme={theme} />
+      <div style={{ background: theme.bgSection, borderRadius: 10, padding: '0 12px', border: `1px solid ${theme.border}` }}>
         {children}
       </div>
     </div>
   );
 }
-
-// ─── Styles ────────────────────────────────────────────────────────────────
-const inputStyle = {
-  width: '100%', padding: '7px 10px', borderRadius: 8, fontSize: 13,
-  border: `1px solid ${BORDER}`, outline: 'none', background: BG,
-  color: DARK, fontFamily: 'inherit', boxSizing: 'border-box',
-  transition: 'border-color 0.15s ease',
-};
-
-const pillBtn = {
-  padding: '6px 12px', borderRadius: 20, border: 'none',
-  fontSize: 12, fontWeight: 600, cursor: 'pointer',
-  transition: 'all 0.15s ease', flexShrink: 0
-};
 
 // ─── Date parser (inline, no import needed) ────────────────────────────────
 function parseDate(s) {

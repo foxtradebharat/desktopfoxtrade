@@ -29,25 +29,69 @@ import SymbolLogo from '../SymbolLogo';
 // ── Indian Benchmark Historical Proxies (FY 2026-2027) ───────────────────────
 const INDIAN_BENCHMARKS = [
   {
-    id: 'NIFTY 50',
+    id: 'NIFTY',
+    symbol: 'NIFTY',
     name: 'NIFTY 50',
-    startVal: 24200,
-    endVal: 25050,
-    annualReturn: 14.8
+    color: '#ef4444',
+    monthlyData: {
+      '2026-04': { indexValue: 24196.75, indexPercentage: 6.69, indexMonthlyReturn: 5.66 },
+      '2026-05': { indexValue: 23643.50, indexPercentage: 4.25, indexMonthlyReturn: -3.05 },
+      '2026-06': { indexValue: 23989.15, indexPercentage: 5.78, indexMonthlyReturn: 2.22 },
+      '2026-07': { indexValue: 24072.75, indexPercentage: 6.14, indexMonthlyReturn: 0.86 },
+      '2026-08': { indexValue: 24287.65, indexPercentage: 7.09, indexMonthlyReturn: -2.80 }
+    }
   },
   {
-    id: 'BANK NIFTY',
+    id: 'BANKNIFTY',
+    symbol: 'BANKNIFTY',
     name: 'BANK NIFTY',
-    startVal: 51200,
-    endVal: 53800,
-    annualReturn: 12.4
+    color: '#10b981',
+    monthlyData: {
+      '2026-04': { indexValue: 56086.40, indexPercentage: 9.01, indexMonthlyReturn: 6.43 },
+      '2026-05': { indexValue: 53710.35, indexPercentage: 4.40, indexMonthlyReturn: -2.25 },
+      '2026-06': { indexValue: 57297.15, indexPercentage: 11.37, indexMonthlyReturn: 8.04 },
+      '2026-07': { indexValue: 57582.25, indexPercentage: 11.92, indexMonthlyReturn: -1.32 },
+      '2026-08': { indexValue: 57497.80, indexPercentage: 11.76, indexMonthlyReturn: -0.38 }
+    }
   },
   {
-    id: 'NIFTY MIDCAP 150',
-    name: 'NIFTY MIDCAP',
-    startVal: 20400,
-    endVal: 22100,
-    annualReturn: 21.4
+    id: 'NIFMSC400',
+    symbol: 'NIFMSC400',
+    name: 'NIFTY MIDSMALLCAP 400',
+    color: '#8b5cf6',
+    monthlyData: {
+      '2026-04': { indexValue: 19717.35, indexPercentage: 9.69, indexMonthlyReturn: 11.93 },
+      '2026-05': { indexValue: 20217.55, indexPercentage: 12.47, indexMonthlyReturn: 0.25 },
+      '2026-06': { indexValue: 20728.75, indexPercentage: 15.32, indexMonthlyReturn: 3.24 },
+      '2026-07': { indexValue: 21262.80, indexPercentage: 18.29, indexMonthlyReturn: 0.46 },
+      '2026-08': { indexValue: 21584.00, indexPercentage: 20.07, indexMonthlyReturn: 0.72 }
+    }
+  },
+  {
+    id: 'CNXSCAP',
+    symbol: 'CNXSCAP',
+    name: 'NIFTY SMALLCAP 100',
+    color: '#f59e0b',
+    monthlyData: {
+      '2026-04': { indexValue: 17308.85, indexPercentage: 10.18, indexMonthlyReturn: 15.06 },
+      '2026-05': { indexValue: 17882.60, indexPercentage: 13.83, indexMonthlyReturn: -0.84 },
+      '2026-06': { indexValue: 18477.75, indexPercentage: 17.62, indexMonthlyReturn: 4.87 },
+      '2026-07': { indexValue: 19336.25, indexPercentage: 23.08, indexMonthlyReturn: 0.90 },
+      '2026-08': { indexValue: 19809.25, indexPercentage: 26.09, indexMonthlyReturn: 1.75 }
+    }
+  },
+  {
+    id: 'CNX500',
+    symbol: 'CNX500',
+    name: 'NIFTY 500',
+    color: '#3b82f6',
+    monthlyData: {
+      '2026-04': { indexValue: 22656.30, indexPercentage: 8.22, indexMonthlyReturn: 8.33 },
+      '2026-05': { indexValue: 22531.15, indexPercentage: 7.62, indexMonthlyReturn: -1.72 },
+      '2026-06': { indexValue: 22997.25, indexPercentage: 9.85, indexMonthlyReturn: 2.62 },
+      '2026-07': { indexValue: 23232.65, indexPercentage: 10.97, indexMonthlyReturn: 0.84 },
+      '2026-08': { indexValue: 23564.45, indexPercentage: 12.56, indexMonthlyReturn: -1.48 }
+    }
   }
 ];
 
@@ -70,16 +114,83 @@ function parseTradeDate(dStr) {
   if (!dStr) return null;
   if (dStr instanceof Date && !isNaN(dStr)) return dStr;
   const s = String(dStr).trim();
-  if (s.includes('-')) {
-    const parts = s.split('-');
-    if (parts[0].length === 4) return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-    return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+  const isoMatch = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(s);
+  if (isoMatch) {
+    return new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
   }
-  if (s.includes('/')) {
-    const parts = s.split('/');
-    if (parts[2].length === 4) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+  const dmyMatch = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(s);
+  if (dmyMatch) {
+    return new Date(parseInt(dmyMatch[3], 10), parseInt(dmyMatch[2], 10) - 1, parseInt(dmyMatch[1], 10));
   }
-  return new Date(s);
+  const dt = new Date(s);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatDateDMY(dStr) {
+  const d = parseTradeDate(dStr);
+  if (!d) return String(dStr || '');
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+function getClosedWeightedHoldingDays(t, costBasis = 'lifo') {
+  const entries = [];
+  if (Number(t.entry || t.avgEntry || 0) > 0 && Number(t.initialQty || t.qty || 0) > 0) {
+    entries.push({ price: Number(t.entry || t.avgEntry), qty: Number(t.initialQty || t.qty), date: t.date });
+  }
+  if (Number(t.p1Price || 0) > 0 && Number(t.p1Qty || 0) > 0) {
+    entries.push({ price: Number(t.p1Price), qty: Number(t.p1Qty), date: t.p1Date || t.date });
+  }
+  if (Number(t.p2Price || 0) > 0 && Number(t.p2Qty || 0) > 0) {
+    entries.push({ price: Number(t.p2Price), qty: Number(t.p2Qty), date: t.p2Date || t.date });
+  }
+
+  const exits = [];
+  if (Number(t.e1Price || 0) > 0 && Number(t.e1Qty || 0) > 0) {
+    exits.push({ price: Number(t.e1Price), qty: Number(t.e1Qty), date: t.e1Date || t.exitDate || t.date });
+  }
+  if (Number(t.e2Price || 0) > 0 && Number(t.e2Qty || 0) > 0) {
+    exits.push({ price: Number(t.e2Price), qty: Number(t.e2Qty), date: t.e2Date || t.exitDate || t.date });
+  }
+  if (Number(t.e3Price || 0) > 0 && Number(t.e3Qty || 0) > 0) {
+    exits.push({ price: Number(t.e3Price), qty: Number(t.e3Qty), date: t.e3Date || t.exitDate || t.date });
+  }
+
+  if (exits.length === 0) {
+    const st = String(t.positionStatus || t.status || '').toLowerCase();
+    if (st === 'closed') {
+      return Number(t.holdingDays || 0);
+    }
+    return 0;
+  }
+
+  const msPerDay = 864e5;
+  const remEntries = entries.map(e => ({ ...e, rem: e.qty, ms: parseTradeDate(e.date)?.getTime() || 0 }));
+  const remExits = exits.map(x => ({ ...x, rem: x.qty, ms: parseTradeDate(x.date)?.getTime() || 0 }));
+  let totalExited = 0;
+  let totalWeightedDays = 0;
+
+  for (const ex of remExits) {
+    while (ex.rem > 0) {
+      let candIdx = -1;
+      if (costBasis === 'fifo') {
+        candIdx = remEntries.findIndex(e => e.rem > 0);
+      } else {
+        for (let i = remEntries.length - 1; i >= 0; i--) {
+          if (remEntries[i].rem > 0) { candIdx = i; break; }
+        }
+      }
+      if (candIdx === -1) break;
+      const en = remEntries[candIdx];
+      const matchQty = Math.min(en.rem, ex.rem);
+      const days = Math.max(0, Math.floor((ex.ms - en.ms) / msPerDay));
+      totalWeightedDays += days * matchQty;
+      totalExited += matchQty;
+      en.rem -= matchQty;
+      ex.rem -= matchQty;
+    }
+  }
+
+  return totalExited > 0 ? Math.round(totalWeightedDays / totalExited) : 0;
 }
 
 function formatExactINR(val) {
@@ -88,7 +199,7 @@ function formatExactINR(val) {
   return sign + Math.abs(n).toLocaleString('en-IN');
 }
 
-function CustomNexusHeroTooltip({ active, payload, label, metricUnit = 'percent', perfTab = 'Growth', baseCapital = 0 }) {
+function CustomFoxHeroTooltip({ active, payload, label, metricUnit = 'percent', perfTab = 'Growth', baseCapital = 0, isVsEnabled = false, activeBenchmark = null }) {
   if (!active || !payload || !payload.length) return null;
   const d = payload[0].payload || {};
 
@@ -97,6 +208,7 @@ function CustomNexusHeroTooltip({ active, payload, label, metricUnit = 'percent'
   const plVal = Number(d.pl !== undefined ? d.pl : (d.pnl !== undefined ? d.pnl : 0));
   const startingCap = Number(d.startingCapital || baseCapital || 0);
   const movers = d.topMoversByImpact || [];
+  const benchName = activeBenchmark?.name || 'Benchmark';
 
   return (
     <div style={{
@@ -115,39 +227,91 @@ function CustomNexusHeroTooltip({ active, payload, label, metricUnit = 'percent'
         {displayTitle}
       </div>
 
-      {/* Metrics Section matching Nexus exact labels & colors */}
+      {/* Metrics Section */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-          <span style={{ color: 'var(--text-muted, #71717a)' }}>{metricUnit === 'rupee' ? 'Monthly P&L:' : 'P&L Percentage:'}</span>
-          <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
-            {metricUnit === 'rupee' ? formatExactINR(plVal) : `${pct.toFixed(2)}%`}
-          </span>
-        </div>
+        {isVsEnabled && perfTab === 'Growth' ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>Portfolio Capital:</span>
+              <span style={{ fontWeight: 500, color: '#2563eb' }}>
+                {formatExactINR(d.capital)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>{benchName}:</span>
+              <span style={{ fontWeight: 500, color: activeBenchmark?.color || '#ef4444' }}>
+                {Number(d.indexValue || d.benchmarkVal || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>Monthly P&L:</span>
+              <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                {formatExactINR(plVal)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>P&L Percentage:</span>
+              <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                {pct.toFixed(2)}%
+              </span>
+            </div>
+          </>
+        ) : isVsEnabled && perfTab === 'Monthly' ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>Net PF Returns:</span>
+              <span style={{ fontWeight: 500, color: '#3b82f6' }}>
+                {pct.toFixed(2)}%
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>{benchName}:</span>
+              <span style={{ fontWeight: 500, color: activeBenchmark?.color || '#ef4444' }}>
+                {Number(d.indexMonthlyReturn !== undefined ? d.indexMonthlyReturn : d.benchmarkMonthlyReturn || 0).toFixed(2)}%
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>Monthly P&L:</span>
+              <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                {formatExactINR(plVal)}
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>{metricUnit === 'rupee' ? 'Monthly P&L:' : 'P&L Percentage:'}</span>
+              <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                {metricUnit === 'rupee' ? formatExactINR(plVal) : `${pct.toFixed(2)}%`}
+              </span>
+            </div>
 
-        {metricUnit !== 'rupee' && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-            <span style={{ color: 'var(--text-muted, #71717a)' }}>{perfTab === 'Daily' ? 'Daily P&L:' : 'Monthly P&L:'}</span>
-            <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
-              {formatExactINR(plVal)}
-            </span>
-          </div>
+            {metricUnit !== 'rupee' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                <span style={{ color: 'var(--text-muted, #71717a)' }}>{perfTab === 'Daily' ? 'Daily P&L:' : 'Monthly P&L:'}</span>
+                <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                  {formatExactINR(plVal)}
+                </span>
+              </div>
+            )}
+
+            {metricUnit === 'rupee' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                <span style={{ color: 'var(--text-muted, #71717a)' }}>Monthly Return:</span>
+                <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                  {pct.toFixed(2)}%
+                </span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+              <span style={{ color: 'var(--text-muted, #71717a)' }}>Starting Capital:</span>
+              <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
+                {formatExactINR(startingCap)}
+              </span>
+            </div>
+          </>
         )}
-
-        {metricUnit === 'rupee' && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-            <span style={{ color: 'var(--text-muted, #71717a)' }}>Monthly Return:</span>
-            <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
-              {pct.toFixed(2)}%
-            </span>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
-          <span style={{ color: 'var(--text-muted, #71717a)' }}>Starting Capital:</span>
-          <span style={{ fontWeight: 500, color: 'var(--text-primary, #18181b)' }}>
-            {formatExactINR(startingCap)}
-          </span>
-        </div>
       </div>
 
       {/* Top Movers (PF Impact %) */}
@@ -188,13 +352,16 @@ export default function AnalyticsPage({
   portfolioCapital = 0,
   onOpenStockChart
 }) {
-  // ─── States matching Nexus ──────────────────────────────────────────────────
-  const [pnlMode, setPnlMode] = useState('net'); // 'net' | 'gross'
+  // ─── States ──────────────────────────────────────────────────
+  const [pnlMode, setPnlMode] = useState('gross'); // 'gross' | 'net' (defaults to gross)
   const [metricUnit, setMetricUnit] = useState('percent'); // 'percent' | 'rupee'
   const [perfTab, setPerfTab] = useState('Growth'); // 'Growth' | 'Monthly' | 'Equity' | 'Daily'
   const [isVsEnabled, setIsVsEnabled] = useState(false);
-  const [selectedBenchmark, setSelectedBenchmark] = useState('NIFTY 50');
-  const [performerMetric, setPerformerMetric] = useState('R:R'); // 'R:R' | 'Stock Move %' | 'P&L (₹)'
+  const [selectedBenchmark, setSelectedBenchmark] = useState('NIFTY');
+  const activeBenchmarkObj = useMemo(() => {
+    return INDIAN_BENCHMARKS.find(b => b.id === selectedBenchmark || b.symbol === selectedBenchmark || b.name === selectedBenchmark) || INDIAN_BENCHMARKS[0];
+  }, [selectedBenchmark]);
+  const [performerMetric, setPerformerMetric] = useState('R:R'); // 'R:R' | 'Stock Move' | 'Portfolio Impact' | 'P/L (₹)'
   const [isPerformerDropdownOpen, setIsPerformerDropdownOpen] = useState(false);
   
   // Stock Move % widget controls
@@ -203,6 +370,7 @@ export default function AnalyticsPage({
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [isCustomizeBtnHovered, setIsCustomizeBtnHovered] = useState(false);
   const customizeDropdownRef = useRef(null);
+  const [activeStatPopover, setActiveStatPopover] = useState(null);
 
   const [visibleSections, setVisibleSections] = useState(() => {
     try {
@@ -292,11 +460,81 @@ export default function AnalyticsPage({
     return 0;
   }, [portfolioCapital, capitalTick]);
 
+function getTradeActualCloseDateStr(t) {
+  if (!t) return '';
+  if (Number(t.e4Qty || 0) > 0 && (t.e4Date || t.exit4Date)) return t.e4Date || t.exit4Date;
+  if (Number(t.e3Qty || 0) > 0 && (t.e3Date || t.exit3Date)) return t.e3Date || t.exit3Date;
+  if (Number(t.e2Qty || 0) > 0 && (t.e2Date || t.exit2Date)) return t.e2Date || t.exit2Date;
+  if (Number(t.e1Qty || 0) > 0 && (t.e1Date || t.exit1Date)) return t.e1Date || t.exit1Date;
+  return t.exitDate || t.date || '';
+}
+
   // ─── Indian STT & Net Charges Enrichment ───────────────────────────────────
   const enrichedTrades = useMemo(() => {
-    return (trades || [])
-      .filter(t => t && (t.name || t.symbol || '').trim())
-      .map(t => {
+    const valid = (trades || []).filter(t => t && (t.name || t.symbol || '').trim());
+
+    // Group closed trade proceeds by exit month to build monthly starting capital rollover
+    const monthlyExitPlMap = {};
+    valid.forEach(t => {
+      const isClosedOrPartial = t.status === 'Closed' || t.status === 'Partial' || t.positionStatus === 'Closed' || t.positionStatus === 'Partial';
+      if (!isClosedOrPartial) return;
+
+      if (t.matches && Array.isArray(t.matches) && t.matches.length > 0) {
+        t.matches.forEach(m => {
+          const exitD = parseTradeDate(m.exitDate || m.exit?.date || t.date);
+          if (!exitD) return;
+          const key = `${exitD.getFullYear()}-${String(exitD.getMonth() + 1).padStart(2, '0')}`;
+          monthlyExitPlMap[key] = (monthlyExitPlMap[key] || 0) + (Number(m.pl) || 0);
+        });
+      } else {
+        const exitLegs = [
+          { date: t.e1Date || t.exit1Date, qty: Number(t.e1Qty || t.exit1Qty || 0), price: Number(t.e1Price || t.exit1Price || 0) },
+          { date: t.e2Date || t.exit2Date, qty: Number(t.e2Qty || t.exit2Qty || 0), price: Number(t.e2Price || t.exit2Price || 0) },
+          { date: t.e3Date || t.exit3Date, qty: Number(t.e3Qty || t.exit3Qty || 0), price: Number(t.e3Price || t.exit3Price || 0) },
+          { date: t.e4Date || t.exit4Date, qty: Number(t.e4Qty || t.exit4Qty || 0), price: Number(t.e4Price || t.exit4Price || 0) }
+        ].filter(l => l.date && l.qty > 0 && l.price > 0);
+
+        const avgEntry = Number(t.avgEntry || t.entry || 0);
+        const totalLegQty = exitLegs.reduce((acc, l) => acc + l.qty, 0);
+
+        if (exitLegs.length > 1 && totalLegQty > 0 && avgEntry > 0) {
+          exitLegs.forEach(leg => {
+            const pDate = parseTradeDate(leg.date);
+            if (!pDate) return;
+            const key = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+            const legPl = (leg.price - avgEntry) * leg.qty;
+            monthlyExitPlMap[key] = (monthlyExitPlMap[key] || 0) + legPl;
+          });
+        } else {
+          const closeDateStr = getTradeActualCloseDateStr(t);
+          const pClose = parseTradeDate(closeDateStr) || parseTradeDate(t.date);
+          if (!pClose) return;
+          const key = `${pClose.getFullYear()}-${String(pClose.getMonth() + 1).padStart(2, '0')}`;
+          const rawPnl = Number(t.pl !== undefined ? t.pl : (t.grossPnl !== undefined ? t.grossPnl : t.pnl || 0));
+          monthlyExitPlMap[key] = (monthlyExitPlMap[key] || 0) + rawPnl;
+        }
+      }
+    });
+
+    const sortedMonthKeys = Object.keys(monthlyExitPlMap).sort();
+    const monthlyStartCapMap = {};
+    let rollingCap = baseCapital > 0 ? baseCapital : 200000;
+    sortedMonthKeys.forEach(mKey => {
+      monthlyStartCapMap[mKey] = rollingCap;
+      rollingCap += monthlyExitPlMap[mKey];
+    });
+
+    const getCapAtDate = (entryDate) => {
+      if (!entryDate) return baseCapital > 0 ? baseCapital : 200000;
+      const key = `${entryDate.getFullYear()}-${String(entryDate.getMonth() + 1).padStart(2, '0')}`;
+      if (monthlyStartCapMap[key]) return monthlyStartCapMap[key];
+      if (sortedMonthKeys.length > 0 && key < sortedMonthKeys[0]) {
+        return baseCapital > 0 ? baseCapital : 200000;
+      }
+      return rollingCap;
+    };
+
+    return valid.map(t => {
       const rawPnl = t.pnl !== undefined ? Number(t.pnl) : (t.pl !== undefined ? Number(t.pl) : (t.grossPnl !== undefined ? Number(t.grossPnl) : 0));
       let grossPnl = rawPnl;
       let netPnl = grossPnl;
@@ -337,25 +575,54 @@ export default function AnalyticsPage({
       }
 
       const parsedDate = parseTradeDate(t.date);
-      const closeDateStr = t.exitDate || t.e3Date || t.exit3Date || t.e2Date || t.exit2Date || t.e1Date || t.exit1Date || t.date;
+      const closeDateStr = getTradeActualCloseDateStr(t);
       const parsedCloseDate = parseTradeDate(closeDateStr) || parsedDate;
       const stockMove = Number(t.stockMove !== undefined ? t.stockMove : t.stockMovePct || 0);
       
-      const rawRR = (t.rewardRisk !== undefined && t.rewardRisk !== null && t.rewardRisk !== '')
-        ? Number(t.rewardRisk)
-        : ((t.rr !== undefined && t.rr !== null && t.rr !== '') ? Number(t.rr) : (grossPnl >= 0 ? 1.5 : -1));
+      const rawRR = (t.weightedRR !== undefined && t.weightedRR !== null && !isNaN(Number(t.weightedRR)))
+        ? Number(t.weightedRR)
+        : ((t.rewardRisk !== undefined && t.rewardRisk !== null && t.rewardRisk !== '')
+          ? Number(t.rewardRisk)
+          : ((t.rr !== undefined && t.rr !== null && t.rr !== '') ? Number(t.rr) : (grossPnl >= 0 ? 1.5 : -1)));
       const rewardRisk = isNaN(rawRR) ? 0 : rawRR;
 
-      let holdingDays = 0;
-      if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(Number(t.holdingDays)) && Number(t.holdingDays) > 0) {
-        holdingDays = Number(t.holdingDays);
-      } else if (t.holdingPeriod !== undefined && !isNaN(Number(t.holdingPeriod)) && Number(t.holdingPeriod) > 0) {
-        holdingDays = Number(t.holdingPeriod);
-      } else if (parsedCloseDate && parsedDate && parsedCloseDate >= parsedDate) {
-        holdingDays = Math.max(0, Math.round((parsedCloseDate.getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const rawStatus = String(t.status || t.positionStatus || '').trim().toLowerCase();
+      let status = 'Open';
+      if (rawStatus === 'closed' || (Number(t.openQty || 0) === 0 && (Number(t.exitedQty || 0) > 0 || grossPnl !== 0))) {
+        status = 'Closed';
+      } else if (rawStatus === 'partial' || (Number(t.exitedQty || 0) > 0 && Number(t.openQty || 0) > 0)) {
+        status = 'Partial';
       }
 
-      const status = t.status || t.positionStatus || (t.exitedQty > 0 || grossPnl !== 0 ? 'Closed' : 'Open');
+      // Lot-weighted closed holding days
+      const closedWeightedDays = getClosedWeightedHoldingDays(t, 'lifo');
+      let holdingDays = closedWeightedDays;
+      if (status === 'Closed' && (!holdingDays || holdingDays <= 0)) {
+        if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(Number(t.holdingDays)) && Number(t.holdingDays) > 0) {
+          holdingDays = Number(t.holdingDays);
+        } else if (t.holdingPeriod !== undefined && !isNaN(Number(t.holdingPeriod)) && Number(t.holdingPeriod) > 0) {
+          holdingDays = Number(t.holdingPeriod);
+        } else if (parsedCloseDate && parsedDate && parsedCloseDate >= parsedDate) {
+          holdingDays = Math.max(0, Math.round((parsedCloseDate.getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24)));
+        }
+      }
+      if (status === 'Open') {
+        holdingDays = 0; // Open positions have no closed exit holding days
+      }
+
+      // Exact Allocation % matching dynamic running capital
+      let allocation = 0;
+      const capAtDate = getCapAtDate(parsedDate);
+      const posSize = Number(t.positionSize || ((Number(t.entry || t.avgEntry || 0)) * (Number(t.qty || t.initialQty || 1))));
+      if (capAtDate > 0 && posSize > 0) {
+        allocation = (posSize / capAtDate) * 100;
+      } else if (typeof t.allocation === 'number' && !isNaN(t.allocation) && t.allocation > 0) {
+        allocation = t.allocation;
+      } else if (typeof t.peakAllocation === 'number' && !isNaN(t.peakAllocation) && t.peakAllocation > 0) {
+        allocation = t.peakAllocation;
+      } else if (typeof t.totalCapitalAllocated === 'number' && !isNaN(t.totalCapitalAllocated) && t.totalCapitalAllocated > 0) {
+        allocation = (posSize / t.totalCapitalAllocated) * 100;
+      }
 
       return {
         ...t,
@@ -369,22 +636,23 @@ export default function AnalyticsPage({
         parsedCloseDate,
         stockMove,
         holdingDays,
+        allocation,
         rewardRisk: parseFloat(rewardRisk.toFixed(2))
       };
     });
-  }, [trades, pnlMode]);
+  }, [trades, pnlMode, baseCapital]);
 
   const totalIncurredCharges = useMemo(() => {
     return enrichedTrades.reduce((acc, t) => acc + (t.totalCharges || 0), 0);
   }, [enrichedTrades]);
 
-  // ─── 1. Portfolio Performance Chart Time Series (Nexus Exact) ──────────────
+  // ─── 1. Portfolio Performance Chart Time Series ──────────────
   const { performanceData, monthlyData, dailyData, headlineReturnPct, alphaVsBenchmark, heroHasTrades } = useMemo(() => {
     const closed = enrichedTrades
       .filter(t => (t.status === 'Closed' || t.status === 'Partial' || t.positionStatus === 'Closed') && t.parsedDate)
       .sort((a, b) => a.parsedDate - b.parsedDate);
 
-    const bObj = INDIAN_BENCHMARKS.find(b => b.id === selectedBenchmark) || INDIAN_BENCHMARKS[0];
+    const bObj = activeBenchmarkObj;
     const today = new Date();
 
     if (!closed.length) {
@@ -417,6 +685,7 @@ export default function AnalyticsPage({
         const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+        const bMonthData = bObj.monthlyData?.[key] || {};
         dummyMonthly.push({
           monthKey: key,
           date: label,
@@ -431,7 +700,12 @@ export default function AnalyticsPage({
           cummPf: 0,
           count: 0,
           topMoversByImpact: [],
-          benchmarkPct: 0
+          indexValue: bMonthData.indexValue || 0,
+          indexPercentage: bMonthData.indexPercentage || 0,
+          indexMonthlyReturn: bMonthData.indexMonthlyReturn || 0,
+          benchmarkVal: bMonthData.indexValue || 0,
+          benchmarkPct: bMonthData.indexPercentage || 0,
+          benchmarkMonthlyReturn: bMonthData.indexMonthlyReturn || 0
         });
       }
 
@@ -445,42 +719,58 @@ export default function AnalyticsPage({
       };
     }
 
-    // Monthly Data matching Nexus exact timeline & Top Movers calculation
+    // Monthly Data timeline & Top Movers calculation
     const monthMap = {};
     closed.forEach(t => {
-      const exitLegs = [
-        { date: t.e1Date || t.exit1Date, qty: Number(t.e1Qty || t.exit1Qty || 0), price: Number(t.e1Price || t.exit1Price || 0) },
-        { date: t.e2Date || t.exit2Date, qty: Number(t.e2Qty || t.exit2Qty || 0), price: Number(t.e2Price || t.exit2Price || 0) },
-        { date: t.e3Date || t.exit3Date, qty: Number(t.e3Qty || t.exit3Qty || 0), price: Number(t.e3Price || t.exit3Price || 0) }
-      ].filter(l => l.date && l.qty > 0 && l.price > 0);
-
-      const avgEntry = Number(t.avgEntry || t.entry || 0);
-      const totalLegQty = exitLegs.reduce((acc, l) => acc + l.qty, 0);
       const symbol = (t.symbol || t.name || 'Stock').toUpperCase().trim();
 
-      if (exitLegs.length > 1 && totalLegQty > 0 && avgEntry > 0) {
-        exitLegs.forEach(leg => {
-          const pDate = parseTradeDate(leg.date) || t.parsedCloseDate || t.parsedDate;
+      if (t.matches && Array.isArray(t.matches) && t.matches.length > 0) {
+        t.matches.forEach(m => {
+          const pDate = parseTradeDate(m.exitDate || m.exit?.date || t.date);
           if (!pDate) return;
           const key = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
           const label = pDate.toLocaleString('en-US', { month: 'short', year: 'numeric' });
           if (!monthMap[key]) monthMap[key] = { monthKey: key, date: label, month: label, pnl: 0, count: 0, symbolPlMap: {} };
-          const legPl = (leg.price - avgEntry) * leg.qty;
+          const legPl = Number(m.pl) || 0;
           monthMap[key].pnl += legPl;
           monthMap[key].count += 1;
           if (!monthMap[key].symbolPlMap[symbol]) monthMap[key].symbolPlMap[symbol] = 0;
           monthMap[key].symbolPlMap[symbol] += legPl;
         });
       } else {
-        const dateToUse = t.parsedCloseDate || t.parsedDate;
-        if (!dateToUse) return;
-        const key = `${dateToUse.getFullYear()}-${String(dateToUse.getMonth() + 1).padStart(2, '0')}`;
-        const label = dateToUse.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-        if (!monthMap[key]) monthMap[key] = { monthKey: key, date: label, month: label, pnl: 0, count: 0, symbolPlMap: {} };
-        monthMap[key].pnl += t.activePnl;
-        monthMap[key].count += 1;
-        if (!monthMap[key].symbolPlMap[symbol]) monthMap[key].symbolPlMap[symbol] = 0;
-        monthMap[key].symbolPlMap[symbol] += t.activePnl;
+        const exitLegs = [
+          { date: t.e1Date || t.exit1Date, qty: Number(t.e1Qty || t.exit1Qty || 0), price: Number(t.e1Price || t.exit1Price || 0) },
+          { date: t.e2Date || t.exit2Date, qty: Number(t.e2Qty || t.exit2Qty || 0), price: Number(t.e2Price || t.exit2Price || 0) },
+          { date: t.e3Date || t.exit3Date, qty: Number(t.e3Qty || t.exit3Qty || 0), price: Number(t.e3Price || t.exit3Price || 0) }
+        ].filter(l => l.date && l.qty > 0 && l.price > 0);
+
+        const avgEntry = Number(t.avgEntry || t.entry || 0);
+        const totalLegQty = exitLegs.reduce((acc, l) => acc + l.qty, 0);
+
+        if (exitLegs.length > 1 && totalLegQty > 0 && avgEntry > 0) {
+          exitLegs.forEach(leg => {
+            const pDate = parseTradeDate(leg.date) || t.parsedCloseDate || t.parsedDate;
+            if (!pDate) return;
+            const key = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+            const label = pDate.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+            if (!monthMap[key]) monthMap[key] = { monthKey: key, date: label, month: label, pnl: 0, count: 0, symbolPlMap: {} };
+            const legPl = (leg.price - avgEntry) * leg.qty;
+            monthMap[key].pnl += legPl;
+            monthMap[key].count += 1;
+            if (!monthMap[key].symbolPlMap[symbol]) monthMap[key].symbolPlMap[symbol] = 0;
+            monthMap[key].symbolPlMap[symbol] += legPl;
+          });
+        } else {
+          const dateToUse = t.parsedCloseDate || t.parsedDate;
+          if (!dateToUse) return;
+          const key = `${dateToUse.getFullYear()}-${String(dateToUse.getMonth() + 1).padStart(2, '0')}`;
+          const label = dateToUse.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+          if (!monthMap[key]) monthMap[key] = { monthKey: key, date: label, month: label, pnl: 0, count: 0, symbolPlMap: {} };
+          monthMap[key].pnl += t.activePnl;
+          monthMap[key].count += 1;
+          if (!monthMap[key].symbolPlMap[symbol]) monthMap[key].symbolPlMap[symbol] = 0;
+          monthMap[key].symbolPlMap[symbol] += t.activePnl;
+        }
       }
     });
 
@@ -494,9 +784,8 @@ export default function AnalyticsPage({
       }
     });
 
-    const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 4, 1);
-    const startRange = minTradeDate && minTradeDate < sixMonthsAgo ? minTradeDate : sixMonthsAgo;
-    const endRange = (maxTradeDate && maxTradeDate > today) ? maxTradeDate : today;
+    const startRange = minTradeDate || new Date(today.getFullYear(), today.getMonth() - 4, 1);
+    const endRange = maxTradeDate || today;
 
     const continuousMonthKeys = [];
     const curMonth = new Date(startRange.getFullYear(), startRange.getMonth(), 1);
@@ -536,9 +825,10 @@ export default function AnalyticsPage({
         .slice(0, 5);
 
       const cummReturnPct = effectiveBaseCapital > 0 ? ((runningCapital - effectiveBaseCapital) / effectiveBaseCapital) * 100 : 0;
-      const progress = sortedMonthKeys.length > 1 ? idx / (sortedMonthKeys.length - 1) : 0;
-      const benchmarkVal = Math.round(bObj.startVal + (bObj.endVal - bObj.startVal) * progress);
-      const benchmarkPct = bObj.startVal > 0 ? ((benchmarkVal - bObj.startVal) / bObj.startVal) * 100 : 0;
+      const bMonthData = bObj.monthlyData?.[k] || {};
+      const indexValue = bMonthData.indexValue || 0;
+      const indexPercentage = bMonthData.indexPercentage !== undefined ? bMonthData.indexPercentage : 0;
+      const indexMonthlyReturn = bMonthData.indexMonthlyReturn !== undefined ? bMonthData.indexMonthlyReturn : 0;
 
       return {
         monthKey: k,
@@ -554,8 +844,12 @@ export default function AnalyticsPage({
         cummPf: parseFloat(cummReturnPct.toFixed(2)),
         count,
         topMoversByImpact,
-        benchmarkVal,
-        benchmarkPct: parseFloat(benchmarkPct.toFixed(2))
+        indexValue,
+        indexPercentage,
+        indexMonthlyReturn,
+        benchmarkVal: indexValue,
+        benchmarkPct: parseFloat(indexPercentage.toFixed(2)),
+        benchmarkMonthlyReturn: parseFloat(indexMonthlyReturn.toFixed(2))
       };
     });
 
@@ -679,7 +973,7 @@ export default function AnalyticsPage({
     };
   }, [enrichedTrades, baseCapital, selectedBenchmark]);
 
-  // Dynamic Y-Axis scale & formatting matching Nexus exact Growth tab
+  // Dynamic Y-Axis scale & formatting for Growth tab
   const growthYAxisConfig = useMemo(() => {
     if (metricUnit === 'percent') {
       if (!heroHasTrades) {
@@ -725,126 +1019,195 @@ export default function AnalyticsPage({
     }
   }, [metricUnit, heroHasTrades, monthlyData]);
 
-  // ─── 2. Metric Calculations for Column 1 & 2 ───────────────────────────────
+  // ─── 2. Metric Calculations for Column 1 & 2 ─────────
   const metrics = useMemo(() => {
     const totalTradesCount = enrichedTrades.length;
-    const closed = enrichedTrades.filter(t => t.status === 'Closed' || t.status === 'Partial');
-    const open = enrichedTrades.filter(t => t.status === 'Open' || (Number(t.openQty || 0) > 0 && t.status !== 'Closed') || !t.status);
+    let wins = 0;
+    let losses = 0;
+    let sumPosMove = 0;
+    let countPosMove = 0;
+    let sumNegMove = 0;
+    let countNegMove = 0;
+    let sumAlloc = 0;
+    let countAlloc = 0;
+    let sumHoldingDays = 0;
+    let countHoldingDays = 0;
+    let sumR = 0;
+    let countR = 0;
+    let planFollowedCount = 0;
+    let totalPlanned = 0;
+    let openPositionsCount = 0;
+    let totalRealizedPnl = 0;
+    let totalWinPnl = 0;
+    let totalLossPnl = 0;
 
-    const closedCount = closed.length;
-    const wins = closed.filter(t => t.activePnl > 0);
-    const losses = closed.filter(t => t.activePnl < 0);
+    for (const t of enrichedTrades) {
+      const status = String(t.positionStatus || t.status || '').toLowerCase();
+      const isClosed = status === 'closed';
+      const isPartial = status === 'partial';
+      const isOpen = status === 'open';
 
-    const winCount = wins.length;
-    const lossCount = losses.length;
+      if (isOpen || isPartial) openPositionsCount++;
 
-    // Win Rate: In Nexus P/L Method, calculated on decided trades (where P/L != 0)
-    const decidedTrades = closed.filter(t => t.activePnl !== 0);
-    const winRate = decidedTrades.length > 0
-      ? (winCount / decidedTrades.length) * 100
-      : (closedCount > 0 ? (winCount / closedCount) * 100 : 0);
+      const pnl = Number(t.activePnl !== undefined ? t.activePnl : (t.pl !== undefined ? t.pl : (t.grossPnl || 0)));
+      if (isClosed || isPartial) {
+        totalRealizedPnl += pnl;
+        if (pnl > 0) totalWinPnl += pnl;
+        else if (pnl < 0) totalLossPnl += Math.abs(pnl);
+      }
 
-    const totalWinPnl = wins.reduce((acc, t) => acc + t.activePnl, 0);
-    const totalLossPnl = Math.abs(losses.reduce((acc, t) => acc + t.activePnl, 0));
-    const profitFactor = totalLossPnl > 0 ? totalWinPnl / totalLossPnl : totalWinPnl > 0 ? 99.9 : 0;
+      // Win Rate: calculates on decided Closed trades (P/L != 0)
+      if (isClosed) {
+        if (pnl > 0) wins++;
+        else if (pnl < 0) losses++;
+      }
 
-    const avgWinPnl = winCount > 0 ? totalWinPnl / winCount : 0;
-    const avgLossPnl = lossCount > 0 ? totalLossPnl / lossCount : 0;
+      // Average Positive & Negative Stock Moves (across all trades in journal)
+      const move = Number(t.stockMove !== undefined ? t.stockMove : (t.stockMovePct || 0));
+      if (move > 0) {
+        sumPosMove += move;
+        countPosMove++;
+      } else if (move < 0) {
+        sumNegMove += Math.abs(move);
+        countNegMove++;
+      }
 
-    const expectancy = closedCount > 0
+      // Average Position Size (% of Base Capital across all trades)
+      let alloc = Number(t.allocation || 0);
+      if (alloc <= 0) {
+        const posSize = Number(t.positionSize || ((Number(t.entry || t.avgEntry || 0)) * (Number(t.qty || t.initialQty || 1))));
+        alloc = baseCapital > 0 ? (posSize / baseCapital) * 100 : 0;
+      }
+      if (alloc > 0) {
+        sumAlloc += alloc;
+        countAlloc++;
+      }
+
+      // Average Holding Days: Lot-weighted closed days on trades with closed exits (> 0)
+      const hDays = Number(t.holdingDays || 0);
+      if (hDays > 0) {
+        sumHoldingDays += hDays;
+        countHoldingDays++;
+      }
+
+      // Average R:R across all trades in journal
+      const rr = typeof t.weightedRR === 'number' ? t.weightedRR : (typeof t.rewardRisk === 'number' ? t.rewardRisk : Number(t.rr || 0));
+      if (typeof rr === 'number' && !isNaN(rr)) {
+        sumR += rr;
+        countR++;
+      }
+
+      if (t.planFollowed !== undefined) {
+        totalPlanned++;
+        if (t.planFollowed === true || String(t.planFollowed).trim().toLowerCase() === 'yes' || String(t.planFollowed).trim().toLowerCase() === 'true') {
+          planFollowedCount++;
+        }
+      }
+    }
+
+    const decidedTradesCount = wins + losses;
+    const winRate = decidedTradesCount > 0 ? (wins / decidedTradesCount) * 100 : 0;
+    const avgWinMove = countPosMove > 0 ? sumPosMove / countPosMove : 0;
+    const avgLossMove = countNegMove > 0 ? sumNegMove / countNegMove : 0;
+    const avgPositionSize = countAlloc > 0 ? sumAlloc / countAlloc : 0;
+    const avgHoldingDays = countHoldingDays > 0 ? sumHoldingDays / countHoldingDays : 0;
+    const avgRR = countR > 0 ? sumR / countR : 0;
+    const planFollowedPct = totalPlanned > 0 ? (planFollowedCount / totalPlanned) * 100 : 100;
+
+    // Profit Factor & Expectancy
+    const profitFactor = totalLossPnl > 0 ? totalWinPnl / totalLossPnl : (totalWinPnl > 0 ? 99.9 : 0);
+    const avgWinPnl = wins > 0 ? totalWinPnl / wins : 0;
+    const avgLossPnl = losses > 0 ? totalLossPnl / losses : 0;
+    const expectancy = (wins + losses) > 0
       ? ((winRate / 100) * avgWinPnl) - (((100 - winRate) / 100) * avgLossPnl)
       : 0;
 
-    const avgWinMove = winCount > 0
-      ? wins.reduce((acc, t) => acc + Math.abs(t.stockMove || 0), 0) / winCount
-      : 0;
-
-    const avgLossMove = lossCount > 0
-      ? losses.reduce((acc, t) => acc + Math.abs(t.stockMove || 0), 0) / lossCount
-      : 0;
-
-    const avgHoldingDays = closedCount > 0
-      ? closed.reduce((acc, t) => acc + (Number(t.holdingDays || 0)), 0) / closedCount
-      : 0;
-
-    const avgAllocation = closedCount > 0
-      ? closed.reduce((acc, t) => {
-          const sz = Number(t.allocation || t.positionSizePct || 0);
-          if (sz > 0) return acc + sz;
-          const cap = (Number(t.avgEntry || t.entry || 0) * Number(t.qty || 1));
-          return acc + (baseCapital > 0 ? (cap / baseCapital) * 100 : 5);
-        }, 0) / closedCount
-      : 0;
-
-    const avgRR = closedCount > 0
-      ? closed.reduce((acc, t) => acc + (typeof t.rewardRisk === 'number' && !isNaN(t.rewardRisk) ? t.rewardRisk : (Number(t.rewardRisk) || 0)), 0) / closedCount
-      : 0;
-
-    const planFollowedTrades = closed.filter(t => t.planFollowed === true || String(t.planFollowed).toLowerCase() === 'yes' || t.isPlanned === true);
-    const planFollowedPct = closedCount > 0 ? (planFollowedTrades.length / closedCount) * 100 : 0;
-
-    // Cash %: 100% minus total capital invested in active open positions
-    const effectiveCap = baseCapital > 0 ? baseCapital : 100000;
-    const totalOpenInvestedPct = open.reduce((acc, t) => {
-      if (t.currentAllocation !== undefined && Number(t.currentAllocation) > 0) {
-        return acc + Number(t.currentAllocation);
-      }
-      const openQty = Number(t.openQty || t.qty || 0);
+    // Cash %: 100% minus total open invested capital as % of active capital
+    const activeCapital = (baseCapital > 0 ? baseCapital : 100000) + totalRealizedPnl;
+    const openTrades = enrichedTrades.filter(t => {
+      const s = String(t.positionStatus || t.status || '').toLowerCase();
+      return s === 'open' || s === 'partial';
+    });
+    const totalOpenInvested = openTrades.reduce((acc, t) => {
+      const openQty = Number(t.openQty || (String(t.status || t.positionStatus).toLowerCase() === 'open' ? t.qty : 0) || 0);
       const entryPrice = Number(t.avgEntry || t.entry || 0);
-      const openVal = openQty * entryPrice;
-      return acc + (effectiveCap > 0 ? (openVal / effectiveCap) * 100 : 0);
+      return acc + (openQty * entryPrice);
     }, 0);
-    const cashPct = Math.max(0, 100 - totalOpenInvestedPct);
+    const investedPct = activeCapital > 0 ? (totalOpenInvested / activeCapital) * 100 : 0;
+    const cashPct = Math.max(0, 100 - investedPct);
 
     return {
       totalTrades: totalTradesCount,
       winRate: winRate.toFixed(2) + '%',
       winRateRaw: winRate,
-      avgWinMove: '+' + avgWinMove.toFixed(2) + '%',
-      avgLossMove: '-' + avgLossMove.toFixed(2) + '%',
-      avgPositionSize: avgAllocation.toFixed(2) + '%',
+      avgWinMove: avgWinMove.toFixed(2) + '%',
+      avgLossMove: avgLossMove.toFixed(2) + '%',
+      avgPositionSize: avgPositionSize.toFixed(2) + '%',
       avgHoldingDays: avgHoldingDays.toFixed(2),
       planFollowed: planFollowedPct.toFixed(2) + '%',
-      avgR: avgRR.toFixed(2) + 'R',
-      openPositions: open.length,
+      avgR: avgRR.toFixed(2),
+      openPositions: openPositionsCount,
       cash: cashPct.toFixed(2) + '%',
-      profitFactor: closedCount === 0 ? '0.00×' : (profitFactor >= 99.9 ? '∞' : profitFactor.toFixed(2) + '×'),
+      profitFactor: (wins + losses) === 0 ? '0.00×' : (profitFactor >= 99.9 ? '∞' : profitFactor.toFixed(2) + '×'),
       expectancy: formatINR(expectancy),
-      avgGain: '+' + avgWinMove.toFixed(2) + '%',
-      avgLoss: '-' + avgLossMove.toFixed(2) + '%'
+      avgGain: avgWinMove.toFixed(2) + '%',
+      avgLoss: avgLossMove.toFixed(2) + '%'
     };
   }, [enrichedTrades, baseCapital]);
 
   // ─── 3. Top Performers (Highest & Lowest Extreme Cards) ────────────────────
   const { highestTrade, lowestTrade } = useMemo(() => {
-    const closed = enrichedTrades.filter(t => t.status === 'Closed' || t.status === 'Partial');
-    if (!closed.length) return { highestTrade: null, lowestTrade: null };
+    // Filters out purely open positions: e.positionStatus !== 'Open'
+    const eligible = enrichedTrades.filter(t => {
+      const s = String(t.positionStatus || t.status || '').toLowerCase();
+      return s === 'closed' || s === 'partial';
+    });
+    if (!eligible.length) return { highestTrade: null, lowestTrade: null, highVal: 0, lowVal: 0 };
 
-    let high = closed[0];
-    let low = closed[0];
+    const getVal = (t, metric) => {
+      switch (metric) {
+        case 'Stock Move':
+        case 'Stock Move %':
+          return Number(t.stockMove !== undefined ? t.stockMove : t.stockMovePct || 0);
+        case 'Portfolio Impact':
+          return (typeof t.pfImpact === 'number' && t.pfImpact !== 0)
+            ? t.pfImpact
+            : (baseCapital > 0 ? (Number(t.activePnl !== undefined ? t.activePnl : (t.grossPnl !== undefined ? t.grossPnl : (t.pl || 0))) / baseCapital) * 100 : 0);
+        case 'R:R':
+          return typeof t.weightedRR === 'number' ? t.weightedRR : (typeof t.rewardRisk === 'number' ? t.rewardRisk : Number(t.rr || 0));
+        case 'P/L (₹)':
+        default:
+          return Number(t.activePnl !== undefined ? t.activePnl : (t.grossPnl !== undefined ? t.grossPnl : t.pl || 0));
+      }
+    };
 
-    if (performerMetric === 'R:R') {
-      const sorted = [...closed].sort((a, b) => (b.rewardRisk || 0) - (a.rewardRisk || 0));
-      high = sorted[0];
-      low = sorted[sorted.length - 1];
-    } else if (performerMetric === 'Stock Move %') {
-      const sorted = [...closed].sort((a, b) => (b.stockMove || 0) - (a.stockMove || 0));
-      high = sorted[0];
-      low = sorted[sorted.length - 1];
-    } else {
-      const sorted = [...closed].sort((a, b) => (b.activePnl || 0) - (a.activePnl || 0));
-      high = sorted[0];
-      low = sorted[sorted.length - 1];
+    let high = eligible[0];
+    let low = eligible[0];
+    let highVal = getVal(high, performerMetric);
+    let lowVal = getVal(low, performerMetric);
+
+    for (let i = 1; i < eligible.length; i++) {
+      const cur = eligible[i];
+      const val = getVal(cur, performerMetric);
+      if (val > highVal) {
+        high = cur;
+        highVal = val;
+      }
+      if (val < lowVal) {
+        low = cur;
+        lowVal = val;
+      }
     }
 
-    return { highestTrade: high, lowestTrade: low };
-  }, [enrichedTrades, performerMetric]);
+    return { highestTrade: high, lowestTrade: low, highVal, lowVal };
+  }, [enrichedTrades, performerMetric, baseCapital]);
 
-  // ─── 4. Stock Move % Distribution Series (Nexus Exact Aggregation) ─────────
+  // ─── 4. Stock Move % Distribution Series ─────────
   const { stockMoveSeries, stockMoveHasTrades } = useMemo(() => {
     const validTrades = enrichedTrades.filter(t => 
-      (t.status === 'Closed' || t.status === 'Partial' || t.positionStatus === 'Closed' || (t.stockMove !== undefined && Math.abs(t.stockMove) > 0.001)) &&
-      (t.parsedCloseDate || t.parsedDate)
+      t && (t.name || t.symbol || '').trim() &&
+      (t.parsedDate || t.parsedCloseDate) &&
+      Math.abs(Number(t.stockMove !== undefined ? t.stockMove : (t.stockMovePct || 0))) > 0.001
     );
 
     if (!validTrades.length) {
@@ -922,7 +1285,7 @@ export default function AnalyticsPage({
     const groups = {};
 
     validTrades.forEach(t => {
-      const d = t.parsedCloseDate || t.parsedDate;
+      const d = t.parsedDate || t.parsedCloseDate;
       if (!d || isNaN(d.getTime())) return;
 
       let key = '';
@@ -1018,10 +1381,54 @@ export default function AnalyticsPage({
     return parseFloat((sum / stockMoveSeries.length).toFixed(2));
   }, [stockMoveSeries, stockMoveMetric, stockMoveHasTrades]);
 
+  const stockMoveYAxisConfig = useMemo(() => {
+    const isRMult = stockMoveMetric === 'R-MULT';
+    const values = (stockMoveSeries || []).map(s => isRMult ? Number(s.avgRMultiple || 0) : Number(s.avgStockMove || 0));
+
+    if (!values.length || !stockMoveHasTrades) {
+      return isRMult
+        ? { domain: [-1, 3], ticks: [-1, 0, 1, 2, 3] }
+        : { domain: [-4, 12], ticks: [-4, 0, 4, 8, 12] };
+    }
+
+    const minVal = Math.min(0, ...values);
+    const maxVal = Math.max(0, ...values);
+
+    if (isRMult) {
+      const range = Math.max(0.1, maxVal - minVal);
+      const roughStep = range / 4;
+      const steps = [0.25, 0.5, 1, 2, 5];
+      let step = steps.find(s => s >= roughStep) || 1;
+      if (step < 1 && (maxVal >= 2 || minVal <= -1)) step = 1;
+
+      const tickMin = Math.floor(minVal / step) * step;
+      const tickMax = Math.ceil(maxVal / step) * step;
+      const ticks = [];
+      for (let v = tickMin; v <= tickMax + 0.0001; v += step) {
+        ticks.push(Number(v.toFixed(2)));
+      }
+      return { domain: [tickMin, tickMax], ticks };
+    } else {
+      const range = Math.max(1, maxVal - minVal);
+      const roughStep = range / 4;
+      const steps = [1, 2, 4, 5, 10, 20, 25, 50];
+      let step = steps.find(s => s >= roughStep) || 4;
+      if (step < 4 && (maxVal >= 8 || minVal <= -4)) step = 4;
+
+      const tickMin = Math.floor(minVal / step) * step;
+      const tickMax = Math.ceil(maxVal / step) * step;
+      const ticks = [];
+      for (let v = tickMin; v <= tickMax + 0.0001; v += step) {
+        ticks.push(Number(v.toFixed(2)));
+      }
+      return { domain: [tickMin, tickMax], ticks };
+    }
+  }, [stockMoveSeries, stockMoveMetric, stockMoveHasTrades]);
+
   return (
     <main style={{ maxWidth: '1088px', margin: '0 auto', padding: '16px 27px 110px 27px', fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}>
       
-      {/* ── HEADER ROW (NEXUS-EXACT) ──────────────────────────────────────── */}
+      {/* ── HEADER ROW ──────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{
@@ -1152,7 +1559,7 @@ export default function AnalyticsPage({
         </div>
       </div>
 
-      {/* ── MAIN DASHBOARD GRID (NEXUS EXACT 3-COLUMN STRUCTURE) ──────────── */}
+      {/* ── MAIN DASHBOARD GRID (3-COLUMN STRUCTURE) ──────────── */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
@@ -1206,7 +1613,7 @@ export default function AnalyticsPage({
                     <span style={{ fontSize: '11px', color: '#a1a1aa', fontWeight: 400 }}>
                       All time
                     </span>
-                    {isVsEnabled && (
+                    {isVsEnabled && (perfTab === 'Growth' || perfTab === 'Monthly') && (
                       <span style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -1237,7 +1644,7 @@ export default function AnalyticsPage({
                       alignItems: 'center',
                       gap: '10px'
                     }}>
-                      {perfTab !== 'Daily' && (
+                      {(perfTab === 'Growth' || perfTab === 'Monthly') && (
                         <>
                           <button
                             type="button"
@@ -1269,51 +1676,53 @@ export default function AnalyticsPage({
                         </>
                       )}
                       
-                      <div style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        borderRadius: '6px',
-                        border: '1px solid var(--border-color, rgba(228, 228, 231, 0.7))',
-                        backgroundColor: 'var(--bg-surface, #ffffff)',
-                        overflow: 'hidden'
-                      }}>
-                        <button
-                          type="button"
-                          onClick={() => setMetricUnit('percent')}
-                          style={{
-                            padding: '3px 8px',
-                            border: 'none',
-                            fontSize: '11px',
-                            fontWeight: 500,
-                            backgroundColor: metricUnit === 'percent' ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
-                            color: metricUnit === 'percent' ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          %
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setMetricUnit('rupee')}
-                          style={{
-                            padding: '3px 8px',
-                            borderLeft: '1px solid var(--border-color, rgba(228, 228, 231, 0.7))',
-                            borderRight: 'none',
-                            borderTop: 'none',
-                            borderBottom: 'none',
-                            fontSize: '11px',
-                            fontWeight: 500,
-                            backgroundColor: metricUnit === 'rupee' ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
-                            color: metricUnit === 'rupee' ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          ₹
-                        </button>
-                      </div>
+                      {(!isVsEnabled || (perfTab !== 'Growth' && perfTab !== 'Monthly')) && (
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          borderRadius: '6px',
+                          border: '1px solid var(--border-color, rgba(228, 228, 231, 0.7))',
+                          backgroundColor: 'var(--bg-surface, #ffffff)',
+                          overflow: 'hidden'
+                        }}>
+                          <button
+                            type="button"
+                            onClick={() => setMetricUnit('percent')}
+                            style={{
+                              padding: '3px 8px',
+                              border: 'none',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              backgroundColor: metricUnit === 'percent' ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
+                              color: metricUnit === 'percent' ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            %
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMetricUnit('rupee')}
+                            style={{
+                              padding: '3px 8px',
+                              borderLeft: '1px solid var(--border-color, rgba(228, 228, 231, 0.7))',
+                              borderRight: 'none',
+                              borderTop: 'none',
+                              borderBottom: 'none',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              backgroundColor: metricUnit === 'rupee' ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
+                              color: metricUnit === 'rupee' ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ₹
+                          </button>
+                        </div>
+                      )}
 
-                      {/* Indian Benchmark Selector Pills when VS active */}
-                      {isVsEnabled && (
+                      {/* Indian Benchmark Selector Pills when VS active on Growth / Monthly */}
+                      {isVsEnabled && (perfTab === 'Growth' || perfTab === 'Monthly') && (
                         <div style={{
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -1335,8 +1744,8 @@ export default function AnalyticsPage({
                                 borderBottom: 'none',
                                 fontSize: '10px',
                                 fontWeight: 600,
-                                backgroundColor: selectedBenchmark === b.id ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
-                                color: selectedBenchmark === b.id ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
+                                backgroundColor: (selectedBenchmark === b.id || selectedBenchmark === b.name || selectedBenchmark === b.symbol) ? 'var(--bg-hover, #f4f4f5)' : 'transparent',
+                                color: (selectedBenchmark === b.id || selectedBenchmark === b.name || selectedBenchmark === b.symbol) ? 'var(--text-primary, #18181b)' : 'var(--text-muted, #71717a)',
                                 cursor: 'pointer',
                                 transition: 'all 0.15s ease'
                               }}
@@ -1410,30 +1819,55 @@ export default function AnalyticsPage({
                               tickLine={false}
                               fontSize={12}
                               stroke="#71717a"
-                              tickFormatter={t => metricUnit === 'rupee' ? `₹${Math.round(t).toLocaleString('en-IN')}` : `${Number(t).toFixed(0)}%`}
-                              width={metricUnit === 'rupee' ? 65 : 45}
+                              tickFormatter={t => (!isVsEnabled && metricUnit === 'rupee') ? `₹${Math.round(t).toLocaleString('en-IN')}` : `${Number(t).toFixed(0)}%`}
+                              width={(!isVsEnabled && metricUnit === 'rupee') ? 65 : 45}
                             />
                             <Tooltip
                               cursor={{ fill: 'rgba(59, 130, 246, 0.05)' }}
-                              content={props => <CustomNexusHeroTooltip {...props} metricUnit={metricUnit} perfTab="Monthly" baseCapital={baseCapital} />}
+                              content={props => <CustomFoxHeroTooltip {...props} metricUnit={metricUnit} perfTab="Monthly" baseCapital={baseCapital} isVsEnabled={isVsEnabled} activeBenchmark={activeBenchmarkObj} />}
                             />
                             <ReferenceLine y={0} stroke="#e5e7eb" strokeWidth={1} />
-                            <Bar
-                              dataKey={metricUnit === 'rupee' ? 'pl' : 'plPercentage'}
-                              name={metricUnit === 'rupee' ? 'Monthly P&L (₹)' : (pnlMode === 'gross' ? 'Gross PF Returns' : 'Net PF Returns')}
-                              radius={[4, 4, 0, 0]}
-                              maxBarSize={50}
-                              isAnimationActive={true}
-                              animationDuration={800}
-                              animationEasing="ease-out"
-                            >
-                              {(monthlyData || []).map((entry, index) => {
-                                const val = metricUnit === 'rupee' ? (entry.pl || 0) : (entry.plPercentage || 0);
-                                return (
-                                  <Cell key={`cell-${index}`} fill={val >= 0 ? '#10b981' : '#ef4444'} />
-                                );
-                              })}
-                            </Bar>
+                            {isVsEnabled ? (
+                              <>
+                                <Bar
+                                  dataKey="plPercentage"
+                                  name="Net PF Returns"
+                                  fill="#3b82f6"
+                                  radius={[4, 4, 0, 0]}
+                                  maxBarSize={32}
+                                  isAnimationActive={true}
+                                  animationDuration={800}
+                                  animationEasing="ease-out"
+                                />
+                                <Bar
+                                  dataKey="indexMonthlyReturn"
+                                  name={activeBenchmarkObj.name}
+                                  fill={activeBenchmarkObj.color}
+                                  radius={[4, 4, 0, 0]}
+                                  maxBarSize={32}
+                                  isAnimationActive={true}
+                                  animationDuration={800}
+                                  animationEasing="ease-out"
+                                />
+                              </>
+                            ) : (
+                              <Bar
+                                dataKey={metricUnit === 'rupee' ? 'pl' : 'plPercentage'}
+                                name={metricUnit === 'rupee' ? 'Monthly P&L (₹)' : (pnlMode === 'gross' ? 'Gross PF Returns' : 'Net PF Returns')}
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={50}
+                                isAnimationActive={true}
+                                animationDuration={800}
+                                animationEasing="ease-out"
+                              >
+                                {(monthlyData || []).map((entry, index) => {
+                                  const val = metricUnit === 'rupee' ? (entry.pl || 0) : (entry.plPercentage || 0);
+                                  return (
+                                    <Cell key={`cell-${index}`} fill={val >= 0 ? '#10b981' : '#ef4444'} />
+                                  );
+                                })}
+                              </Bar>
+                            )}
                           </BarChart>
                         ) : perfTab === 'Daily' ? (
                           <AreaChart data={dailyData} margin={{ top: 28, right: 30, left: 30, bottom: 30 }}>
@@ -1470,7 +1904,7 @@ export default function AnalyticsPage({
                               width={70}
                             />
                             <ReferenceLine yAxisId="right" y={0} stroke="#e5e7eb" strokeWidth={1} />
-                            <Tooltip cursor={{ stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '3 3' }} content={props => <CustomNexusHeroTooltip {...props} metricUnit={metricUnit} perfTab="Daily" baseCapital={baseCapital} />} />
+                            <Tooltip cursor={{ stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '3 3' }} content={props => <CustomFoxHeroTooltip {...props} metricUnit={metricUnit} perfTab="Daily" baseCapital={baseCapital} />} />
                             <Legend wrapperStyle={{ textAlign: 'center' }} />
                             <Area
                               yAxisId="right"
@@ -1513,7 +1947,7 @@ export default function AnalyticsPage({
                               width={metricUnit === 'rupee' ? 75 : 65}
                             />
                             <ReferenceLine yAxisId="right" y={metricUnit === 'rupee' ? (baseCapital || 0) : 0} stroke="#e5e7eb" strokeWidth={1} />
-                            <Tooltip cursor={{ stroke: '#60a5fa', strokeWidth: 1, strokeDasharray: '3 3' }} content={props => <CustomNexusHeroTooltip {...props} metricUnit={metricUnit} perfTab="Equity" baseCapital={baseCapital} />} />
+                            <Tooltip cursor={{ stroke: '#60a5fa', strokeWidth: 1, strokeDasharray: '3 3' }} content={props => <CustomFoxHeroTooltip {...props} metricUnit={metricUnit} perfTab="Equity" baseCapital={baseCapital} />} />
                             <Line
                               yAxisId="right"
                               type="monotone"
@@ -1529,7 +1963,7 @@ export default function AnalyticsPage({
                             />
                           </LineChart>
                         ) : (
-                          /* Growth Tab (Nexus Hero Area Chart) */
+                          /* Growth Tab (Hero Area Chart / Dual-Line Chart with VS) */
                           <ComposedChart data={monthlyData} margin={{ top: 28, right: 30, left: 30, bottom: 30 }}>
                             <defs>
                               <linearGradient id="colorPL" x1="0" y1="0" x2="0" y2="1">
@@ -1550,79 +1984,115 @@ export default function AnalyticsPage({
                               interval={0}
                               tick={{ fontSize: 11, fill: '#71717a' }}
                             />
-                            <YAxis
-                              yAxisId="growth"
-                              orientation={metricUnit === 'rupee' ? 'left' : 'right'}
-                              scale="linear"
-                              domain={growthYAxisConfig.domain}
-                              ticks={growthYAxisConfig.ticks}
-                              tickFormatter={growthYAxisConfig.tickFormatter}
-                              axisLine={false}
-                              tickLine={false}
-                              dx={metricUnit === 'rupee' ? -10 : 0}
-                              width={80}
-                              stroke="#71717a"
-                              tick={{ fontSize: 12 }}
-                            />
-                            {isVsEnabled && (
-                              <YAxis
-                                yAxisId="bench"
-                                orientation={metricUnit === 'rupee' ? 'right' : 'left'}
-                                axisLine={false}
-                                tickLine={false}
-                                tick={{ fill: '#ef4444', fontSize: 11 }}
-                                tickFormatter={t => t.toLocaleString('en-IN')}
-                                width={55}
-                              />
-                            )}
-                            <Tooltip
-                              cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '3 3' }}
-                              content={props => <CustomNexusHeroTooltip {...props} metricUnit={metricUnit} perfTab="Growth" baseCapital={baseCapital} />}
-                            />
-                            {metricUnit === 'rupee' ? (
-                              <Area
-                                yAxisId="growth"
-                                type="monotone"
-                                dataKey="pl"
-                                name="Monthly P&L (₹)"
-                                stroke="#2563eb"
-                                fillOpacity={1}
-                                fill="url(#colorPLRs)"
-                                strokeWidth={2}
-                                activeDot={{ r: 4, stroke: '#2563eb', strokeWidth: 2, fill: '#ffffff' }}
-                                isAnimationActive={true}
-                                animationDuration={800}
-                                animationEasing="ease-out"
-                              />
+                            {isVsEnabled ? (
+                              <>
+                                <YAxis
+                                  yAxisId="left"
+                                  orientation="left"
+                                  scale="linear"
+                                  domain={['auto', 'auto']}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  width={75}
+                                  stroke="#71717a"
+                                  tickFormatter={t => `₹${Math.round(t).toLocaleString('en-IN')}`}
+                                  tick={{ fontSize: 11 }}
+                                />
+                                <YAxis
+                                  yAxisId="right"
+                                  orientation="right"
+                                  scale="linear"
+                                  domain={['auto', 'auto']}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  width={60}
+                                  stroke={activeBenchmarkObj.color}
+                                  tickFormatter={t => Math.round(t).toLocaleString('en-IN')}
+                                  tick={{ fontSize: 11, fill: activeBenchmarkObj.color }}
+                                />
+                                <Tooltip
+                                  cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '3 3' }}
+                                  content={props => <CustomFoxHeroTooltip {...props} metricUnit="rupee" perfTab="Growth" baseCapital={baseCapital} isVsEnabled={isVsEnabled} activeBenchmark={activeBenchmarkObj} />}
+                                />
+                                <Line
+                                  yAxisId="left"
+                                  type="monotone"
+                                  dataKey="capital"
+                                  name="Portfolio Value"
+                                  stroke="#2563eb"
+                                  strokeWidth={2.5}
+                                  dot={{ r: 3, fill: '#2563eb' }}
+                                  activeDot={{ r: 5, stroke: '#2563eb', strokeWidth: 2, fill: '#ffffff' }}
+                                  isAnimationActive={true}
+                                  animationDuration={800}
+                                  animationEasing="ease-out"
+                                />
+                                <Line
+                                  yAxisId="right"
+                                  type="monotone"
+                                  dataKey="indexValue"
+                                  name={activeBenchmarkObj.name}
+                                  stroke={activeBenchmarkObj.color}
+                                  strokeWidth={2.5}
+                                  dot={{ r: 3, fill: activeBenchmarkObj.color }}
+                                  activeDot={{ r: 5, stroke: activeBenchmarkObj.color, strokeWidth: 2, fill: '#ffffff' }}
+                                  isAnimationActive={true}
+                                  animationDuration={800}
+                                  animationEasing="ease-out"
+                                />
+                              </>
                             ) : (
-                              <Area
-                                yAxisId="growth"
-                                type="monotone"
-                                dataKey="plPercentage"
-                                name="P&L Percentage"
-                                stroke="#16a34a"
-                                fillOpacity={1}
-                                fill="url(#colorPL)"
-                                strokeWidth={2}
-                                activeDot={{ r: 4, stroke: '#16a34a', strokeWidth: 2, fill: '#ffffff' }}
-                                isAnimationActive={true}
-                                animationDuration={800}
-                                animationEasing="ease-out"
-                              />
-                            )}
-                            {isVsEnabled && (
-                              <Line
-                                yAxisId="bench"
-                                type="monotone"
-                                dataKey="benchmarkVal"
-                                name={selectedBenchmark}
-                                stroke="#ef4444"
-                                strokeWidth={1.8}
-                                strokeDasharray="4 4"
-                                dot={false}
-                                isAnimationActive={true}
-                                animationDuration={800}
-                              />
+                              <>
+                                <YAxis
+                                  yAxisId="growth"
+                                  orientation={metricUnit === 'rupee' ? 'left' : 'right'}
+                                  scale="linear"
+                                  domain={growthYAxisConfig.domain}
+                                  ticks={growthYAxisConfig.ticks}
+                                  tickFormatter={growthYAxisConfig.tickFormatter}
+                                  axisLine={false}
+                                  tickLine={false}
+                                  dx={metricUnit === 'rupee' ? -10 : 0}
+                                  width={80}
+                                  stroke="#71717a"
+                                  tick={{ fontSize: 12 }}
+                                />
+                                <Tooltip
+                                  cursor={{ stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '3 3' }}
+                                  content={props => <CustomFoxHeroTooltip {...props} metricUnit={metricUnit} perfTab="Growth" baseCapital={baseCapital} isVsEnabled={false} />}
+                                />
+                                {metricUnit === 'rupee' ? (
+                                  <Area
+                                    yAxisId="growth"
+                                    type="monotone"
+                                    dataKey="pl"
+                                    name="Monthly P&L (₹)"
+                                    stroke="#2563eb"
+                                    fillOpacity={1}
+                                    fill="url(#colorPLRs)"
+                                    strokeWidth={2}
+                                    activeDot={{ r: 4, stroke: '#2563eb', strokeWidth: 2, fill: '#ffffff' }}
+                                    isAnimationActive={true}
+                                    animationDuration={800}
+                                    animationEasing="ease-out"
+                                  />
+                                ) : (
+                                  <Area
+                                    yAxisId="growth"
+                                    type="monotone"
+                                    dataKey="plPercentage"
+                                    name="P&L Percentage"
+                                    stroke="#16a34a"
+                                    fillOpacity={1}
+                                    fill="url(#colorPL)"
+                                    strokeWidth={2}
+                                    activeDot={{ r: 4, stroke: '#16a34a', strokeWidth: 2, fill: '#ffffff' }}
+                                    isAnimationActive={true}
+                                    animationDuration={800}
+                                    animationEasing="ease-out"
+                                  />
+                                )}
+                              </>
                             )}
                           </ComposedChart>
                         )}
@@ -1631,7 +2101,7 @@ export default function AnalyticsPage({
 
                   </div>
 
-                  {/* Chart Bottom Legend (Dynamic matching Nexus active tab) */}
+                  {/* Chart Bottom Legend (Dynamic matching active tab) */}
                   <div style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1641,7 +2111,7 @@ export default function AnalyticsPage({
                     color: '#71717a',
                     fontWeight: 450
                   }}>
-                    {perfTab === 'Monthly' || perfTab === 'Daily' ? null : perfTab === 'Equity' ? (
+                    {perfTab === 'Daily' ? null : perfTab === 'Equity' ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', fontWeight: 500, fontSize: '11px' }}>
                         <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
                           <line x1="0" y1="5" x2="20" y2="5" stroke="#60a5fa" strokeWidth="2" />
@@ -1649,8 +2119,39 @@ export default function AnalyticsPage({
                         </svg>
                         <span>Equity Curve</span>
                       </div>
+                    ) : perfTab === 'Monthly' ? (
+                      isVsEnabled ? (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#3b82f6', fontWeight: 500 }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: '#3b82f6', display: 'inline-block' }} />
+                            <span>Net PF Returns</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: activeBenchmarkObj.color, fontWeight: 500 }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: activeBenchmarkObj.color, display: 'inline-block' }} />
+                            <span>{activeBenchmarkObj.name}</span>
+                          </div>
+                        </>
+                      ) : null
                     ) : (
-                      <>
+                      /* Growth Tab */
+                      isVsEnabled ? (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#2563eb', fontWeight: 500 }}>
+                            <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
+                              <line x1="0" y1="5" x2="20" y2="5" stroke="#2563eb" strokeWidth="2" />
+                              <circle cx="10" cy="5" r="2.5" fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" />
+                            </svg>
+                            <span>Portfolio Value</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: activeBenchmarkObj.color, fontWeight: 500 }}>
+                            <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
+                              <line x1="0" y1="5" x2="20" y2="5" stroke={activeBenchmarkObj.color} strokeWidth="2" />
+                              <circle cx="10" cy="5" r="2.5" fill="#ffffff" stroke={activeBenchmarkObj.color} strokeWidth="1.5" />
+                            </svg>
+                            <span>{activeBenchmarkObj.name}</span>
+                          </div>
+                        </>
+                      ) : (
                         <div style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -1664,16 +2165,7 @@ export default function AnalyticsPage({
                           </svg>
                           <span>{metricUnit === 'rupee' ? 'Monthly P&L (₹)' : 'P&L Percentage'}</span>
                         </div>
-                        {isVsEnabled && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontWeight: 500 }}>
-                            <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
-                              <line x1="0" y1="5" x2="20" y2="5" stroke="#ef4444" strokeWidth="2" strokeDasharray="3 3" />
-                              <circle cx="10" cy="5" r="2.5" fill="#ffffff" stroke="#ef4444" strokeWidth="1.5" />
-                            </svg>
-                            <span>{selectedBenchmark}</span>
-                          </div>
-                        )}
-                      </>
+                      )
                     )}
                   </div>
 
@@ -1809,18 +2301,18 @@ export default function AnalyticsPage({
               borderRadius: '16px',
               border: '1px solid var(--border-color, #e5e7eb)',
               backgroundColor: 'var(--bg-card, #ffffff)',
-              overflow: 'hidden',
+              overflow: 'visible',
               boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
             }}>
               {[
-                { label: 'Win %', value: metrics.winRate, desc: 'Percentage of profitable closed trades' },
-                { label: 'Avg Gain', value: metrics.avgGain, desc: 'Average percentage gain on winning trades', color: '#10b981' },
-                { label: 'Avg Loss', value: metrics.avgLoss, desc: 'Average percentage loss on losing trades', color: '#ef4444' },
-                { label: 'Avg Position Size', value: metrics.avgPositionSize, desc: 'Average position size as percentage of portfolio' },
-                { label: 'Avg Holding Days', value: metrics.avgHoldingDays, desc: 'Average number of days positions are held' },
-                { label: 'Avg R:R', value: metrics.avgR, desc: 'Average reward-to-risk ratio across trades' },
-                { label: 'Profit Factor', value: metrics.profitFactor, desc: 'Gross profit divided by gross loss' },
-                { label: 'Expectancy', value: metrics.expectancy, desc: 'Mathematical rupee expectation per executed trade', color: '#10b981' },
+                { label: 'Win %', value: metrics.winRate, desc: 'Percentage of profitable trades.' },
+                { label: 'Avg Gain', value: metrics.avgGain, desc: 'Average gain on winning trades.', color: '#10b981' },
+                { label: 'Avg Loss', value: metrics.avgLoss, desc: 'Average loss on losing trades.', color: '#ef4444' },
+                { label: 'Avg Position Size', value: metrics.avgPositionSize, desc: 'Average position size vs portfolio.' },
+                { label: 'Avg Holding Days', value: metrics.avgHoldingDays, desc: 'Average duration trades are held.' },
+                { label: 'Avg R:R', value: metrics.avgR, desc: 'Average reward-to-risk ratio.' },
+                { label: 'Profit Factor', value: metrics.profitFactor, desc: 'Gross profits divided by gross losses.' },
+                { label: 'Expectancy', value: metrics.expectancy, desc: 'Expected return per trade.', color: '#10b981' },
               ].map((row, idx) => (
                 <div
                   key={idx}
@@ -1830,6 +2322,10 @@ export default function AnalyticsPage({
                     justifyContent: 'space-between',
                     padding: '14px 18px',
                     borderBottom: idx < 7 ? '1px solid var(--border-color, #f4f4f5)' : 'none',
+                    borderTopLeftRadius: idx === 0 ? '16px' : 0,
+                    borderTopRightRadius: idx === 0 ? '16px' : 0,
+                    borderBottomLeftRadius: idx === 7 ? '16px' : 0,
+                    borderBottomRightRadius: idx === 7 ? '16px' : 0,
                     transition: 'background-color 0.15s ease'
                   }}
                 >
@@ -1837,9 +2333,12 @@ export default function AnalyticsPage({
                     <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted, #71717a)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       {row.label}
                     </span>
-                    <span title={row.desc} style={{ display: 'inline-flex', color: 'var(--text-muted, #a1a1aa)', cursor: 'help' }}>
-                      <Info size={12} />
-                    </span>
+                    <StatInfoButton
+                      label={row.label}
+                      desc={row.desc}
+                      activePopover={activeStatPopover}
+                      setActivePopover={setActiveStatPopover}
+                    />
                   </div>
                   <div style={{
                     fontSize: '14px',
@@ -1899,7 +2398,7 @@ export default function AnalyticsPage({
                     boxShadow: '0 10px 25px rgba(0,0,0,0.1)',
                     padding: '4px'
                   }}>
-                    {['R:R', 'Stock Move %', 'P&L (₹)'].map(opt => (
+                    {['R:R', 'Stock Move', 'Portfolio Impact', 'P/L (₹)'].map(opt => (
                       <button
                         key={opt}
                         type="button"
@@ -1948,10 +2447,19 @@ export default function AnalyticsPage({
                       </span>
                       <div style={{ fontSize: '18px', fontWeight: 600, fontFamily: 'monospace', color: '#16a34a' }}>
                         {performerMetric === 'R:R'
-                          ? `+${highestTrade.rewardRisk}R`
-                          : performerMetric === 'Stock Move %'
-                          ? `+${Math.abs(highestTrade.stockMove || 0)}%`
-                          : formatINR(highestTrade.activePnl)}
+                          ? (highestTrade.rewardRisk >= 0 ? `+${highestTrade.rewardRisk.toFixed(2)}R` : `${highestTrade.rewardRisk.toFixed(2)}R`)
+                          : (performerMetric === 'Stock Move' || performerMetric === 'Stock Move %')
+                          ? (highestTrade.stockMove >= 0 ? `+${highestTrade.stockMove.toFixed(2)}%` : `${highestTrade.stockMove.toFixed(2)}%`)
+                          : performerMetric === 'Portfolio Impact'
+                          ? (() => {
+                              const v = (typeof highestTrade.pfImpact === 'number' && highestTrade.pfImpact !== 0)
+                                ? highestTrade.pfImpact
+                                : (baseCapital > 0 ? (Number(highestTrade.activePnl !== undefined ? highestTrade.activePnl : (highestTrade.grossPnl !== undefined ? highestTrade.grossPnl : (highestTrade.pl || 0))) / baseCapital) * 100 : 0);
+                              return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
+                            })()
+                          : (highestTrade.activePnl >= 0
+                            ? `+₹${Math.round(Math.abs(highestTrade.activePnl)).toLocaleString('en-IN')}`
+                            : `-₹${Math.round(Math.abs(highestTrade.activePnl)).toLocaleString('en-IN')}`)}
                       </div>
                     </div>
                     <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f4f4f5)', marginBottom: '12px' }} />
@@ -1965,7 +2473,7 @@ export default function AnalyticsPage({
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted, #71717a)' }}>
                         <Calendar size={12} />
-                        <span>{highestTrade.date}</span>
+                        <span>{formatDateDMY(highestTrade.date)}</span>
                       </div>
                     </div>
                   </div>
@@ -1986,10 +2494,19 @@ export default function AnalyticsPage({
                       </span>
                       <div style={{ fontSize: '18px', fontWeight: 600, fontFamily: 'monospace', color: '#dc2626' }}>
                         {performerMetric === 'R:R'
-                          ? `${lowestTrade.rewardRisk}R`
-                          : performerMetric === 'Stock Move %'
-                          ? `-${Math.abs(lowestTrade.stockMove || 0)}%`
-                          : formatINR(lowestTrade.activePnl)}
+                          ? (lowestTrade.rewardRisk >= 0 ? `+${lowestTrade.rewardRisk.toFixed(2)}R` : `${lowestTrade.rewardRisk.toFixed(2)}R`)
+                          : (performerMetric === 'Stock Move' || performerMetric === 'Stock Move %')
+                          ? (lowestTrade.stockMove >= 0 ? `+${lowestTrade.stockMove.toFixed(2)}%` : `${lowestTrade.stockMove.toFixed(2)}%`)
+                          : performerMetric === 'Portfolio Impact'
+                          ? (() => {
+                              const v = (typeof lowestTrade.pfImpact === 'number' && lowestTrade.pfImpact !== 0)
+                                ? lowestTrade.pfImpact
+                                : (baseCapital > 0 ? (Number(lowestTrade.activePnl !== undefined ? lowestTrade.activePnl : (lowestTrade.grossPnl !== undefined ? lowestTrade.grossPnl : (lowestTrade.pl || 0))) / baseCapital) * 100 : 0);
+                              return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
+                            })()
+                          : (lowestTrade.activePnl >= 0
+                            ? `+₹${Math.round(Math.abs(lowestTrade.activePnl)).toLocaleString('en-IN')}`
+                            : `-₹${Math.round(Math.abs(lowestTrade.activePnl)).toLocaleString('en-IN')}`)}
                       </div>
                     </div>
                     <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f4f4f5)', marginBottom: '12px' }} />
@@ -2003,7 +2520,7 @@ export default function AnalyticsPage({
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-muted, #71717a)' }}>
                         <Calendar size={12} />
-                        <span>{lowestTrade.date}</span>
+                        <span>{formatDateDMY(lowestTrade.date)}</span>
                       </div>
                     </div>
                   </div>
@@ -2027,7 +2544,7 @@ export default function AnalyticsPage({
           </div>
         )}
 
-        {/* ── 5. FULL WIDTH CARD: STOCK MOVE % (NEXUS EXACT ROW 3) ──────────── */}
+        {/* ── 5. FULL WIDTH CARD: STOCK MOVE % (ROW 3) ──────────── */}
         {visibleSections.stockMove && (
           <div style={{ gridColumn: 'span 3' }}>
             <div style={{
@@ -2061,21 +2578,6 @@ export default function AnalyticsPage({
                     }}>
                       {stockMoveMetric === 'Move' ? 'Stock Move %' : 'R-Multiple'}
                     </div>
-                    {stockMoveHasTrades && (
-                      <div style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '2px 8px',
-                        borderRadius: '9999px',
-                        backgroundColor: avgStockMovement >= 0 ? '#ecfdf5' : '#fef2f2',
-                        border: `1px solid ${avgStockMovement >= 0 ? '#a7f3d0' : '#fecaca'}`,
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        color: avgStockMovement >= 0 ? '#10b981' : '#ef4444'
-                      }}>
-                        Avg: {avgStockMovement >= 0 ? '+' : ''}{avgStockMovement}{stockMoveMetric === 'Move' ? '%' : 'R'}
-                      </div>
-                    )}
                     <div style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -2095,7 +2597,7 @@ export default function AnalyticsPage({
                           padding: '3px 7px',
                           border: 'none',
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'all 0.2s ease',
                           backgroundColor: stockMoveMetric === 'Move' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
                           color: stockMoveMetric === 'Move' ? '#2563eb' : 'var(--text-muted, #71717a)'
                         }}
@@ -2112,9 +2614,9 @@ export default function AnalyticsPage({
                           borderTop: 'none',
                           borderBottom: 'none',
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          backgroundColor: stockMoveMetric === 'R-MULT' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                          color: stockMoveMetric === 'R-MULT' ? '#2563eb' : 'var(--text-muted, #71717a)'
+                          transition: 'all 0.2s ease',
+                          backgroundColor: stockMoveMetric === 'R-MULT' ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                          color: stockMoveMetric === 'R-MULT' ? '#8b5cf6' : 'var(--text-muted, #71717a)'
                         }}
                       >
                         R-MULT
@@ -2155,14 +2657,29 @@ export default function AnalyticsPage({
                   </div>
                 </div>
 
-                {/* Recharts ComposedChart */}
-                <div style={{ flex: 1, width: '100%', minHeight: 0, position: 'relative' }}>
+                {/* Recharts ComposedChart with Smooth Color Transition */}
+                <div className="stock-move-chart-container" style={{ flex: 1, width: '100%', minHeight: 0, position: 'relative' }}>
+                  <style>{`
+                    .stock-move-chart-container path.recharts-curve {
+                      transition: stroke 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                    .stock-move-chart-container path.recharts-area-area {
+                      transition: fill 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                    .stock-move-chart-container .recharts-legend-item path,
+                    .stock-move-chart-container .recharts-legend-icon path {
+                      transition: stroke 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                    .stock-move-chart-container stop {
+                      transition: stop-color 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                  `}</style>
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={stockMoveSeries} margin={{ top: 15, right: 25, left: 10, bottom: 25 }}>
+                    <ComposedChart data={stockMoveSeries} margin={{ top: 20, right: 10, left: 10, bottom: 20 }}>
                       <defs>
                         <linearGradient id="chartGradientStockMove" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
+                          <stop offset="5%" stopColor={stockMoveMetric === 'R-MULT' ? '#8b5cf6' : '#3b82f6'} stopOpacity={0.3} style={{ transition: 'stop-color 0.45s ease' }} />
+                          <stop offset="95%" stopColor={stockMoveMetric === 'R-MULT' ? '#8b5cf6' : '#3b82f6'} stopOpacity={0} style={{ transition: 'stop-color 0.45s ease' }} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -2170,7 +2687,8 @@ export default function AnalyticsPage({
                         dataKey="displayDate"
                         axisLine={{ stroke: '#e5e7eb', strokeWidth: 1 }}
                         tickLine={{ stroke: '#e5e7eb' }}
-                        dy={8}
+                        interval={0}
+                        dy={10}
                         tick={{ fontSize: 11, fill: '#71717a' }}
                       />
                       <YAxis
@@ -2178,40 +2696,38 @@ export default function AnalyticsPage({
                         axisLine={{ stroke: '#e5e7eb', strokeWidth: 1 }}
                         tickLine={{ stroke: '#e5e7eb' }}
                         dx={-5}
-                        width={55}
+                        width={50}
                         tick={{ fontSize: 11, fill: '#71717a' }}
-                        domain={stockMoveHasTrades ? [
-                          dataMin => Math.min(0, Math.floor(dataMin - 0.5)),
-                          dataMax => Math.max(0, Math.ceil(dataMax + 0.5))
-                        ] : (stockMoveMetric === 'Move' ? [-2, 10] : [-0.5, 2.5])}
-                        ticks={stockMoveHasTrades ? undefined : (stockMoveMetric === 'Move' ? [-2, 0, 2, 4, 6, 8, 10] : [-0.5, 0, 0.5, 1.0, 1.5, 2.0, 2.5])}
-                        tickFormatter={val => stockMoveMetric === 'Move' ? `${val >= 0 ? '+' : ''}${Number(val).toFixed(2)}%` : `${val >= 0 ? '+' : ''}${Number(val).toFixed(2)}R`}
+                        domain={stockMoveYAxisConfig.domain}
+                        ticks={stockMoveYAxisConfig.ticks}
+                        tickFormatter={val => stockMoveMetric === 'R-MULT' ? `${Number(val) >= 0 ? '+' : ''}${Number(val).toFixed(2)}R` : `${Number(val) >= 0 ? '+' : ''}${Number(val).toFixed(2)}%`}
                       />
                       <ReferenceLine yAxisId="left" y={0} stroke="#cbd5e1" strokeWidth={1} strokeDasharray="3 3" />
                       <Tooltip
                         wrapperStyle={{ pointerEvents: 'auto', zIndex: 100 }}
-                        content={<CustomStockMoveTooltip metricMode={stockMoveMetric === 'Move' ? 'stockMove' : 'rMultiple'} />}
+                        content={<CustomStockMoveTooltip metricMode={stockMoveMetric === 'R-MULT' ? 'rMultiple' : 'stockMove'} />}
                       />
                       <Legend
-                        verticalAlign="bottom"
-                        align="center"
-                        wrapperStyle={{ fontSize: '11px', fontWeight: 500, paddingTop: '10px' }}
-                        iconSize={9}
+                        layout={typeof window !== 'undefined' && window.innerWidth < 768 ? 'horizontal' : 'vertical'}
+                        verticalAlign={typeof window !== 'undefined' && window.innerWidth < 768 ? 'bottom' : 'middle'}
+                        align={typeof window !== 'undefined' && window.innerWidth < 768 ? 'center' : 'left'}
+                        wrapperStyle={{ fontSize: '11px', fontWeight: 500, paddingLeft: typeof window !== 'undefined' && window.innerWidth < 768 ? '0' : '10px', paddingTop: typeof window !== 'undefined' && window.innerWidth < 768 ? '10px' : '0' }}
+                        iconSize={10}
                       />
                       <Area
                         yAxisId="left"
                         type="monotone"
-                        dataKey={stockMoveMetric === 'Move' ? 'avgStockMove' : 'avgRMultiple'}
-                        name={stockMoveMetric === 'Move' ? 'Average Stock Movement' : 'Average R-Multiple'}
-                        stroke="#3b82f6"
+                        dataKey={stockMoveMetric === 'R-MULT' ? 'avgRMultiple' : 'avgStockMove'}
+                        name={stockMoveMetric === 'R-MULT' ? 'Average R-Multiple' : 'Average Stock Movement'}
+                        stroke={stockMoveMetric === 'R-MULT' ? '#8b5cf6' : '#3b82f6'}
                         fillOpacity={1}
                         fill="url(#chartGradientStockMove)"
-                        strokeWidth={2.2}
-                        activeDot={stockMoveHasTrades ? { r: 4 } : false}
-                        dot={stockMoveHasTrades ? { r: 3, fillOpacity: 1, strokeWidth: 0, fill: '#3b82f6' } : false}
+                        strokeWidth={2}
+                        activeDot={stockMoveHasTrades ? { r: 4, stroke: stockMoveMetric === 'R-MULT' ? '#8b5cf6' : '#3b82f6' } : false}
+                        dot={stockMoveHasTrades ? { r: 3, fillOpacity: 1, strokeWidth: 0, fill: stockMoveMetric === 'R-MULT' ? '#8b5cf6' : '#3b82f6' } : false}
                         isAnimationActive={true}
-                        animationDuration={1000}
-                        animationEasing="ease-out"
+                        animationDuration={650}
+                        animationEasing="ease-in-out"
                       />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -2229,7 +2745,133 @@ export default function AnalyticsPage({
   );
 }
 
-function CustomNexusTooltip({ active, payload, unit = '%' }) {
+function StatInfoButton({ label, desc, activePopover, setActivePopover }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const isPinned = activePopover === label;
+  const isOpen = isPinned || (!activePopover && isHovered);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isPinned) return;
+    const handleOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setActivePopover(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setActivePopover(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPinned, setActivePopover]);
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+    if (setActivePopover) {
+      setActivePopover(prev => (prev === label ? null : label));
+    }
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label={`Info about ${label}`}
+        style={{
+          border: 'none',
+          backgroundColor: isOpen ? '#f4f4f5' : 'transparent',
+          color: isOpen ? '#18181b' : 'var(--text-muted, #a1a1aa)',
+          padding: '2px',
+          margin: 0,
+          cursor: 'pointer',
+          borderRadius: '4px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.15s ease',
+          outline: 'none'
+        }}
+      >
+        <Info size={12} strokeWidth={2} />
+      </button>
+
+      {isOpen && (
+        <div
+          role="tooltip"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            bottom: 'calc(100% + 7px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100,
+            backgroundColor: '#ffffff',
+            color: '#18181b',
+            border: '1px solid #e4e4e7',
+            borderRadius: '8px',
+            padding: '7px 11px',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 10px -3px rgba(0, 0, 0, 0.05)',
+            fontSize: '11px',
+            fontWeight: 500,
+            lineHeight: 1.35,
+            width: 'max-content',
+            maxWidth: '200px',
+            textAlign: 'center',
+            whiteSpace: 'normal',
+            pointerEvents: 'auto',
+            letterSpacing: '-0.01em',
+            boxSizing: 'border-box',
+            userSelect: 'none'
+          }}
+        >
+          {desc}
+          {/* Subtle bottom arrow */}
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 0,
+              height: 0,
+              borderLeft: '4.5px solid transparent',
+              borderRight: '4.5px solid transparent',
+              borderTop: '5px solid #ffffff'
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 'calc(100% + 1px)',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 0,
+              height: 0,
+              borderLeft: '4.5px solid transparent',
+              borderRight: '4.5px solid transparent',
+              borderTop: '5px solid #e4e4e7',
+              zIndex: -1
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomFoxTooltip({ active, payload, unit = '%' }) {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (
@@ -2265,7 +2907,7 @@ function CustomNexusTooltip({ active, payload, unit = '%' }) {
   return null;
 }
 
-function CustomNexusMonthlyTooltip({ active, payload }) {
+function CustomFoxMonthlyTooltip({ active, payload }) {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     const val = data.plPercentage !== undefined ? data.plPercentage : (data.pct || 0);

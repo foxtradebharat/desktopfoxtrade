@@ -1,7 +1,7 @@
 import fs from 'fs';
 
 // Read raw input CSV
-const content = fs.readFileSync("d:/tradeontip/nexus_10_stocks_raw_inputs.csv", "utf8");
+const content = fs.readFileSync("d:/tradeontip/fox_10_stocks_raw_inputs.csv", "utf8");
 const lines = content.trim().split("\n").map(l => l.split(","));
 const headers = lines[0];
 

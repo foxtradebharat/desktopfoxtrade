@@ -187,7 +187,7 @@ function toDisplayDateFormat(dateStr) {
 }
 
 /**
- * Clean inline editable cell with Nexus styling
+ * Clean inline editable cell
  */
 function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteger = false, onChange, align = 'left', isCmp = false }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -907,7 +907,7 @@ function RewardRiskCell({ trade, val, cellStickyStyle }) {
   );
 }
 
-function HoldingDaysCell({ trade, val, cellStickyStyle, costBasisMethod = 'fifo' }) {
+function HoldingDaysCell({ trade, val, cellStickyStyle, costBasisMethod = 'lifo' }) {
   const [isHovered, setIsHovered] = useState(false);
   const [coords, setCoords] = useState(null);
   const cellRef = useRef(null);
@@ -1760,7 +1760,7 @@ export default function JournalTable({
   const showReorderHandles = settings?.columnReorderHandles !== false;
   const showReviewIndicators = settings?.tradeReviewIndicators === true;
   const showBulkActions = settings?.bulkTradeActions === true;
-  const costBasisMethod = settings?.costBasisMethod || 'fifo';
+  const costBasisMethod = settings?.costBasisMethod || 'lifo';
 
   const [selectedTradeIds, setSelectedTradeIds] = useState(new Set());
 
@@ -1797,6 +1797,31 @@ export default function JournalTable({
   const [uploadModalTrade, setUploadModalTrade] = useState(null);
   const [isRowsDropdownOpen, setIsRowsDropdownOpen] = useState(false);
   const rowsDropdownRef = useRef(null);
+  const tableCardRef = useRef(null);
+  const tableScrollRef = useRef(null);
+
+  // Smooth scroll chaining: scroll window until table header reaches sticky top (0px), then scroll rows internally
+  useEffect(() => {
+    const scrollEl = tableScrollRef.current;
+    const cardEl = tableCardRef.current;
+    if (!scrollEl || !cardEl) return;
+
+    const handleWheel = (e) => {
+      const cardRect = cardEl.getBoundingClientRect();
+      const targetTop = 0; // Sticky top offset
+      if (e.deltaY > 0 && cardRect.top > targetTop + 1) {
+        // Table has not yet reached the top of the viewport; scroll window down first
+        window.scrollBy({ top: e.deltaY, behavior: 'instant' });
+        e.preventDefault();
+      } else if (e.deltaY < 0 && scrollEl.scrollTop <= 0 && cardRect.top <= targetTop + 1) {
+        // Table rows are at top and user scrolls up; scroll window up to reveal stat cards
+        window.scrollBy({ top: e.deltaY, behavior: 'instant' });
+      }
+    };
+
+    scrollEl.addEventListener('wheel', handleWheel, { passive: false });
+    return () => scrollEl.removeEventListener('wheel', handleWheel);
+  }, []);
 
   // Close rows dropdown on outside click
   useEffect(() => {
@@ -2195,7 +2220,24 @@ export default function JournalTable({
   const endItem = Math.min(safeCurrentPage * activePageSize, totalTradesCount);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', backgroundColor: 'var(--bg-card, #ffffff)', borderRadius: '16px', border: '1px solid color-mix(in srgb, var(--border-color, #e5e7eb) 65%, transparent)', boxShadow: 'var(--shadow-card, 0 1px 3px rgba(0,0,0,0.03))', overflow: 'hidden', marginBottom: '96px' }}>
+    <div 
+      ref={tableCardRef}
+      style={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        width: '100%', 
+        backgroundColor: 'var(--bg-card, #ffffff)', 
+        borderRadius: '16px', 
+        border: '1px solid color-mix(in srgb, var(--border-color, #e5e7eb) 65%, transparent)', 
+        boxShadow: 'var(--shadow-card, 0 1px 3px rgba(0,0,0,0.03))', 
+        overflow: 'hidden', 
+        position: 'sticky',
+        top: '0px',
+        maxHeight: 'calc(100vh - 66px)',
+        zIndex: 20,
+        marginBottom: '76px' 
+      }}
+    >
       <style>{`
         .jt-row {
           transition: background-color 0.15s ease;
@@ -2501,7 +2543,18 @@ export default function JournalTable({
         </div>
       ) : (
         <>
-          <div className="jt-table-scroll" style={{ overflowX: 'auto', overflowY: 'visible', position: 'relative', width: '100%' }}>
+          <div 
+            ref={tableScrollRef}
+            className="jt-table-scroll" 
+            style={{ 
+              overflowX: 'auto', 
+              overflowY: 'auto', 
+              flex: 1,
+              minHeight: 0,
+              position: 'relative', 
+              width: '100%' 
+            }}
+          >
             <table style={{ width: '100%', minWidth: '100%', borderCollapse: 'separate', borderSpacing: 0, textAlign: 'left' }}>
           {/* Table Header */}
           <thead style={{ position: 'sticky', top: 0, zIndex: 50, backgroundColor: 'var(--bg-card, #ffffff)', borderBottom: '1px solid color-mix(in srgb, var(--border-color, #e5e7eb) 60%, transparent)', userSelect: 'none' }}>
@@ -2515,6 +2568,7 @@ export default function JournalTable({
                   padding: 0,
                   textAlign: 'center',
                   verticalAlign: 'middle',
+                  backgroundColor: 'var(--bg-card, #ffffff)',
                   ...getStickyProps('gutter', true).style
                 }}
               >
@@ -2595,6 +2649,7 @@ export default function JournalTable({
                       cursor: showReorderHandles ? 'grab' : 'default',
                       textAlign: col.align === 'right' ? 'right' : 'left',
                       verticalAlign: 'middle',
+                      backgroundColor: 'var(--bg-card, #ffffff)',
                       ...stickyProps.style
                     }}
                   >
@@ -3015,7 +3070,7 @@ export default function JournalTable({
                       );
                     }
 
-                    // 4. SETUP (Nexus-style SetupDropdown with drag-reorder & custom add)
+                    // 4. SETUP (SetupDropdown with drag-reorder & custom add)
                     if (col.id === 'setup') {
                       return (
                         <td key={col.id} style={{ padding: '10px 14px', whiteSpace: 'nowrap', verticalAlign: 'middle', ...cellStickyStyle }}>
@@ -3061,7 +3116,7 @@ export default function JournalTable({
                       );
                     }
 
-                    // 6. ENTRY TYPE (Nexus-style EntryTypeDropdown with drag-reorder & custom add)
+                    // 6. ENTRY TYPE (EntryTypeDropdown with drag-reorder & custom add)
                     if (col.id === 'entryType') {
                       return (
                         <td key={col.id} style={{ padding: '12px 14px', whiteSpace: 'nowrap', verticalAlign: 'middle', ...cellStickyStyle }}>
@@ -3160,7 +3215,7 @@ export default function JournalTable({
                       );
                     }
 
-                    // 11. Exit Trigger Dropdown (Exact replica of Nexus)
+                    // 11. Exit Trigger Dropdown
                     if (col.id === 'exitTrigger') {
                       return (
                         <td key={col.id} style={{ padding: '12px 14px', whiteSpace: 'nowrap', verticalAlign: 'middle', ...cellStickyStyle }}>
@@ -3174,7 +3229,7 @@ export default function JournalTable({
                       );
                     }
 
-                    // 12. Growth Areas Dropdown (Exact replica of Nexus multi-select)
+                    // 12. Growth Areas Dropdown (multi-select)
                     if (col.id === 'growthAreas') {
                       return (
                         <td key={col.id} style={{ padding: '12px 14px', whiteSpace: 'nowrap', verticalAlign: 'middle', ...cellStickyStyle }}>
@@ -3481,7 +3536,7 @@ export default function JournalTable({
         </table>
       </div>
 
-      {/* Table Footer Toolbar (Nexus-Identical) */}
+      {/* Table Footer Toolbar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -3491,7 +3546,8 @@ export default function JournalTable({
         padding: '10px 20px',
         userSelect: 'none',
         flexWrap: 'wrap',
-        gap: '12px'
+        gap: '12px',
+        flexShrink: 0
       }}>
         {/* Left: Add Trade button + Auto-number button */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

@@ -134,7 +134,7 @@ export default function TopBar({
       {/* Left: Date Range & Category Filter Pill + Market Switcher (Indian & US Flags) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div ref={filterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          {/* Nexus-identical Filter Pill Button */}
+          {/* Filter Pill Button */}
           <button 
             type="button"
             onClick={() => {
@@ -238,7 +238,7 @@ export default function TopBar({
             </button>
           )}
 
-          {/* Minimalist Multi-Level Filter Menu (Nexus-Identical) */}
+          {/* Minimalist Multi-Level Filter Menu */}
           {isFilterOpen && (
             <div style={{
               position: 'absolute',
@@ -984,7 +984,7 @@ export default function TopBar({
 
       </div>
 
-      {/* Center: Live market timer matching Nexus Journal (True Screen Center) */}
+      {/* Center: Live market timer (True Screen Center) */}
       <div style={{
         position: 'absolute',
         left: '50%',

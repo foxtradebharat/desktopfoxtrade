@@ -186,7 +186,7 @@ export const GOLDEN_TESTS = [
   },
   {
     id: 6,
-    name: 'Closed Win Rate % (Nexus Ground Truth)',
+    name: 'Closed Win Rate % (Fox Ground Truth)',
     spec: { filters: [{ field: 'status', op: 'eq', value: 'Closed' }], aggregations: ['winRate'] },
     expected: { winRate: groundTruthClosedWinRate }
   },

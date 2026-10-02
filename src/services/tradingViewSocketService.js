@@ -2,7 +2,7 @@
  * tradingViewSocketService.js
  * 
  * Direct WebSocket Market Data Service connected to TradingView data servers.
- * Matches the exact Tier-1 streaming feed used in Nexus Journal.
+ * Provides real-time streaming market quote data.
  * 
  * Protocol: Socket.io Framing (~m~${length}~m~${payload})
  * Endpoint: wss://data.tradingview.com/socket.io/websocket?origin=https://in.tradingview.com
@@ -143,7 +143,7 @@ class TradingViewSocketService {
 
         const wsUrl = isLocal
           ? 'wss://data.tradingview.com/socket.io/websocket?origin=https://in.tradingview.com'
-          : (import.meta.env?.VITE_TV_WS_PROXY || 'wss://nexus-journal-api.aniket-mahato-bcom23.workers.dev/functions/v1/tv-ws');
+          : (import.meta.env?.VITE_TV_WS_PROXY || 'wss://data.tradingview.com/socket.io/websocket?origin=https://in.tradingview.com');
 
         const socket = new WebSocket(wsUrl);
 

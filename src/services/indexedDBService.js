@@ -1,4 +1,4 @@
-﻿/**
+/**
  * indexedDBService.js
  * ─────────────────────────────────────────────────────────────────────────────
  * IndexedDB abstraction layer for FoxTrade.
@@ -108,22 +108,16 @@ function lsSet(uid, trades) {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /**
- * Save all trades for a user to IndexedDB (with localStorage mirror).
+ * @deprecated  Use dbService.saveUserTrades() or tradeStore.putTrade() instead.
+ *              This function writes to the old foxtrade_db v1 format.
+ *              It is kept ONLY for migration reads. DO NOT call this on new code paths.
  */
 export async function idbSaveTrades(uid, trades) {
-  if (!uid) return false;
-  const normalized = uid.startsWith('demo-') ? 'demo' : uid;
-
-  // Always mirror to localStorage for instant reads on next mount
-  lsSet(normalized, trades);
-
-  try {
-    await txPut(STORE_TRADES, { uid: normalized, trades, updatedAt: Date.now() });
-    return true;
-  } catch (err) {
-    console.warn('[IndexedDB] saveTrades fallback to localStorage:', err.message);
-    return false;
-  }
+  console.error(
+    '[IndexedDB v1] idbSaveTrades() is deprecated and should not be called. ' +
+    'Use dbService.saveUserTrades() or tradeStore.putTrade() instead.'
+  );
+  return false;
 }
 
 /**

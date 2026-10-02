@@ -1,5 +1,5 @@
-# 📖 Document 1 of 4 — Nexus Journal: Every Feature Explained Like You're 5
-### Website: [nexusjournal.co.in](https://www.nexusjournal.co.in)
+# 📖 Document 1 of 4 — Competitor Journal: Every Feature Explained Like You're 5
+### Website: [competitor-journal.co.in](https://competitor-journal.co.in)
 
 > **Reading this doc:** Imagine you are explaining to your younger cousin who just started trading on Zerodha but has no idea what "drawdown" or "P&L analytics" means. That's the level we're going to.
 
@@ -21,17 +21,17 @@ Every time you buy or sell a stock/option, you write it down. You note:
 
 Over time, you start seeing PATTERNS. "Oh I always lose money on Monday mornings." "Oh I make money on Bank Nifty when RBI has a meeting." That's the power.
 
-**Nexus Journal is a fancy digital version of this diary** — but it also does all the math for you automatically.
+**Competitor Journal is a fancy digital version of this diary** — but it also does all the math for you automatically.
 
 ---
 
-## 🏗️ How Nexus Works (Super Simple)
+## 🏗️ How Competitor Works (Super Simple)
 
 ```
 Step 1: You trade on Zerodha / Groww (as normal)
 Step 2: Download your trade file from broker (CSV file)
-Step 3: Upload that file to Nexus Journal
-Step 4: Nexus reads all your trades automatically
+Step 3: Upload that file to Competitor Journal
+Step 4: Competitor reads all your trades automatically
 Step 5: It shows you fancy charts and numbers about your trading
 Step 6: You learn what's working and what's not
 ```
@@ -58,7 +58,7 @@ Think of this like your WhatsApp chat history — but for trades. Every trade yo
 ### Why it matters (Real-life example):
 Imagine you took 200 trades last month. Without a journal, you just see "I lost ₹15,000 this month" and you have NO IDEA why.
 
-With Nexus Journal — you can filter: "Show me all trades tagged FOMO" → You see 30 FOMO trades → They all lost money → Lesson: Stop trading on FOMO!
+With Competitor Journal — you can filter: "Show me all trades tagged FOMO" → You see 30 FOMO trades → They all lost money → Lesson: Stop trading on FOMO!
 
 ---
 
@@ -89,7 +89,7 @@ In F&O, one "lot" of NIFTY = 50 units. When you buy/sell options, you might buy 
 
 Most basic tools get confused by this and show wrong profit/loss.
 
-**Lot-level accuracy means Nexus tracks EACH LOT separately** — so even if you bought in 3 pieces and sold in 5 pieces, it correctly calculates your total profit/loss.
+**Lot-level accuracy means Competitor tracks EACH LOT separately** — so even if you bought in 3 pieces and sold in 5 pieces, it correctly calculates your total profit/loss.
 
 ### Real-life example:
 ```
@@ -100,7 +100,7 @@ Price goes up more → You sell 2 lots at ₹350
 Total profit = (2 lots × ₹80) + (2 lots × ₹150)
              = ₹160 + ₹300 = ₹460 per unit × lot size
 
-Nexus calculates this CORRECTLY.
+Competitor calculates this CORRECTLY.
 Most tools would mess this up.
 ```
 
@@ -116,7 +116,7 @@ This is the "report card" of your trading. Instead of just seeing numbers, you s
 #### 4a. Win Rate
 **Simple:** Out of every 10 trades, how many did you win?
 - 6 wins out of 10 trades = 60% win rate
-- Nexus shows this as a big number on your dashboard
+- Competitor shows this as a big number on your dashboard
 - You want this to be above 50% ideally
 
 #### 4b. Risk:Reward Ratio (R:R)
@@ -127,7 +127,7 @@ Example:
 - You aim to make ₹2,000 (your target)
 - That's a 1:2 Risk:Reward ratio
 
-Good traders have 1:2 or better. Nexus shows your AVERAGE R:R across all trades.
+Good traders have 1:2 or better. Competitor shows your AVERAGE R:R across all trades.
 
 #### 4c. Total Trades Count
 Just a simple number — how many trades did you take this month/year?
@@ -137,12 +137,12 @@ Useful to catch "overtrading" — taking too many trades in a panic.
 #### 4d. Average Position Size
 How much money did you put in each trade on average?
 
-If your average position is ₹50,000 but on losing trades it was ₹1,00,000 — that's a pattern! You bet bigger when you're losing (revenge trading). Nexus catches this.
+If your average position is ₹50,000 but on losing trades it was ₹1,00,000 — that's a pattern! You bet bigger when you're losing (revenge trading). Competitor catches this.
 
 #### 4e. Holding Period
 How long did you hold each trade on average?
 
-- If you're a "swing trader" but Nexus shows average holding = 47 minutes → You're actually day-trading!
+- If you're a "swing trader" but Competitor shows average holding = 47 minutes → You're actually day-trading!
 - Mismatch between your self-image and reality = very useful insight
 
 ---
@@ -166,13 +166,13 @@ That fall from ₹1,40,000 → ₹1,10,000 = **₹30,000 drawdown** = **21.4% dr
 - A 50% drawdown means you need 100% return just to break even
 - Knowing your drawdown helps you understand: "Am I taking too much risk?"
 
-### What Nexus shows:
+### What Competitor shows:
 - Your maximum drawdown ever
 - Your current drawdown (if you're in a losing streak)
 - A chart showing your equity curve going up and down over time
 
 ### Tax-Aware Drawdown:
-This is special — Nexus also shows drawdown AFTER taxes. Because if you made ₹1,40,000 gross but paid ₹15,000 in taxes, your real peak was only ₹1,25,000. The real drawdown is calculated from THAT number.
+This is special — Competitor also shows drawdown AFTER taxes. Because if you made ₹1,40,000 gross but paid ₹15,000 in taxes, your real peak was only ₹1,25,000. The real drawdown is calculated from THAT number.
 
 ---
 
@@ -197,7 +197,7 @@ That ₹4,000 is your "Profit Giveback"
 ### Why it matters:
 Many traders are "great at finding entries but terrible at exits." They know when to buy but they hold too long and give back all their profits.
 
-If Nexus shows you have a HIGH profit giveback number consistently → Your problem is exits, not entries. You need to learn to book profits faster.
+If Competitor shows you have a HIGH profit giveback number consistently → Your problem is exits, not entries. You need to learn to book profits faster.
 
 ---
 
@@ -247,7 +247,7 @@ You still keep ₹15 profit = PROTECTED profit
 
 When you trade in India, the government takes a cut through various charges. Most traders don't even know how much they're actually paying!
 
-#### The charges Nexus tracks:
+#### The charges Competitor tracks:
 
 | Charge | What it is (baby version) |
 |--------|--------------------------|
@@ -258,7 +258,7 @@ When you trade in India, the government takes a cut through various charges. Mos
 | **Brokerage** | Fee you pay your broker (₹20 per trade for Zerodha) |
 | **Exchange charges** | Small fee to NSE/BSE for using their platform |
 
-#### What Nexus shows you:
+#### What Competitor shows you:
 
 **Gross P&L vs Net P&L:**
 - Gross = What you made BEFORE all charges
@@ -275,7 +275,7 @@ They actually made ₹41,500. Big difference!
 ```
 
 **Tax-aware reporting:**
-Nexus also shows you whether your income is:
+Competitor also shows you whether your income is:
 - **STCG** (Short Term Capital Gain) — held less than 1 year → taxed at 20%
 - **Business Income** — F&O trading → taxed as per your income slab
 
@@ -293,12 +293,12 @@ In the stock market, things move in "themes" or "narratives." For example:
 - "EV stocks are rising because government announced EV policy" → EV policy theme
 - "Banking stocks rising before RBI meeting" → RBI event theme
 
-When you tag your trades under a theme, Nexus can show you:
+When you tag your trades under a theme, Competitor can show you:
 - **Which themes are you actually making money on?**
 - **Which themes do you keep losing on?**
 
 ### Real-life example:
-You think you're good at trading "budget themes" (stocks that move around Union Budget). Nexus shows you tagged 15 "Budget theme" trades. You LOST money on 11 of them. Reality check! You're NOT good at budget themes — you just THINK you are.
+You think you're good at trading "budget themes" (stocks that move around Union Budget). Competitor shows you tagged 15 "Budget theme" trades. You LOST money on 11 of them. Reality check! You're NOT good at budget themes — you just THINK you are.
 
 ### Why this is powerful:
 This is what separates random trading from having an actual EDGE. An edge means "I consistently make money on X type of situation."
@@ -309,7 +309,7 @@ This is what separates random trading from having an actual EDGE. An edge means 
 
 ### What it is (Simple version):
 
-When you're reviewing your trades, Nexus can show you the LIVE current price of that stock alongside your journal entry.
+When you're reviewing your trades, Competitor can show you the LIVE current price of that stock alongside your journal entry.
 
 So if you're reviewing your RELIANCE trade from last week, you can also see RELIANCE's current price in real-time — without having to open a separate app.
 
@@ -325,17 +325,17 @@ Imagine you have a diary. You can either:
 - **Option A:** Give your diary to the library to keep safe
 - **Option B:** Keep your diary at home, only you have access
 
-Nexus Journal chose **Option B.**
+Competitor Journal chose **Option B.**
 
-Your trade data NEVER goes to Nexus's computer servers. Everything stays inside YOUR browser (like Chrome or Firefox) on your device.
+Your trade data NEVER goes to Competitor's computer servers. Everything stays inside YOUR browser (like Chrome or Firefox) on your device.
 
 ### Why they do this:
 - Your trade data is sensitive. No one should know your positions.
-- If Nexus's servers get hacked — YOUR data can't be stolen (because it was never there)
+- If Competitor's servers get hacked — YOUR data can't be stolen (because it was never there)
 - Your trading strategy stays 100% private
 
 ### The backup system:
-Since data is on your device only, you need a backup. Nexus uses **Google Drive**. Your data gets saved to YOUR personal Google Drive account — not Nexus's Drive, YOUR Drive. Only you can access it.
+Since data is on your device only, you need a backup. Competitor uses **Google Drive**. Your data gets saved to YOUR personal Google Drive account — not Competitor's Drive, YOUR Drive. Only you can access it.
 
 ---
 
@@ -343,12 +343,12 @@ Since data is on your device only, you need a backup. Nexus uses **Google Drive*
 
 ### What it is (Simple version):
 
-Nexus can READ trade files from these Indian brokers:
+Competitor can READ trade files from these Indian brokers:
 
 | Broker | How to connect |
 |--------|---------------|
-| **Zerodha** | Download tradebook from Console → Upload to Nexus |
-| **Groww** | Download order history → Upload to Nexus |
+| **Zerodha** | Download tradebook from Console → Upload to Competitor |
+| **Groww** | Download order history → Upload to Competitor |
 | **Dhan** | Download trade report → Upload |
 | **Upstox** | Download tradebook → Upload |
 | **Fyers** | Download trade report → Upload |
@@ -362,12 +362,12 @@ Nexus can READ trade files from these Indian brokers:
 1. Login to your broker app/website
 2. Go to "Reports" section
 3. Download your tradebook as CSV/Excel
-4. Upload that file to Nexus
+4. Upload that file to Competitor
 5. Done — all trades appear automatically
 
 ---
 
-## 🗺️ All Pages on Nexus Journal Website
+## 🗺️ All Pages on Competitor Journal Website
 
 | Page | What it's about |
 |------|----------------|
@@ -387,7 +387,7 @@ Nexus can READ trade files from these Indian brokers:
 
 ---
 
-## 💰 Nexus Journal Pricing
+## 💰 Competitor Journal Pricing
 
 | What | Details |
 |------|---------|
@@ -401,9 +401,9 @@ Nexus can READ trade files from these Indian brokers:
 
 ---
 
-## ✅ Summary — What Nexus Does in One Paragraph
+## ✅ Summary — What Competitor Does in One Paragraph
 
-> Nexus Journal takes your trade data from Zerodha, Groww, or other Indian brokers and turns it into a beautiful dashboard. It shows you your profit/loss (after taxes), how much you're drawing down, how much profit you gave back, which themes work for you, and lets you tag trades with notes and chart screenshots. Your data never leaves your device — it stays private in your browser. You pay once a year in US dollars. It's a solid product built for serious Indian traders but it's priced and designed in a way that keeps 90% of Indian retail traders away from it.
+> Competitor Journal takes your trade data from Zerodha, Groww, or other Indian brokers and turns it into a beautiful dashboard. It shows you your profit/loss (after taxes), how much you're drawing down, how much profit you gave back, which themes work for you, and lets you tag trades with notes and chart screenshots. Your data never leaves your device — it stays private in your browser. You pay once a year in US dollars. It's a solid product built for serious Indian traders but it's priced and designed in a way that keeps 90% of Indian retail traders away from it.
 
 ---
 

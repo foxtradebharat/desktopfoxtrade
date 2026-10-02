@@ -89,7 +89,7 @@ function resolveTradingViewUrl(url) {
 }
 
 /**
- * Slot Uploader Component (Exact Nexus UI/UX)
+ * Slot Uploader Component
  * Supports 'file' upload (drag & drop, click, paste) and 'url' (TradingView URL)
  */
 function SlotUploader({ 
@@ -260,7 +260,7 @@ function SlotUploader({
         }} 
       />
 
-      {/* CASE A: IMAGE IS ATTACHED (Exact Nexus Preview Card with Hover Overlay) */}
+      {/* CASE A: IMAGE IS ATTACHED (Preview Card with Hover Overlay) */}
       {currentImage ? (
         <div 
           className="chart-card-group"
@@ -289,7 +289,7 @@ function SlotUploader({
             }} 
           />
 
-          {/* Hover Overlay (Exact Nexus View, Replace, Delete) */}
+          {/* Hover Overlay (View, Replace, Delete) */}
           <div 
             className="chart-card-overlay"
             style={{
@@ -654,7 +654,7 @@ export default function UploadChartModal({
           opacity: 1 !important;
         }
       `}</style>
-      {/* Modal Dialog Card (Exact Nexus max-w-[800px] border rounded-xl overflow-hidden) */}
+      {/* Modal Dialog Card (max-w-[800px] border rounded-xl overflow-hidden) */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -735,7 +735,7 @@ export default function UploadChartModal({
           />
         </div>
 
-        {/* Bottom Footer (Exact Nexus) */}
+        {/* Bottom Footer */}
         <div style={{
           display: 'flex',
           justifyContent: 'flex-end',

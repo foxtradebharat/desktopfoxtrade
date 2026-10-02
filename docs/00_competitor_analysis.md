@@ -1,15 +1,15 @@
-# 📊 Nexus Journal — Full Competitive Analysis & Market Strategy Report
+# 📊 Competitor Journal — Full Competitive Analysis & Market Strategy Report
 ### For Building a Competing Indian Retail Trading Journal (Zerodha & Groww Compatible)
 > **Prepared:** July 2026 | **Target:** Indian Retail Traders (NSE/BSE)
 
 ---
 
 ## 🔍 Table of Contents
-1. [What is Nexus Journal?](#1-what-is-nexus-journal)
+1. [What is Competitor Journal?](#1-what-is-competitor-journal)
 2. [Complete Feature Breakdown](#2-complete-feature-breakdown)
 3. [Pricing Analysis](#3-pricing-analysis)
 4. [Broker Integrations](#4-broker-integrations)
-5. [What Nexus Does Well](#5-what-nexus-does-well)
+5. [What Competitor Does Well](#5-what-competitor-does-well)
 6. [Weaknesses & Gaps — What Can Be Better](#6-weaknesses--gaps--what-can-be-better)
 7. [Feature Ideas to Add](#7-feature-ideas-to-add)
 8. [Competitor Landscape](#8-competitor-landscape)
@@ -20,11 +20,11 @@
 
 ---
 
-## 1. What is Nexus Journal?
+## 1. What is Competitor Journal?
 
-**Website:** [https://www.nexusjournal.co.in](https://www.nexusjournal.co.in)
+**Website:** [https://competitor-journal.co.in](https://competitor-journal.co.in)
 
-Nexus Journal is a **browser-based, professional trading journal** platform built specifically for Indian and US market traders. It positions itself as the "upgrade from spreadsheets" for serious traders — offering structured analytics, broker-integrated workflows, and privacy-first data architecture.
+Competitor Journal is a **browser-based, professional trading journal** platform built specifically for Indian and US market traders. It positions itself as the "upgrade from spreadsheets" for serious traders — offering structured analytics, broker-integrated workflows, and privacy-first data architecture.
 
 **Core Value Proposition:**
 > *"Turn broker data into trade review, portfolio analytics, tax views, drawdown, profit giveback, lot-level accuracy, theme tracking, chart journaling, and real-time price context."*
@@ -103,7 +103,7 @@ Nexus Journal is a **browser-based, professional trading journal** platform buil
 
 | Feature | Description |
 |---------|-------------|
-| **Zero-Data Architecture** | No data stored on Nexus servers |
+| **Zero-Data Architecture** | No data stored on Competitor servers |
 | **Browser-Local Storage** | All data lives in your browser |
 | **Google Drive Backup** | Optional personal backup |
 | **No Data Selling** | Strong privacy-first positioning |
@@ -152,7 +152,7 @@ Nexus Journal is a **browser-based, professional trading journal** platform buil
 
 ## 4. Broker Integrations
 
-### ✅ Supported by Nexus Journal
+### ✅ Supported by Competitor Journal
 
 | Broker | Type |
 |--------|------|
@@ -183,7 +183,7 @@ Nexus Journal is a **browser-based, professional trading journal** platform buil
 
 ---
 
-## 5. What Nexus Does Well
+## 5. What Competitor Does Well
 
 ### ✅ Strengths
 
@@ -191,7 +191,7 @@ Nexus Journal is a **browser-based, professional trading journal** platform buil
 
 2. **Lot-Level Accuracy** — F&O traders who scale in/out get accurate trade reconstruction. This is a real pain point in basic tools.
 
-3. **Tax-Aware Analytics** — Few journals properly calculate STT, SEBI charges, GST, and stamp duty to show true net P&L. Nexus does this.
+3. **Tax-Aware Analytics** — Few journals properly calculate STT, SEBI charges, GST, and stamp duty to show true net P&L. Competitor does this.
 
 4. **Theme Tracker** — Unique feature helping traders identify if they're trading thematic edges. Not available in most competitors.
 
@@ -289,7 +289,7 @@ Nexus Journal is a **browser-based, professional trading journal** platform buil
 
 | Platform | Pricing (INR) | Key Strength | Weakness |
 |----------|--------------|--------------|----------|
-| **Nexus Journal** | ~₹3,500/yr (USD) | Privacy, tax analytics, theme tracker | No free tier, USD billing, no AI, no mobile |
+| **Competitor Journal** | ~₹3,500/yr (USD) | Privacy, tax analytics, theme tracker | No free tier, USD billing, no AI, no mobile |
 | **TradesViz** | Free / ~₹850–₹1,300/mo (USD) | 600+ metrics, AI Q&A, backtesting | Complex, USD billing, US-first |
 | **OneTradeJournal** | ~₹399/mo or ~₹2,999/yr | India-native, discipline score, 135+ tools | Newer, less proven analytics depth |
 | **TradeFix AI** | Free to start | AI psychology coach | Limited analytics |
@@ -384,7 +384,7 @@ Realistic initial serviceable market (SAM):
 
 ### ⚔️ Competitive Moats — What You Need to Win
 
-| Moat | Your Advantage | Nexus Advantage |
+| Moat | Your Advantage | Competitor Advantage |
 |------|---------------|-----------------|
 | **INR billing + UPI** | ✅ Offer this | ❌ USD only |
 | **Free tier** | ✅ Offer this | ❌ Not available |
@@ -425,9 +425,9 @@ Realistic initial serviceable market (SAM):
 
 ## 11. Recommended Pricing for India
 
-### 💰 Your Pricing Strategy vs. Nexus
+### 💰 Your Pricing Strategy vs. Competitor
 
-| Plan | Your Price | Nexus Price | Advantage |
+| Plan | Your Price | Competitor Price | Advantage |
 |------|-----------|-------------|-----------|
 | **Free** | ✅ 100 trades/month FREE | ❌ No free tier | Massive acquisition tool |
 | **Starter** | ₹199/month or ₹1,499/year | — | Sub-₹200 is impulse-buy territory |
@@ -445,9 +445,9 @@ Realistic initial serviceable market (SAM):
 
 ## 12. Summary & Action Plan
 
-### 🎯 Your Key Differentiators Over Nexus Journal
+### 🎯 Your Key Differentiators Over Competitor Journal
 
-| What You Offer | What Nexus Lacks |
+| What You Offer | What Competitor Lacks |
 |---------------|-----------------|
 | ✅ Free tier (100 trades/month) | ❌ No free plan |
 | ✅ INR billing via UPI/Razorpay | ❌ USD-only billing |
@@ -498,7 +498,7 @@ Priority 3 (Scale):
 
 ### 💡 Final Verdict
 
-> **The Indian trading journal market is ripe for disruption.** Nexus Journal has built a technically solid product but has left enormous gaps: USD billing, no free tier, no mobile, no AI, and no Hindi support. These are not minor gaps — they are **market-defining barriers** that prevent the majority of Indian retail traders (especially Tier-2/3 city, new traders under 30, and Groww/Zerodha casual users) from ever becoming paying customers.
+> **The Indian trading journal market is ripe for disruption.** Competitor Journal has built a technically solid product but has left enormous gaps: USD billing, no free tier, no mobile, no AI, and no Hindi support. These are not minor gaps — they are **market-defining barriers** that prevent the majority of Indian retail traders (especially Tier-2/3 city, new traders under 30, and Groww/Zerodha casual users) from ever becoming paying customers.
 >
 > A well-executed, **INR-first, mobile-friendly, AI-powered, freemium** trading journal targeting Zerodha and Groww users has a **clear path to 10,000+ paying subscribers within 12 months** at a price point that feels natural to Indian traders.
 >
@@ -506,4 +506,4 @@ Priority 3 (Scale):
 
 ---
 
-*Report compiled using publicly available data from nexusjournal.co.in, NSE market statistics, SEBI reports, and competitor analysis as of July 2026.*
+*Report compiled using publicly available data from competitor-journal.co.in, NSE market statistics, SEBI reports, and competitor analysis as of July 2026.*

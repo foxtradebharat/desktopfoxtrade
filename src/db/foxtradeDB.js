@@ -1,13 +1,13 @@
 /**
  * foxtradeDB.js
  * ─────────────────────────────────────────────────────────────────────────────
- * FoxTrade IndexedDB v2 — Privacy-first local database.
+ * FoxTrade IndexedDB v3 — Privacy-first local database.
  *
  * Philosophy: ALL trade data lives exclusively in the user's browser (IndexedDB)
  * and their own Google Drive. Zero trade data ever touches any third-party server.
  *
  * DB Name    : foxtrade_v2
- * DB Version : 2
+ * DB Version : 3
  *
  * Stores:
  *   trades            — per-trade records (not array blobs)
@@ -16,12 +16,16 @@
  *   chart_images      — binary image blobs + Drive sync metadata
  *   app_config        — critical config (replaces fragile localStorage)
  *   monthly_perf      — monthly performance ledger per portfolio
- *   ohlc_cache        — candlestick price cache with TTL
+ *   ohlc_cache        — candlestick price cache with TTL (expiresAt index v3)
+ *
+ * Schema changes:
+ *   v3: Added compound index [status, portfolioId] on operations_queue for fast
+ *       pending-count queries without full-table scans.
+ *       Added expiresAt index on ohlc_cache for TTL cleanup on startup.
  */
 
 const DB_NAME    = 'foxtrade_v2';
-const DB_VERSION = 2;
-
+const DB_VERSION = 3;
 /** Store name constants — use these everywhere, never raw strings */
 export const STORES = Object.freeze({
   TRADES:           'trades',
@@ -54,6 +58,7 @@ export function getDB() {
 
     req.onupgradeneeded = (event) => {
       const db  = event.target.result;
+      const oldVersion = event.oldVersion;
 
       // ── trades ────────────────────────────────────────────────────────────
       // Each trade is its own record. Enables per-trade versioning & CRDT merge.
@@ -73,9 +78,18 @@ export function getDB() {
           keyPath:       'qid',
           autoIncrement: true,
         });
-        oqs.createIndex('status',      'status',      { unique: false });
-        oqs.createIndex('portfolioId', 'portfolioId', { unique: false });
-        oqs.createIndex('createdAt',   'createdAt',   { unique: false });
+        oqs.createIndex('status',             'status',                    { unique: false });
+        oqs.createIndex('portfolioId',        'portfolioId',               { unique: false });
+        oqs.createIndex('createdAt',          'createdAt',                 { unique: false });
+        // v3: compound index for fast pending-count per portfolio
+        oqs.createIndex('status_portfolioId', ['status', 'portfolioId'],   { unique: false });
+      } else if (oldVersion < 3) {
+        // v2 → v3 upgrade: add compound index to existing store
+        const tx  = event.target.transaction;
+        const oqs = tx.objectStore(STORES.OPERATIONS_QUEUE);
+        if (!oqs.indexNames.contains('status_portfolioId')) {
+          oqs.createIndex('status_portfolioId', ['status', 'portfolioId'], { unique: false });
+        }
       }
 
       // ── sync_cursors ──────────────────────────────────────────────────────
@@ -97,7 +111,7 @@ export function getDB() {
 
       // ── app_config ────────────────────────────────────────────────────────
       // Replaces localStorage for critical config that must survive storage pressure.
-      // Keys: activePortfolioId, portfolios, deviceId, gdrive_*, etc.
+      // Keys: activePortfolioId, portfolios, deviceId, gdrive_*, notes_*, etc.
       if (!db.objectStoreNames.contains(STORES.APP_CONFIG)) {
         db.createObjectStore(STORES.APP_CONFIG, { keyPath: 'key' });
       }
@@ -113,8 +127,18 @@ export function getDB() {
 
       // ── ohlc_cache ────────────────────────────────────────────────────────
       // OHLC candlestick cache. keyPath = `${symbol}_${timeframe}`
+      // expiresAt field enables TTL cleanup on startup.
       if (!db.objectStoreNames.contains(STORES.OHLC_CACHE)) {
-        db.createObjectStore(STORES.OHLC_CACHE, { keyPath: 'symbolTimeframe' });
+        const oc = db.createObjectStore(STORES.OHLC_CACHE, { keyPath: 'symbolTimeframe' });
+        // v3: expiresAt index — used by purgeExpiredOhlcCache() on app start
+        oc.createIndex('expiresAt', 'expiresAt', { unique: false });
+      } else if (oldVersion < 3) {
+        // v2 → v3 upgrade: add expiresAt index to existing store
+        const tx = event.target.transaction;
+        const oc = tx.objectStore(STORES.OHLC_CACHE);
+        if (!oc.indexNames.contains('expiresAt')) {
+          oc.createIndex('expiresAt', 'expiresAt', { unique: false });
+        }
       }
     };
 
@@ -283,6 +307,71 @@ export function idbClearStore(storeName) {
                   .objectStore(storeName)
                   .clear();
     req.onsuccess = () => resolve();
+    req.onerror   = () => reject(req.error);
+  }));
+}
+
+/**
+ * Delete all expired OHLC cache records (where expiresAt < Date.now()).
+ * Call once on app startup to prevent stale candle data accumulating indefinitely.
+ * Requires the expiresAt index (added in DB v3).
+ * @returns {Promise<number>} count of purged records
+ */
+export function purgeExpiredOhlcCache() {
+  return getDB().then(db => new Promise((resolve, reject) => {
+    const tx    = db.transaction(STORES.OHLC_CACHE, 'readwrite');
+    const store = tx.objectStore(STORES.OHLC_CACHE);
+
+    // Guard: index may not exist on browsers that never upgraded to v3
+    if (!store.indexNames.contains('expiresAt')) { resolve(0); return; }
+
+    const now    = Date.now();
+    const range  = IDBKeyRange.upperBound(now, false); // expiresAt <= now
+    const index  = store.index('expiresAt');
+    const req    = index.openCursor(range);
+    let   count  = 0;
+
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (!cursor) { resolve(count); return; }
+      cursor.delete();
+      count++;
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+/**
+ * Count records matching a compound index key (e.g. [status, portfolioId]).
+ * Falls back to full-scan filter if the index doesn't exist (pre-v3 DBs).
+ * @param {string} storeName
+ * @param {string} indexName
+ * @param {Array}  value     — compound key array, e.g. ['pending', 'default']
+ * @returns {Promise<number>}
+ */
+export function idbCountByCompoundIndex(storeName, indexName, value) {
+  return getDB().then(db => new Promise((resolve, reject) => {
+    const tx    = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+
+    if (!store.indexNames.contains(indexName)) {
+      // Fallback for pre-v3: getAll + filter in memory
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const [statusVal, pidVal] = value;
+        const count = req.result.filter(
+          r => r.status === statusVal && r.portfolioId === pidVal
+        ).length;
+        resolve(count);
+      };
+      req.onerror = () => reject(req.error);
+      return;
+    }
+
+    const index = store.index(indexName);
+    const req   = index.count(value);
+    req.onsuccess = () => resolve(req.result);
     req.onerror   = () => reject(req.error);
   }));
 }

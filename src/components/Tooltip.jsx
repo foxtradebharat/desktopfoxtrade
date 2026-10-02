@@ -112,7 +112,7 @@ export default function Tooltip({
         boxShadow: '0 10px 25px -3px rgba(0, 0, 0, 0.14), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
         zIndex: 999999,
         pointerEvents: 'auto',
-        animation: 'nexusTooltipPop 0.14s ease-out',
+        animation: 'foxTooltipPop 0.14s ease-out',
         cursor: 'default',
         userSelect: 'text'
       }}
@@ -162,7 +162,7 @@ export default function Tooltip({
       onMouseLeave={handleTriggerLeave}
       onMouseOver={handleTriggerEnter}
       onMouseOut={handleTriggerLeave}
-      className={`nexus-tooltip-wrapper ${className}`}
+      className={`fox-tooltip-wrapper ${className}`}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

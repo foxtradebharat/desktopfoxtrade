@@ -4,7 +4,7 @@ import { getBrokerLogo, getBrokerDisplayName } from '../services/brokerLogos';
 /**
  * BrokerLogo Component
  * 
- * Renders official broker logo image matching Nexus Journal.
+ * Renders official broker logo image.
  * Falls back to clean initials or neutral dash if image is missing or errors.
  */
 export default function BrokerLogo({

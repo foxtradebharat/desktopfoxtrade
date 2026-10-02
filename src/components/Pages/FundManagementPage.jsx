@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Pencil, Info, X, Wallet, TrendingUp, Coins, BarChart3, Calendar, ChevronDown, Check } from 'lucide-react';
-import { Card, CardContent } from '../ui/card';
+import { Pencil, Info, X, Calendar, ChevronDown, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import {
   calculateMonthlyPerformance,
+  calculateYearlyFundSummary,
   getStoredCapitalChanges,
   saveCapitalChanges,
   parseMonthAndYear,
@@ -168,8 +168,9 @@ export default function FundManagementPage({
   // Dynamically extract all available years: Present Year + any years with logged trades or saved capital changes
   const availableYears = useMemo(() => {
     const yearsSet = new Set();
-    const presentYear = new Date().getFullYear().toString();
-    yearsSet.add(presentYear);
+    const presentYear = new Date().getFullYear();
+    yearsSet.add(String(presentYear));
+    yearsSet.add(String(presentYear + 1));
 
     // Extract years from all trade entry/exit dates and pyramid legs
     if (Array.isArray(trades)) {
@@ -243,10 +244,17 @@ export default function FundManagementPage({
     return () => window.removeEventListener('tradeontip_capital_updated', handleUpdate);
   }, [activePortfolioId, selectedYear]);
 
+  const [showPreTax, setShowPreTax] = useState(false);
+
   // Compute monthly matrix dynamically from current trades and capital changes
   const monthlyData = useMemo(() => {
-    return calculateMonthlyPerformance(trades, capitalChanges, selectedYear);
-  }, [trades, capitalChanges, selectedYear]);
+    return calculateMonthlyPerformance(trades, capitalChanges, selectedYear, { portfolioId: activePortfolioId });
+  }, [trades, capitalChanges, selectedYear, activePortfolioId]);
+
+  // Compute yearly fund summary and footer total metrics
+  const yearlySummary = useMemo(() => {
+    return calculateYearlyFundSummary(trades, capitalChanges, selectedYear, { portfolioId: activePortfolioId });
+  }, [trades, capitalChanges, selectedYear, activePortfolioId]);
 
   // Save changes to localStorage and notify parent
   const handleSaveValue = (monthIdx, field) => {
@@ -288,24 +296,9 @@ export default function FundManagementPage({
     setNoteModal(null);
   };
 
-  const startingCap = monthlyData?.[0]?.startingCapital || 0;
-  const totalNetPl = monthlyData?.reduce((acc, m) => acc + (m.netPl || 0), 0) || 0;
-  const currentCap = monthlyData?.[11]?.finalCapital ?? 0;
-
-  const isCapitalPositive = totalNetPl > 0 || (totalNetPl === 0 && currentCap > startingCap);
-  const isCapitalNegative = totalNetPl < 0 || (totalNetPl === 0 && currentCap < startingCap && startingCap > 0);
-
-  const currentCapColor = isCapitalPositive 
-    ? 'var(--color-green, #10b981)' 
-    : isCapitalNegative 
-      ? 'var(--color-red, #ef4444)' 
-      : 'var(--text-primary)';
-
-  const pnlColor = totalNetPl > 0 
-    ? 'var(--color-green, #10b981)' 
-    : totalNetPl < 0 
-      ? 'var(--color-red, #ef4444)' 
-      : 'var(--text-primary)';
+  const activeMonthlyAvg = showPreTax ? (yearlySummary.preTaxMonthlyAvgReturn ?? yearlySummary.monthlyAvgReturn) : yearlySummary.monthlyAvgReturn;
+  const activeTotalCompounded = showPreTax ? (yearlySummary.preTaxTotalCompounded ?? yearlySummary.totalCompounded) : yearlySummary.totalCompounded;
+  const activeCagr = showPreTax ? (yearlySummary.preTaxAnnualizedCagr ?? yearlySummary.annualizedCagr) : yearlySummary.annualizedCagr;
 
   return (
     <div style={{ padding: '0 24px 80px 24px', maxWidth: '1440px', margin: '0 auto' }}>
@@ -350,138 +343,6 @@ export default function FundManagementPage({
           />
         </div>
       </div>
-
-      {/* Capital & P&L Summary Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div
-          style={{
-            backgroundColor: 'var(--bg-card)',
-            border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-            borderRadius: '16px',
-            padding: '18px 20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            minHeight: '96px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              STARTING CAPITAL
-            </span>
-            <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
-              <Wallet size={14} />
-            </div>
-          </div>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ fontSize: '20px', fontWeight: 600, fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-              ₹ {monthlyData[0]?.startingCapital?.toLocaleString('en-IN') || '0'}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', fontWeight: 400 }}>
-              Base capital ({selectedYear})
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            backgroundColor: 'var(--bg-card)',
-            border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-            borderRadius: '16px',
-            padding: '18px 20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            minHeight: '96px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              GROSS REALIZED P&L
-            </span>
-            <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
-              <TrendingUp size={14} />
-            </div>
-          </div>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ fontSize: '20px', fontWeight: 600, fontFamily: 'var(--font-mono, monospace)', color: pnlColor, letterSpacing: '-0.02em' }}>
-              {totalNetPl < 0
-                ? `- ₹ ${Math.abs(totalNetPl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : `₹ ${totalNetPl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', fontWeight: 400 }}>
-              Before taxes & charges
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            backgroundColor: 'var(--bg-card)',
-            border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-            borderRadius: '16px',
-            padding: '18px 20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            minHeight: '96px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              CURRENT CAPITAL
-            </span>
-            <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
-              <Coins size={14} />
-            </div>
-          </div>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ fontSize: '20px', fontWeight: 600, fontFamily: 'var(--font-mono, monospace)', color: currentCapColor, letterSpacing: '-0.02em' }}>
-              {currentCap < 0
-                ? `- ₹ ${Math.abs(currentCap).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-                : `₹ ${currentCap.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', fontWeight: 400 }}>
-              Compounded balance
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            backgroundColor: 'var(--bg-card)',
-            border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-            borderRadius: '16px',
-            padding: '18px 20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            minHeight: '96px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              TOTAL TRADES
-            </span>
-            <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)' }}>
-              <BarChart3 size={14} />
-            </div>
-          </div>
-          <div style={{ marginTop: '10px' }}>
-            <div style={{ fontSize: '20px', fontWeight: 600, fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-              {monthlyData.reduce((acc, m) => acc + (m.trades || 0), 0)}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', fontWeight: 400 }}>
-              Closed positions ({selectedYear})
-            </div>
-          </div>
-        </div>
-      </div>
-
 
       {/* Table Container */}
       <div style={{
@@ -931,14 +792,14 @@ export default function FundManagementPage({
 
                     {/* Starting Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      ₹ {row.startingCapital.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ₹ {row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </td>
 
                     {/* Net P/L */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                       {row.netPl !== 0 ? (
                         <span style={{ color: row.netPl > 0 ? '#10b981' : '#ef4444' }}>
-                          ₹ {row.netPl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ₹ {row.netPl.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </span>
                       ) : (
                         <span style={{ color: 'var(--text-muted)' }}>-</span>
@@ -958,7 +819,7 @@ export default function FundManagementPage({
 
                     {/* Final Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                      ₹ {row.finalCapital.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ₹ {row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </td>
 
                     {/* Trades */}
@@ -994,7 +855,7 @@ export default function FundManagementPage({
 
                     {/* Avg Days */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 500, color: 'var(--text-primary)' }}>
-                      {row.avgDays}
+                      {row.avgDays % 1 === 0 ? row.avgDays : Number(row.avgDays.toFixed(2))}
                     </td>
 
                     {/* CAGR */}
@@ -1011,6 +872,140 @@ export default function FundManagementPage({
                 );
               })}
             </tbody>
+            {/* Table Footer */}
+            <tfoot
+              style={{
+                borderTop: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                boxShadow: '0 -2px 10px rgba(0,0,0,0.02)'
+              }}
+            >
+              <tr style={{ height: '44px' }}>
+                {/* Sticky left Total & Pre/Post-Tax toggle */}
+                <td
+                  style={{
+                    padding: '8px 20px',
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 20,
+                    backgroundColor: 'var(--bg-card)',
+                    borderRight: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--text-muted)' }}>
+                      Total
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPreTax(!showPreTax)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '9px',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: 0,
+                        color: showPreTax ? '#3b82f6' : '#10b981',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {showPreTax ? (
+                        <>
+                          <ToggleLeft size={13} />
+                          <span>Pre-Tax</span>
+                        </>
+                      ) : (
+                        <>
+                          <ToggleRight size={13} />
+                          <span>Post-Tax</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </td>
+
+                {/* Added */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Withdrawn */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Starting Capital */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Net P/L */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+
+                {/* % P/L */}
+                <td style={{ padding: '8px 20px', textAlign: 'right' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted)' }}>Monthly Avg:</span>
+                      <span style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono, monospace)', color: activeMonthlyAvg > 0 ? '#10b981' : (activeMonthlyAvg < 0 ? '#ef4444' : 'var(--text-muted)') }}>
+                        {activeMonthlyAvg.toFixed(2)}% @ pm
+                      </span>
+                      <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
+                        <Tooltip content="Geometric Mean Monthly Return. Represents the constant monthly growth rate. Formula: [(1 + Total Compounded)^(1/n) - 1]">
+                          <span className="opacity-40 hover:opacity-100 transition-opacity cursor-help inline-flex items-center">
+                            <Info size={10} color="var(--text-muted)" />
+                          </span>
+                        </Tooltip>
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted)' }}>Total Compounded:</span>
+                      <span style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 900, fontFamily: 'var(--font-mono, monospace)', color: activeTotalCompounded > 0 ? '#10b981' : (activeTotalCompounded < 0 ? '#ef4444' : 'var(--text-muted)') }}>
+                        {activeTotalCompounded >= 0 ? '+' : ''}{activeTotalCompounded.toFixed(2)}% pa
+                      </span>
+                      <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
+                        <Tooltip content="Time-Weighted Return (TWR) for the period. Formula: [Product of (1 + Monthly P/L%) - 1]">
+                          <span className="opacity-40 hover:opacity-100 transition-opacity cursor-help inline-flex items-center">
+                            <Info size={10} color="var(--text-muted)" />
+                          </span>
+                        </Tooltip>
+                      </span>
+                    </div>
+                  </div>
+                </td>
+
+                {/* Final Capital */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Trades */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* % Win */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Avg Gain */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Avg Loss */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Monthly Avg R */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+                {/* Avg Days */}
+                <td style={{ padding: '8px 20px', textAlign: 'right', fontFamily: 'var(--font-mono, monospace)', color: 'rgba(150, 150, 150, 0.4)' }}>-</td>
+
+                {/* CAGR */}
+                <td style={{ padding: '8px 20px', textAlign: 'right' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>CAGR:</span>
+                      <span style={{ fontSize: '12px', fontWeight: 900, fontFamily: 'var(--font-mono, monospace)', color: activeCagr > 0 ? '#10b981' : (activeCagr < 0 ? '#ef4444' : 'var(--text-muted)') }}>
+                        {activeCagr >= 0 ? '+' : ''}{activeCagr.toFixed(2)}%
+                      </span>
+                      <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
+                        <Tooltip content="Compound Annual Growth Rate. Formula: [(1 + Total Compounded)^(12/n) - 1]">
+                          <span className="opacity-40 hover:opacity-100 transition-opacity cursor-help inline-flex items-center">
+                            <Info size={10} color="var(--text-muted)" />
+                          </span>
+                        </Tooltip>
+                      </span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>

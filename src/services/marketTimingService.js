@@ -1,7 +1,6 @@
 /**
- * marketTimingService.js
+ * FoxTrade Market Timing Service
  * 
- * Re-engineered directly from Nexus Trading Journal (nexusjournal.co.in).
  * Handles Indian (NSE, BSE, MCX) and US equity markets with full holiday awareness,
  * special trading sessions (Muhurat, Union Budget), pre-market, opening soon,
  * and high-precision countdown timers.

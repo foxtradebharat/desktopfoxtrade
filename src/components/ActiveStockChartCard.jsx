@@ -159,7 +159,7 @@ export default function ActiveStockChartCard({
     ? ((avgEntry * openQty) / activePfCapital) * 100 
     : 0;
 
-  // 1. Intersection Observer for Lazy Rendering (Nexus 1:1 Architecture)
+  // 1. Intersection Observer for Lazy Rendering
   useEffect(() => {
     if (!cardRef.current) return;
     const observer = new IntersectionObserver(
@@ -366,7 +366,7 @@ export default function ActiveStockChartCard({
       console.warn('Volume series init:', volErr);
     }
 
-    // ── NATIVE CANVAS SERIES MARKERS (Nexus 1:1) ──────────────────────────
+    // ── NATIVE CANVAS SERIES MARKERS ──────────────────────────
     const markers = [];
     const rawEntryDate = parseTradeDate(position?.date || position?.entryDate || position?.entryLegs?.[0]?.date);
     const entryCandleTime = findNearestCandle(rawEntryDate, candles);
@@ -646,7 +646,7 @@ export default function ActiveStockChartCard({
         </>
       )}
 
-      {/* ── CARD HEADER (Nexus 1:1 Layout) ─────────────────────────────────── */}
+      {/* ── CARD HEADER ─────────────────────────────────── */}
       <div 
         style={{
           display: 'flex',
@@ -839,7 +839,7 @@ export default function ActiveStockChartCard({
           overflow: 'hidden'
         }}
       >
-        {/* Chart Watermark Overlay (Nexus 1:1) */}
+        {/* Chart Watermark Overlay */}
         <div 
           style={{
             position: 'absolute',
@@ -918,7 +918,7 @@ export default function ActiveStockChartCard({
           )}
         </div>
 
-        {/* Center-Bottom Floating Reset Zoom Button (Nexus 1:1) */}
+        {/* Center-Bottom Floating Reset Zoom Button */}
         <button
           onClick={handleResetZoom}
           title="Reset chart view"
@@ -1002,7 +1002,7 @@ export default function ActiveStockChartCard({
           }} 
         />
 
-        {/* Skeleton Shimmer Loading Placeholder (Nexus 1:1) */}
+        {/* Skeleton Shimmer Loading Placeholder */}
         {(!isInView || loading || (!candles && !loadError)) && (
           <div 
             style={{

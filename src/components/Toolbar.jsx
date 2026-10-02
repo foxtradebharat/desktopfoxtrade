@@ -89,7 +89,7 @@ export default function Toolbar({
       }}>
         {journalViewMode !== 'grid' && journalViewMode !== 'news' && (
           <>
-            {/* Toggleable Expandable Search Input matching Nexus */}
+            {/* Toggleable Expandable Search Input */}
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
           <button 
             onClick={() => setShowSearchInput(!showSearchInput)}
@@ -137,7 +137,7 @@ export default function Toolbar({
           )}
         </div>
 
-        {/* Status Custom Modern Dropdown (Hidden in Portfolio mode matching Nexus) */}
+        {/* Status Custom Modern Dropdown (Hidden in Portfolio mode) */}
         {journalViewMode !== 'portfolio' && (
           <div ref={statusDropdownRef} style={{ position: 'relative' }}>
             <button
@@ -237,7 +237,7 @@ export default function Toolbar({
             </div>
         )}
 
-        {/* Columns Dropdown Button & Popover (Matching Nexus Journal 1:1) */}
+        {/* Columns Dropdown Button & Popover */}
             <div style={{ position: 'relative' }}>
               <button 
                 type="button"
@@ -309,7 +309,7 @@ export default function Toolbar({
                 </button>
               )}
 
-              {/* Browse all chart images (matching Nexus Journal Image button) */}
+              {/* Browse all chart images (Visual Chartbook button) */}
               {(!settings?.toolbarActions || settings.toolbarActions.find(a => a.id === 'chartViewer')?.enabled !== false) && (
                 <button 
                   onClick={onBrowseImagesClick || onViewChartClick}
@@ -385,7 +385,7 @@ export default function Toolbar({
         </div>
       )}
 
-      {/* Column 3: Right View Mode Icons (Anchored at the far right corner matching Nexus 1:1) */}
+      {/* Column 3: Right View Mode Icons (Anchored at the far right corner) */}
       <div style={{
         flex: 1,
         display: 'flex',

@@ -33,6 +33,11 @@ import {
   getValidAccessToken,
   storeDirectToken,
   syncPendingImages,
+  subscribeToMergedTrades,
+  subscribeToTokenExpired,
+  initTokenKeepalive,
+  initNoteStore,
+  purgeExpiredOhlcCache,
   getDB,
   STORES,
   idbClearStore,
@@ -46,6 +51,37 @@ let _currentTrades    = [];          // in-memory cache for page-hide flush
 let _listeners        = new Set();   // subscribeToUserTrades callbacks
 let _migrationDone    = new Set();   // track which UIDs have been migrated
 let _cleanupPageHide  = null;        // cleanup fn for page-hide listeners
+let _cleanupMerge     = null;        // cleanup fn for CRDT merge listener
+
+// ── Startup maintenance ───────────────────────────────────────────────────────
+// Purge expired OHLC candle cache entries on every app start.
+// Uses the expiresAt index (DB v3) — safe no-op on older schema.
+purgeExpiredOhlcCache()
+  .then(count => { if (count > 0) console.log(`[dbService] Purged ${count} expired OHLC cache entries`); })
+  .catch(() => {});
+
+// Start the token keepalive system on every page load.
+// Covers the case where the user has a stored IDB token from a previous session
+// but the in-memory auto-refresh timer was lost on page reload.
+// initTokenKeepalive() is idempotent and also called inside storeTokens().
+initTokenKeepalive();
+
+// Initialize structured note store & reconcile legacy localStorage notes to IndexedDB
+initNoteStore();
+
+// ── CRDT merge → UI notification bridge ──────────────────────────────────────
+// Wire up once at module load: when syncEngine reports a merge (from another
+// device syncing to Drive), update the in-memory cache and notify all React
+// subscribers so the UI updates immediately without a page reload.
+_cleanupMerge = subscribeToMergedTrades((mergedTrades, portfolioId) => {
+  if (portfolioId !== _activePortfolio) return; // only care about active portfolio
+  _currentTrades = mergedTrades;
+  _notifyListeners(mergedTrades);
+  console.log(`[dbService] Real-time merge: ${mergedTrades.length} trades updated from Drive`);
+});
+
+// Re-export subscribeToTokenExpired so Dashboard.jsx only needs one import
+export { subscribeToTokenExpired };
 
 // ── Drive context ─────────────────────────────────────────────────────────────
 

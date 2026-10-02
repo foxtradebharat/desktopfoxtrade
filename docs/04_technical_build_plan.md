@@ -421,7 +421,7 @@ All data between browser and server travels over **HTTPS/TLS**. Like a locked tu
 ### Privacy positioning (marketing):
 > "We encrypt your trade data so strongly that even our own engineers cannot read your specific trades. Your strategy stays yours."
 
-This is BETTER than Nexus's "data never leaves your browser" approach — because we give you multi-device access AND we give you genuine privacy.
+This is BETTER than standard "data never leaves your browser" approaches — because we give you multi-device access AND we give you genuine privacy.
 
 ---
 
@@ -701,7 +701,7 @@ Before a developer starts writing code, you need to decide:
    (Twitter/X trading community, Zerodha TradingQ&A, Telegram groups)
 
 7. COMPETITIVE INTELLIGENCE:
-   Have you personally used Nexus Journal, TradesViz, OneTradeJournal?
+   Have you personally used commercial trading journals, TradesViz, OneTradeJournal?
    (You should use all of them before building — know what you're competing with)
 
 8. AI PROVIDER:
@@ -768,7 +768,7 @@ Target Year 1: 2,000 users = ₹8L MRR
 ---
 
 ## 📁 Your Complete Document Set:
-- **Doc 1:** `01_nexus_features_explained.md` — Nexus Journal, every feature in baby language
+- **Doc 1:** `01_competitor_features_explained.md` — Core trading journal features in detail
 - **Doc 2:** `02_international_giants_explained.md` — TraderSync, Edgewonk, Tradervue, Chartlog
 - **Doc 3:** `03_product_blueprint.md` — What to build (features, originals, comparison table)
 - **Doc 4:** `04_technical_build_plan.md` — Stack, architecture, roadmap, costs, team

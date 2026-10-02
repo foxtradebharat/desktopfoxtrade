@@ -10,11 +10,16 @@ import {
   Tag, ArrowRight, ArrowUpDown, Filter,
   TrendingUp, TrendingDown
 } from 'lucide-react';
-import { db } from '../../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
 import SymbolLogo from '../SymbolLogo';
-import PlaybookEngine from '../Playbook/PlaybookEngine';
-import PlaybookIcon from '../Playbook/PlaybookIcon';
+import { calculateMonthlyPerformance, parseMonthAndYear, getStoredCapitalChanges } from '../../utils/fundManagementCalculations';
+import {
+  saveCalendarNotes,
+  saveIndependentNotes,
+  getCalendarNotes,
+  getIndependentNotes,
+  subscribeToCalendarNotes,
+  subscribeToIndependentNotes,
+} from '../../db/noteStore';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -111,7 +116,7 @@ function getTradePnL(t) {
 /**
  * Calculates FIFO lot matching for a trade's exits against its buy/entry legs.
  * Returns a map of ISO date -> realized P&L on that date.
- * Strictly complies with Indian tax FIFO regulations (and matches Nexus FIFO mode).
+ * Strictly complies with Indian tax FIFO regulations.
  */
 function calcTradeFifoLots(t) {
   const datePnl = {};
@@ -297,13 +302,13 @@ function loadNotes() {
   try { return JSON.parse(localStorage.getItem(LS_NOTES_KEY)) || {}; } catch { return {}; }
 }
 function saveNotesLS(n) {
-  try { localStorage.setItem(LS_NOTES_KEY, JSON.stringify(n)); } catch {}
+  saveCalendarNotes(n);
 }
 function loadIndNotes() {
   try { return JSON.parse(localStorage.getItem(LS_IND_KEY)) || []; } catch { return []; }
 }
 function saveIndNotesLS(n) {
-  try { localStorage.setItem(LS_IND_KEY, JSON.stringify(n)); } catch {}
+  saveIndependentNotes(n);
 }
 
 function initScopedNotes(rawNote) {
@@ -1390,9 +1395,9 @@ function NoteEditor({ note, dateStr, tradesOnDay, allTrades, onSave, onDelete, o
                   style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '5px 13px', borderRadius: 20,
                     fontSize: 12, fontWeight: isActive ? 600 : 500, cursor: 'pointer',
-                    border: isActive ? '1.5px solid var(--text-primary)' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-                    background: isActive ? 'var(--bg-card)' : 'var(--bg-surface)',
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    border: isActive ? '1.5px solid #94a3b8' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+                    background: isActive ? '#f1f5f9' : 'var(--bg-surface)',
+                    color: isActive ? '#0f172a' : 'var(--text-secondary)',
                     boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.04)' : 'none',
                     transition: 'all 0.15s ease',
                   }}
@@ -1781,11 +1786,11 @@ function NoteEditor({ note, dateStr, tradesOnDay, allTrades, onSave, onDelete, o
               onClick={handleSave}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, padding: '7px 18px', borderRadius: 8,
-                border: isSaved ? '1.5px solid #10b981' : '1.5px solid var(--text-primary)',
-                background: isSaved ? '#10b981' : 'var(--bg-card)',
-                color: isSaved ? '#ffffff' : 'var(--text-primary)',
+                border: isSaved ? '1.5px solid #10b981' : '1px solid #94a3b8',
+                background: isSaved ? '#10b981' : 'var(--bg-surface)',
+                color: isSaved ? '#ffffff' : '#334155',
                 fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s ease',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
               }}
               onMouseEnter={e => {
                 if (!isSaved) e.currentTarget.style.background = 'var(--bg-primary)';
@@ -1860,7 +1865,9 @@ function IndNoteEditor({ note, onChange, onDelete }) {
           onClick={handleSave}
           style={{
             display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 7,
-            border: 'none', background: isSaved ? '#10b981' : 'var(--text-primary)', color: 'var(--bg-card)',
+            border: isSaved ? '1px solid #10b981' : '1px solid #94a3b8',
+            background: isSaved ? '#10b981' : '#475569',
+            color: '#ffffff',
             fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s'
           }}
         >
@@ -1904,12 +1911,20 @@ function IndependentNotesPanel({ user }) {
   const [selectedId, setSelectedId]           = useState(null);
   const [search, setSearch]                   = useState('');
 
+  // Keep synced in real time across components and IDB
+  useEffect(() => {
+    getIndependentNotes().then(idbNotes => {
+      if (Array.isArray(idbNotes) && idbNotes.length > 0) setNotes(idbNotes);
+    });
+    return subscribeToIndependentNotes(updatedNotes => {
+      setNotes(updatedNotes);
+    });
+  }, []);
+
   const persist = useCallback((updated) => {
-    setNotes(updated); saveIndNotesLS(updated);
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { independentNotes: updated }, { merge: true }).catch(() => {});
-    }
-  }, [user]);
+    setNotes(updated);
+    saveIndNotesLS(updated);
+  }, []);
 
   const filtered = notes.filter(n =>
     n.category === activeCategory &&
@@ -1942,9 +1957,9 @@ function IndependentNotesPanel({ user }) {
             <button key={cat.key} onClick={() => { setActiveCategory(cat.key); setSelectedId(null); }} style={{
               display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20,
               fontSize: 11, fontWeight: 500, cursor: 'pointer',
-              border: activeCategory === cat.key ? '1.5px solid var(--text-primary)' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-              background: activeCategory === cat.key ? 'var(--text-primary)' : 'var(--bg-surface)',
-              color: activeCategory === cat.key ? 'var(--bg-card)' : 'var(--text-secondary)', transition: 'all 0.15s',
+              border: activeCategory === cat.key ? '1px solid #94a3b8' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+              background: activeCategory === cat.key ? '#e2e8f0' : 'var(--bg-surface)',
+              color: activeCategory === cat.key ? '#0f172a' : 'var(--text-secondary)', transition: 'all 0.15s',
             }}><cat.icon size={11} />{cat.label}</button>
           ))}
         </div>
@@ -1955,7 +1970,7 @@ function IndependentNotesPanel({ user }) {
               style={{ width: '100%', paddingLeft: 28, paddingRight: 8, height: 30, border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)', borderRadius: 8, background: 'var(--bg-surface)', fontSize: 12, color: 'var(--text-primary)', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }}
             />
           </div>
-          <button onClick={createNote} style={{ width: 30, height: 30, borderRadius: 8, border: 'none', background: 'var(--text-primary)', color: 'var(--bg-card)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Plus size={14} /></button>
+          <button onClick={createNote} style={{ width: 30, height: 30, borderRadius: 8, border: 'none', background: '#475569', color: '#ffffff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Plus size={14} /></button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {sortedFiltered.length === 0 ? (
@@ -1965,7 +1980,7 @@ function IndependentNotesPanel({ user }) {
             </div>
           ) : sortedFiltered.map(note => (
             <div key={note.id} onClick={() => setSelectedId(note.id)}
-              style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid color-mix(in srgb, var(--border-color) 50%, transparent)', background: selectedId === note.id ? 'var(--bg-primary)' : 'transparent', borderLeft: selectedId === note.id ? '3px solid var(--text-primary)' : '3px solid transparent' }}
+              style={{ padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid color-mix(in srgb, var(--border-color) 50%, transparent)', background: selectedId === note.id ? 'rgba(148, 163, 184, 0.12)' : 'transparent', borderLeft: selectedId === note.id ? '3px solid #64748b' : '3px solid transparent' }}
               onMouseEnter={e => { if (selectedId !== note.id) e.currentTarget.style.background = 'var(--bg-primary)'; }}
               onMouseLeave={e => { if (selectedId !== note.id) e.currentTarget.style.background = 'transparent'; }}
             >
@@ -1994,7 +2009,7 @@ function IndependentNotesPanel({ user }) {
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text-muted)' }}>
             <StickyNote size={36} style={{ opacity: 0.3 }} />
             <p style={{ fontSize: 14 }}>Select a note to edit</p>
-            <button onClick={createNote} style={{ padding: '8px 18px', borderRadius: 9, border: 'none', background: 'var(--text-primary)', color: 'var(--bg-card)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>+ New {activeCategory.slice(0,-1)}</button>
+            <button onClick={createNote} style={{ padding: '8px 18px', borderRadius: 9, border: 'none', background: '#475569', color: '#ffffff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>+ New {activeCategory.slice(0,-1)}</button>
           </div>
         ) : (
           <IndNoteEditor key={selectedNote.id} note={selectedNote}
@@ -2035,6 +2050,18 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
 
   const handleCellMouseEnter = (e, cellDs, pnl) => {
     clearTimeout(hoverTimeoutRef.current);
+    const dayTrades = getTradesForDate(trades, cellDs);
+    const dayNote = notes[cellDs] || null;
+    const dayNoteInfo = getDayNoteInfo(dayNote);
+    const cellPnL = pnl !== undefined ? pnl : (dailyPnL[cellDs] || 0);
+
+    // Only show hover tooltip if there is actual activity (trades or notes or non-zero PnL)
+    if (dayTrades.length === 0 && !dayNoteInfo.hasNote && cellPnL === 0) {
+      setHoveredData(null);
+      setHoverPosition(null);
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const placement = rect.top > 300 ? 'top' : 'bottom';
     const top = placement === 'top' ? rect.top - 8 : rect.bottom + 8;
@@ -2045,9 +2072,9 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
     setHoverPosition({ top, left: boundedLeft, placement });
     setHoveredData({
       ds: cellDs,
-      pnl: pnl !== undefined ? pnl : (dailyPnL[cellDs] || 0),
-      trades: getTradesForDate(trades, cellDs),
-      note: notes[cellDs] || null
+      pnl: cellPnL,
+      trades: dayTrades,
+      note: dayNote
     });
   };
 
@@ -2106,15 +2133,15 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
   const yearIndex = availableYears.indexOf(year);
 
   useEffect(() => {
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      getDoc(doc(db, 'journals', user.uid)).then(d => {
-        if (d.exists() && d.data().notesV2) {
-          const merged = { ...loadNotes(), ...d.data().notesV2 };
-          setNotes(merged); saveNotesLS(merged);
-        }
-      }).catch(() => {});
-    }
-  }, [user]);
+    getCalendarNotes().then(idbNotes => {
+      if (idbNotes && typeof idbNotes === 'object' && Object.keys(idbNotes).length > 0) {
+        setNotes(idbNotes);
+      }
+    });
+    return subscribeToCalendarNotes(updatedNotes => {
+      setNotes(updatedNotes);
+    });
+  }, []);
 
   useEffect(() => { localStorage.setItem(LS_CALMODE_KEY, calMode); }, [calMode]);
   useEffect(() => { localStorage.setItem(LS_VIEWMODE_KEY, viewMode); }, [viewMode]);
@@ -2143,24 +2170,27 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
       const existing = prev[dateStr] || {};
       const updated = { ...prev, [dateStr]: { ...existing, ...data, updatedAt: new Date().toISOString(), createdAt: existing.createdAt || new Date().toISOString() } };
       saveNotesLS(updated);
-      if (user?.uid && !user.uid.startsWith('demo-')) {
-        setDoc(doc(db, 'journals', user.uid), { notesV2: updated }, { merge: true }).catch(() => {});
-      }
       return updated;
     });
-  }, [user]);
+  }, []);
 
   const deleteNote = useCallback((dateStr) => {
     setNotes(prev => {
       const updated = { ...prev };
       delete updated[dateStr];
       saveNotesLS(updated);
-      if (user?.uid && !user.uid.startsWith('demo-')) {
-        setDoc(doc(db, 'journals', user.uid), { notesV2: updated }, { merge: true }).catch(() => {});
-      }
       return updated;
     });
-  }, [user]);
+  }, []);
+
+  const activePortfolioId = useMemo(() => {
+    return localStorage.getItem('tradeontip_active_portfolio_id') || 'portfolio-default';
+  }, []);
+
+  const monthlyPerformance = useMemo(() => {
+    const capitalChanges = getStoredCapitalChanges(activePortfolioId, String(year));
+    return calculateMonthlyPerformance(trades, capitalChanges, String(year), { portfolioId: activePortfolioId });
+  }, [trades, year, activePortfolioId]);
 
   const yearMonthCells = useMemo(() => {
     return Array.from({ length: 12 }, (_, mIdx) => {
@@ -2173,9 +2203,43 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
         const info = getDayNoteInfo(notes[ds]);
         cells.push({ day: d, ds, pnl: dailyPnL[ds] || 0, hasNote: info.hasNote, noteCount: info.count });
       }
-      return { mIdx, cells, monthPnL: getMonthlyPnL(trades, year, mIdx) };
+      const perf = monthlyPerformance[mIdx] || {};
+      const preTaxPlPct = perf.preTaxPctPl || 0;
+      const monthPnL = perf.grossPl !== undefined ? perf.grossPl : getMonthlyPnL(trades, year, mIdx);
+      return { mIdx, cells, monthPnL, preTaxPlPct };
     });
-  }, [year, dailyPnL, notes, trades]);
+  }, [year, dailyPnL, notes, trades, monthlyPerformance]);
+
+  const monthsWithData = useMemo(() => {
+    const set = new Set();
+    // 1. Months with realized trade PnL from dailyPnL
+    Object.keys(dailyPnL).forEach(ds => {
+      const pnl = dailyPnL[ds];
+      if (pnl !== 0) {
+        const d = strToDate(ds);
+        if (d.getFullYear() === year) {
+          set.add(d.getMonth());
+        }
+      }
+    });
+    // 2. Months with notes
+    if (notes && typeof notes === 'object') {
+      Object.keys(notes).forEach(ds => {
+        const d = strToDate(ds);
+        if (d.getFullYear() === year) {
+          const info = getDayNoteInfo(notes[ds]);
+          if (info.hasNote) {
+            set.add(d.getMonth());
+          }
+        }
+      });
+    }
+    return set;
+  }, [dailyPnL, notes, year]);
+
+  const displayedYearMonths = useMemo(() => {
+    return yearMonthCells;
+  }, [yearMonthCells]);
 
   const monthCells = useMemo(() => {
     const firstDay = new Date(year, monthIdx, 1);
@@ -2185,13 +2249,16 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const ds = `${year}-${String(monthIdx+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
       const info = getDayNoteInfo(notes[ds]);
+      const tradesOnDay = getTradesForDate(trades, ds);
+      const dateInfos = tradesOnDay.map(t => ({ trade: t, info: getTradePnLOnDate(t, ds) }));
+      const realizedCount = dateInfos.filter(d => d.info.hasRealized).length;
       cells.push({
         day: d,
         ds,
         pnl: dailyPnL[ds] || 0,
         hasNote: info.hasNote,
         noteCount: info.count,
-        tradeCount: getTradesForDate(trades, ds).length,
+        tradeCount: realizedCount,
         isToday: ds === todayStr
       });
     }
@@ -2433,20 +2500,20 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
 
   const pnlColor = (pnl) => pnl > 0 ? '#10b981' : pnl < 0 ? '#ef4444' : 'var(--text-muted)';
 
-  // Intensity-based cell coloring: bigger P&L = deeper tint (same logic as Nexus)
+  // Intensity-based cell coloring: bigger P&L = deeper tint
   const BIG_THRESHOLD = 10000;
   const getDayCellStyle = (pnl, isSelected, isToday) => {
     const base = {
       transition: 'all 0.12s ease',
-      boxShadow: isSelected ? '0 0 0 2px var(--text-primary)' : 'none',
+      boxShadow: isSelected ? '0 0 0 2px #94a3b8' : 'none',
       zIndex: isSelected ? 2 : (isToday ? 2 : 1),
     };
     if (pnl > 0) {
       const big = pnl >= BIG_THRESHOLD;
       return {
         ...base,
-        background: big ? 'rgba(16,185,129,0.30)' : 'rgba(16,185,129,0.14)',
-        border: isToday ? '1px solid var(--text-primary)' : (big ? '1.5px solid rgba(16,185,129,0.65)' : '1.5px solid rgba(16,185,129,0.38)'),
+        background: isSelected ? 'rgba(16,185,129,0.22)' : (big ? 'rgba(16,185,129,0.30)' : 'rgba(16,185,129,0.14)'),
+        border: isSelected ? '1.5px solid #94a3b8' : (isToday ? '1.5px solid #94a3b8' : (big ? '1.5px solid rgba(16,185,129,0.65)' : '1.5px solid rgba(16,185,129,0.38)')),
         color: '#047857',
       };
     }
@@ -2454,16 +2521,16 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
       const big = pnl <= -BIG_THRESHOLD;
       return {
         ...base,
-        background: big ? 'rgba(239,68,68,0.28)' : 'rgba(239,68,68,0.12)',
-        border: isToday ? '1px solid var(--text-primary)' : (big ? '1.5px solid rgba(239,68,68,0.60)' : '1.5px solid rgba(239,68,68,0.38)'),
+        background: isSelected ? 'rgba(239,68,68,0.20)' : (big ? 'rgba(239,68,68,0.28)' : 'rgba(239,68,68,0.12)'),
+        border: isSelected ? '1.5px solid #94a3b8' : (isToday ? '1.5px solid #94a3b8' : (big ? '1.5px solid rgba(239,68,68,0.60)' : '1.5px solid rgba(239,68,68,0.38)')),
         color: '#dc2626',
       };
     }
     return {
       ...base,
-      background: isSelected ? 'var(--border-color,#e5e7eb)' : 'var(--bg-primary)',
-      border: isToday ? '1px solid var(--text-primary)' : '1px solid transparent',
-      color: isSelected ? 'var(--text-primary)' : 'var(--text-muted)',
+      background: isSelected ? '#e2e8f0' : 'var(--bg-primary)',
+      border: isSelected ? '1.5px solid #94a3b8' : (isToday ? '1.5px solid #94a3b8' : '1px solid transparent'),
+      color: isSelected ? '#334155' : 'var(--text-muted)',
     };
   };
   const filterMenuSt = {
@@ -2472,43 +2539,75 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
     borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.08)', minWidth: 190, overflow: 'hidden',
   };
 
-  const renderPlaybookButton = () => (
-    <button
-      onClick={() => {
-        if (onOpenPlaybook) onOpenPlaybook();
-      }}
-      title="Open Dedicated Playbook Studio"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '6px 14px',
-        borderRadius: 20,
-        cursor: 'pointer',
-        border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-        background: 'var(--bg-surface)',
-        color: 'var(--text-primary)',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-        transition: 'all 0.15s ease',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = 'var(--text-primary)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--border-color) 65%, transparent)';
-      }}
-    >
-      <PlaybookIcon size={14} color="var(--text-primary)" />
-      <span style={{
-        fontSize: 11.5,
-        fontWeight: 500,
-        letterSpacing: '0.01em',
-        color: 'var(--text-primary)',
-      }}>
-        Playbook Studio →
-      </span>
-    </button>
-  );
+  if (independent) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', overflow: 'hidden' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 24px',
+          borderBottom: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+          background: 'var(--bg-card)'
+        }}>
+          <button
+            onClick={() => setIndependent(false)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 500, color: 'var(--text-primary)'
+            }}
+          >
+            <ChevronLeft size={16} /> Back to Journal
+          </button>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '4px 10px 4px 12px',
+            borderRadius: 20,
+            border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+            background: 'var(--bg-surface)',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>Independent</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={true}
+              onClick={() => setIndependent(false)}
+              title="Return to Journal"
+              style={{
+                width: 34,
+                height: 18,
+                borderRadius: 9999,
+                background: '#64748b',
+                border: 'none',
+                cursor: 'pointer',
+                position: 'relative',
+                transition: 'background 0.2s',
+                padding: 0,
+              }}
+            >
+              <span style={{
+                display: 'block',
+                width: 14,
+                height: 14,
+                borderRadius: '50%',
+                background: 'var(--bg-card)',
+                position: 'absolute',
+                top: 2,
+                left: 18,
+                transition: 'left 0.2s',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+              }} />
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <IndependentNotesPanel user={user} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', overflow: 'hidden' }}>
@@ -2651,9 +2750,9 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                       style={{
                         padding: '3px 9px',
                         borderRadius: 6,
-                        border: isTab ? '1px solid var(--text-primary)' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-                        background: isTab ? 'var(--text-primary)' : 'transparent',
-                        color: isTab ? 'var(--bg-card)' : 'var(--text-secondary)',
+                        border: isTab ? '1px solid #94a3b8' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+                        background: isTab ? '#e2e8f0' : 'transparent',
+                        color: isTab ? '#0f172a' : 'var(--text-secondary)',
                         fontSize: 11,
                         fontWeight: isTab ? 600 : 500,
                         cursor: 'pointer',
@@ -3010,9 +3109,67 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
 
         <div style={{ flex: 1 }} />
 
-        {/* Modern Playbook Mode Button */}
-        <div>
-          {renderPlaybookButton()}
+        {/* Independent Notes Toggle */}
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '4px 10px 4px 12px',
+          borderRadius: 20,
+          border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+          background: 'var(--bg-surface)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+        }}>
+          <button
+            type="button"
+            onClick={() => setIndependent(!independent)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              color: 'var(--text-primary)',
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            <StickyNote size={13.5} style={{ color: 'var(--text-muted)' }} />
+            <span>Independent</span>
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={independent}
+            onClick={() => setIndependent(!independent)}
+            title="Toggle Independent Notes, Tasks, Resources & Goals"
+            style={{
+              width: 34,
+              height: 18,
+              borderRadius: 9999,
+              background: independent ? '#64748b' : 'color-mix(in srgb, var(--text-muted) 35%, transparent)',
+              border: 'none',
+              cursor: 'pointer',
+              position: 'relative',
+              transition: 'background 0.2s',
+              padding: 0,
+            }}
+          >
+            <span style={{
+              display: 'block',
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              background: 'var(--bg-card)',
+              position: 'absolute',
+              top: 2,
+              left: independent ? 18 : 2,
+              transition: 'left 0.2s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+            }} />
+          </button>
         </div>
       </div>
 
@@ -3181,17 +3338,17 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                       key={item.ds}
                       onClick={() => setSelectedDate(isSelected ? null : item.ds)}
                       style={{
-                        background: 'var(--bg-card)',
+                        background: isSelected ? 'var(--bg-surface)' : 'var(--bg-card)',
                         borderRadius: 8,
                         cursor: 'pointer',
-                        border: isSelected ? '1px solid var(--text-primary)' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+                        border: isSelected ? '1.5px solid #94a3b8' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
                         borderLeft: `4px solid ${item.pnl > 0 ? '#10b981' : item.pnl < 0 ? '#ef4444' : totalTrades > 0 ? 'var(--text-muted)' : 'color-mix(in srgb, var(--border-color) 65%, transparent)'}`,
                         padding: '16px 20px',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 10,
                         transition: 'all 0.15s ease',
-                        boxShadow: isSelected ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
+                        boxShadow: isSelected ? '0 2px 8px rgba(100,116,139,0.12)' : 'none',
                       }}
                       onMouseEnter={e => {
                         if (!isSelected) {
@@ -3442,8 +3599,8 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                   <ChevronRight size={15} />
                 </button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-                {yearMonthCells.map(({ mIdx, cells, monthPnL }) => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 20 }}>
+                {displayedYearMonths.map(({ mIdx, cells, monthPnL, preTaxPlPct }) => (
                   <div key={mIdx}
                     onClick={() => {
                       setCurrentDate(new Date(year, mIdx, 1));
@@ -3452,6 +3609,7 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                       setHoveredData(null);
                       setHoverPosition(null);
                     }}
+                    title={`${MONTH_NAMES[mIdx]} Gross P/L: ${monthPnL > 0 ? '+' : ''}₹${Math.abs(monthPnL).toLocaleString('en-IN')}`}
                     style={{
                       background: 'var(--bg-card)', border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)', borderRadius: 14,
                       padding: '14px 12px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', cursor: 'pointer',
@@ -3468,14 +3626,24 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                       e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.03)';
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{SHORT_MONTHS[mIdx]}</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: monthPnL>0?'#10b981':monthPnL<0?'#ef4444':'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        {monthPnL>0?'+':''}{monthPnL!==0?`₹${Math.abs(monthPnL).toLocaleString('en-IN',{maximumFractionDigits:0})}`:'—'}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary, #6b7280)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        {MONTH_NAMES[mIdx].toUpperCase()}
                       </span>
+                      {preTaxPlPct !== 0 && (
+                        <span style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fontFamily: 'monospace, var(--font-mono)',
+                          color: preTaxPlPct > 0 ? '#10b981' : '#ef4444',
+                          letterSpacing: '0.04em'
+                        }}>
+                          {preTaxPlPct > 0 ? '+' : ''}{preTaxPlPct.toFixed(2)}%
+                        </span>
+                      )}
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
-                      {['S','M','T','W','T','F','S'].map((d,i) => <div key={i} style={{ textAlign: 'center', fontSize: 9, fontWeight: 500, color: 'var(--text-muted)' }}>{d}</div>)}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 6 }}>
+                      {['S','M','T','W','T','F','S'].map((d,i) => <div key={i} style={{ textAlign: 'center', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>{d}</div>)}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
                       {cells.map((cell, i) => cell.isPad ? <div key={i} /> : (
@@ -3484,7 +3652,7 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                             e.stopPropagation();
                             setCurrentDate(new Date(year, mIdx, 1));
                             setCalMode('month');
-                            setSelectedDate(null);
+                            setSelectedDate(cell.ds);
                             setHoveredData(null);
                             setHoverPosition(null);
                           }}
@@ -3497,29 +3665,56 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                             handleCellMouseLeave();
                           }}
                           style={{
-                            height: 24, borderRadius: 5, cursor: 'pointer', position: 'relative',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 500,
-                            ...getDayCellStyle(cell.pnl, false, cell.ds === todayStr),
+                            height: 24, borderRadius: 4, cursor: 'pointer', position: 'relative',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9.5, fontWeight: 500,
+                            ...getDayCellStyle(cell.pnl, selectedDate === cell.ds, cell.ds === todayStr),
                           }}
                         >
                           {cell.day}
+                          {cell.hasNote && (
+                            <div style={{
+                              position: 'absolute',
+                              bottom: 2,
+                              right: 2,
+                              width: 3.5,
+                              height: 3.5,
+                              borderRadius: '50%',
+                              background: 'currentColor',
+                              opacity: 0.65
+                            }} />
+                          )}
                         </div>
                       ))}
                     </div>
                   </div>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 14, marginTop: 18, fontSize: 11, color: 'var(--text-muted)', alignItems: 'center', flexWrap: 'wrap' }}>
-                {[
-                  { bg:'rgba(239,68,68,0.12)', label:'Loss day' },
-                  { bg:'rgba(239,68,68,0.28)', label:'Big loss (≥₹10k)' },
-                  { bg:'rgba(16,185,129,0.14)', label:'Win day' },
-                  { bg:'rgba(16,185,129,0.30)', label:'Big win (≥₹10k)' },
-                ].map(l => (
-                  <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: l.bg, display: 'inline-block' }} />{l.label}</div>
-                ))}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><FileText size={12} color="var(--text-primary, #000000)" strokeWidth={1.8} /> Note(s)</div>
-                <span style={{ fontSize: 10, opacity: 0.65, marginLeft: 8 }}>* Figures shown are gross profit/loss before taxes and charges. Hover on any date to see trades!</span>
+              <div style={{ display: 'flex', gap: 24, marginTop: 24, fontSize: 11.5, color: 'var(--text-muted)', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(244,63,94,0.4)', background: 'rgba(244,63,94,0.22)', display: 'inline-block' }} />
+                  <span>Min. loss</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(244,63,94,0.85)', background: 'rgba(244,63,94,0.85)', display: 'inline-block' }} />
+                  <span>Max. loss</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.22)', display: 'inline-block' }} />
+                  <span>Min. profit</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(16,185,129,0.85)', background: 'rgba(16,185,129,0.85)', display: 'inline-block' }} />
+                  <span>Max. profit</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid var(--border-color)', background: 'var(--bg-surface)', display: 'inline-block', position: 'relative' }}>
+                    <span style={{ position: 'absolute', bottom: 1.5, right: 1.5, width: 3, height: 3, borderRadius: '50%', background: 'var(--text-primary)', opacity: 0.6 }} />
+                  </span>
+                  <span>Note(s)</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--text-muted)', opacity: 0.65, marginTop: 8 }}>
+                * Note: Figures shown are gross profit/loss before taxes and charges. Hover on any date to see trades!
               </div>
             </div>
           )}
@@ -3540,11 +3735,16 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                 </select>
                 <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))}
                   style={{ background: 'none', border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)', borderRadius: 7, padding: '5px 9px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex' }}><ChevronRight size={15} /></button>
-                {(() => { const mp = getMonthlyPnL(trades, year, monthIdx); return mp!==0 && (
-                  <span style={{ fontSize: 12, fontWeight: 600, color: mp>0?'#10b981':'#ef4444', fontFamily: 'var(--font-mono)' }}>
-                    GROSS P/L: {mp>0?'+':''}₹{Math.abs(mp).toLocaleString('en-IN',{maximumFractionDigits:0})}
-                  </span>
-                ); })()}
+                {(() => {
+                  const mp = getMonthlyPnL(trades, year, monthIdx);
+                  const perf = monthlyPerformance[monthIdx];
+                  const pct = perf?.preTaxPctPl;
+                  return (mp !== 0 || (pct !== undefined && pct !== 0)) && (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: mp > 0 ? '#10b981' : '#ef4444', fontFamily: 'var(--font-mono)', marginLeft: 8 }}>
+                      GROSS P/L: {pct !== undefined && pct !== 0 ? `${pct > 0 ? '+' : ''}${pct.toFixed(2)}% ` : ''}({mp > 0 ? '+' : ''}₹{Math.abs(mp).toLocaleString('en-IN', { maximumFractionDigits: 0 })})
+                    </span>
+                  );
+                })()}
               </div>
               <div style={{ background: 'var(--bg-card)', border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)', borderRadius: 16, padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 8 }}>
@@ -3577,7 +3777,15 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                             return { ...s, background: 'var(--bg-card)', border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)' };
                           }
                           if (cell.pnl === 0 && selectedDate !== cell.ds && cell.isToday) {
-                            return { ...s, background: 'var(--bg-card)', border: '1px solid var(--text-primary)' };
+                            return { ...s, background: 'var(--bg-card)', border: '1.5px solid #94a3b8' };
+                          }
+                          if (selectedDate === cell.ds) {
+                            return {
+                              ...s,
+                              background: cell.pnl === 0 ? '#f1f5f9' : s.background,
+                              border: '1.5px solid #94a3b8',
+                              boxShadow: '0 0 0 2px #cbd5e1',
+                            };
                           }
                           return s;
                         })(),
@@ -3610,17 +3818,32 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
                   ))}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 12, marginTop: 12, fontSize: 11, color: 'var(--text-muted)', alignItems: 'center', flexWrap: 'wrap' }}>
-                {[
-                  { bg:'rgba(239,68,68,0.12)', label:'Loss day' },
-                  { bg:'rgba(239,68,68,0.28)', label:'Big loss (≥₹10k)' },
-                  { bg:'rgba(16,185,129,0.14)', label:'Win day' },
-                  { bg:'rgba(16,185,129,0.30)', label:'Big win (≥₹10k)' },
-                ].map(l => (
-                  <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: l.bg, display: 'inline-block' }} />{l.label}</div>
-                ))}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><FileText size={12} color="var(--text-primary, #000000)" strokeWidth={1.8} /> Note(s)</div>
-                <span style={{ fontSize: 10, opacity: 0.65, marginLeft: 8 }}>* Figures shown are gross profit/loss before taxes and charges. Hover on any date to see trades!</span>
+              <div style={{ display: 'flex', gap: 24, marginTop: 24, fontSize: 11.5, color: 'var(--text-muted)', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(244,63,94,0.4)', background: 'rgba(244,63,94,0.22)', display: 'inline-block' }} />
+                  <span>Min. loss</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(244,63,94,0.85)', background: 'rgba(244,63,94,0.85)', display: 'inline-block' }} />
+                  <span>Max. loss</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.22)', display: 'inline-block' }} />
+                  <span>Min. profit</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(16,185,129,0.85)', background: 'rgba(16,185,129,0.85)', display: 'inline-block' }} />
+                  <span>Max. profit</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid var(--border-color)', background: 'var(--bg-surface)', display: 'inline-block', position: 'relative' }}>
+                    <span style={{ position: 'absolute', bottom: 1.5, right: 1.5, width: 3, height: 3, borderRadius: '50%', background: 'var(--text-primary)', opacity: 0.6 }} />
+                  </span>
+                  <span>Note(s)</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--text-muted)', opacity: 0.65, marginTop: 8 }}>
+                * Note: Figures shown are gross profit/loss before taxes and charges. Hover on any date to see trades!
               </div>
             </div>
           )}
@@ -3640,6 +3863,7 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
           />
         )}
       </div>
+
 
       {/* Floating Hover Popover for Calendar Date Boxes */}
       {hoveredData && hoverPosition && (

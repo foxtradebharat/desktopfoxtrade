@@ -265,7 +265,7 @@ export const DEFAULT_PLAYBOOK_SETTINGS = {
   defaultWinRate: 65,                // 50, 60, 65, 70, 75
   defaultSegment: 'ALL',             // 'ALL', 'EQUITY', 'FUTURES', 'OPTIONS'
   defaultRiskAmount: 2500,           // ₹ baseline risk for R-multiple if not specified
-  excludeBreakevenFromWinRate: true, // BE trades excluded from denominator (Nexus standard)
+  excludeBreakevenFromWinRate: true, // BE trades excluded from denominator
   autoTagTradesByName: true,         // Match journal setup name to playbook title/slug
   strictDisciplineThreshold: 80,     // Adherence % required for "Flawless Discipline"
   defaultViewMode: 'list',           // 'list', 'grid', or 'compare'
@@ -425,7 +425,7 @@ export function getTradeMinutesIST(trade) {
 }
 
 /**
- * Calculates net P&L for a trade, adhering to FoxTrade Nexus Trading formulas.
+ * Calculates net P&L for a trade, adhering to FoxTrade formulas.
  */
 export function getTradePnL(t) {
   if (!t) return 0;

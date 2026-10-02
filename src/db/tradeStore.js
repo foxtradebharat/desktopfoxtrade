@@ -3,7 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Per-trade CRUD operations.
  *
- * Key differences from Nexus / old foxtrade_db v1:
+ * Key architecture benefits:
  *   OLD: All trades stored as ONE JSON blob per user → load = download everything
  *   NEW: Each trade is its own IDB record → load = indexed reads, instant
  *
@@ -49,7 +49,7 @@ function decorateTrade(trade, portfolioId, deviceId, existing = null) {
 
 /**
  * Derive position status from trade fields.
- * Mirrors the nexusCalculationEngine logic for IDB indexing.
+ * Mirrors the foxCalculationEngine logic for IDB indexing.
  */
 function _computeStatus(trade) {
   if (trade.status) return trade.status;

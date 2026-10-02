@@ -83,8 +83,8 @@ class TVQuoteStreamService {
     if (customWorkerUrl) {
       return customWorkerUrl;
     }
-    // High-performance Cloudflare Edge WebSocket relay for TradingView Live Quotes
-    return 'wss://nexus-journal-api.aniket-mahato-bcom23.workers.dev/functions/v1/tv-ws';
+    // High-performance WebSocket relay for TradingView Live Quotes
+    return 'wss://data.tradingview.com/socket.io/websocket?origin=https://in.tradingview.com';
   }
 
   connect() {

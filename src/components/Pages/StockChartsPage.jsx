@@ -22,7 +22,16 @@ import ReplayTradeDetailPanel from '../charts/ReplayTradeDetailPanel';
 import ReplayPracticePanel from '../charts/ReplayPracticePanel';
 import { findNearestCandleIndex, getCandleTimestampSeconds } from '../../services/candleCacheService';
 
-export default function StockChartsPage({ trades = [], selectedSymbol: propSymbol, onSelectSymbol, chartOnly = false }) {
+export default function StockChartsPage({ 
+  trades = [], 
+  selectedSymbol: propSymbol, 
+  onSelectSymbol, 
+  chartOnly = false,
+  onOpenAddTrade,
+  onOpenQuickLog,
+  onOpenImport,
+  onNavigateToJournal
+}) {
   // ── 1. Top Metrics Calculation ─────────────────────────────────────────────
   const metrics = useMemo(() => {
     const totalTrades = trades.length;
@@ -81,22 +90,62 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
     }
   }, [trades, sourceMode, minGainFilter]);
 
-  // Selected Stock for Candlestick Chart
-  const [selectedSymbol, setSelectedSymbol] = useState(() => {
-    return propSymbol || (trades[0]?.name || trades[0]?.symbol) || 'TATASTEEL';
-  });
+  // Helper to dynamically resolve primary stock from portfolio trades
+  const resolveDefaultStock = useCallback(() => {
+    if (propSymbol) return propSymbol.toUpperCase().trim();
+    if (trades && trades.length > 0) {
+      const sortedByPnl = [...trades].sort((a, b) => (b.pnl || 0) - (a.pnl || 0));
+      const first = sortedByPnl[0] || trades[0];
+      return (first?.name || first?.symbol || '').toUpperCase().trim() || null;
+    }
+    return null;
+  }, [propSymbol, trades]);
+
+  // Selected Stock for Candlestick Chart (Dynamic, 0 hardcoded symbols)
+  const [selectedSymbol, setSelectedSymbol] = useState(resolveDefaultStock);
+  const [isMarketExplorerMode, setIsMarketExplorerMode] = useState(false);
 
   useEffect(() => {
     if (propSymbol) {
       setSelectedSymbol(propSymbol.toUpperCase().trim());
+      setIsMarketExplorerMode(false);
+      return;
     }
-  }, [propSymbol]);
+    if (trades && trades.length > 0) {
+      const exists = selectedSymbol && trades.some(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
+      if (!exists && !isMarketExplorerMode) {
+        const sortedByPnl = [...trades].sort((a, b) => (b.pnl || 0) - (a.pnl || 0));
+        const first = sortedByPnl[0] || trades[0];
+        const next = (first?.name || first?.symbol || '').toUpperCase().trim();
+        if (next) {
+          setSelectedSymbol(next);
+          if (onSelectSymbol) onSelectSymbol(next);
+        }
+      }
+    } else {
+      if (!isMarketExplorerMode) {
+        setSelectedSymbol(null);
+      }
+    }
+  }, [propSymbol, trades, isMarketExplorerMode]);
 
   const handleSelectSymbol = (sym) => {
+    if (!sym) {
+      setSelectedSymbol(null);
+      setIsMarketExplorerMode(false);
+      if (onSelectSymbol) onSelectSymbol(null);
+      return;
+    }
     const clean = sym.toUpperCase().trim();
     setSelectedSymbol(clean);
+    const inTrades = trades.some(t => (t.name || t.symbol || '').toUpperCase().trim() === clean);
+    setIsMarketExplorerMode(!inTrades);
     if (onSelectSymbol) onSelectSymbol(clean);
   };
+
+  const isMarketMode = Boolean(
+    selectedSymbol && (!trades || !trades.some(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim()))
+  );
 
   const [isStockDropdownOpen, setIsStockDropdownOpen] = useState(false);
   const [stockSearchQuery, setStockSearchQuery] = useState('');
@@ -119,12 +168,8 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
       if ((t.pnl || 0) > 0) stockMap[sym].winCount += 1;
     });
 
-    const list = Object.values(stockMap).sort((a, b) => b.pnl - a.pnl);
-    if (list.length === 0) {
-      return [{ symbol: selectedSymbol || 'TATASTEEL', tradesCount: 0, pnl: 0, winCount: 0 }];
-    }
-    return list;
-  }, [trades, selectedSymbol]);
+    return Object.values(stockMap).sort((a, b) => b.pnl - a.pnl);
+  }, [trades]);
 
   const filteredTradeStocks = useMemo(() => {
     if (!stockSearchQuery.trim()) return uniqueTradeStocks;
@@ -277,7 +322,11 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!selectedSymbol) return;
+    if (!selectedSymbol) {
+      setRawCandles([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     fetchHistoricalCandles(selectedSymbol, range === 'custom' ? '5y' : range, chartInterval)
       .then(data => {
@@ -547,7 +596,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
 
   // Compute raw trade execution markers matching visible candles
   const computeRawMarkerList = useCallback((currentCandles) => {
-    if (!currentCandles || currentCandles.length === 0) return [];
+    if (!selectedSymbol || !currentCandles || currentCandles.length === 0) return [];
     const symbolTrades = (trades || []).filter(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
     if (symbolTrades.length === 0) return [];
 
@@ -972,7 +1021,20 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
 
   // Effect B: Synchronize Series Data & Markers smoothly without recreating chart canvas
   useEffect(() => {
-    if (!chartRef.current || !mainSeriesRef.current || visibleCandles.length === 0) return;
+    if (!chartRef.current || !mainSeriesRef.current) return;
+
+    if (visibleCandles.length === 0) {
+      try {
+        mainSeriesRef.current.setData([]);
+        if (volumeSeriesRef.current) volumeSeriesRef.current.setData([]);
+        if (m1SeriesRef.current) m1SeriesRef.current.setData([]);
+        if (m2SeriesRef.current) m2SeriesRef.current.setData([]);
+        if (m3SeriesRef.current) m3SeriesRef.current.setData([]);
+      } catch (_) {}
+      rawMarkerListRef.current = [];
+      setMarkerElements([]);
+      return;
+    }
 
     // 1. Update Main Price Series
     mainSeriesRef.current.setData(visibleCandles);
@@ -1063,7 +1125,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
       targetLinesRef.current = [];
     }
 
-    if (!showTargetLines) return;
+    if (!showTargetLines || !selectedSymbol) return;
 
     const symbolTrades = (trades || []).filter(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
     if (symbolTrades.length === 0) return;
@@ -1257,7 +1319,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
     if (!chartRef.current) return;
     try {
       const sourceCanvas = chartRef.current.takeScreenshot();
-      if (!sourceCanvas) return;
+      if (!sourceCanvas || !selectedSymbol) return;
 
       const theme = getExportTheme();
       const symbolTrades = (trades || []).filter(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
@@ -1307,7 +1369,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
         ctx.arc(padX + logoSize / 2, logoY + logoSize / 2, logoSize / 2, 0, Math.PI * 2);
         ctx.stroke();
       } else {
-        const initials = selectedSymbol.slice(0, 2).toUpperCase();
+        const initials = (selectedSymbol || 'ST').slice(0, 2).toUpperCase();
         ctx.save();
         ctx.beginPath();
         ctx.arc(padX + logoSize / 2, logoY + logoSize / 2, logoSize / 2, 0, Math.PI * 2);
@@ -1380,7 +1442,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
   };
 
   const handleDownloadPdf = async () => {
-    if (!chartRef.current || isGeneratingPdf) return;
+    if (!chartRef.current || !selectedSymbol || isGeneratingPdf) return;
     setIsGeneratingPdf(true);
     try {
       const symbolTrades = (trades || []).filter(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
@@ -1660,6 +1722,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
   }, [drawings, drawingRenderVersion, selectedSymbol, visibleCandles]);
 
   const activeStockTrades = useMemo(() => {
+    if (!selectedSymbol) return [];
     return trades.filter(t => (t.name || t.symbol || '').toUpperCase().trim() === selectedSymbol.toUpperCase().trim());
   }, [trades, selectedSymbol]);
 
@@ -1668,7 +1731,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
       
       {!chartOnly && (
         <>
-          {/* ── 1. Top Stat Metrics Banner (1:1 with Nexus Journal) ──────────────── */}
+          {/* ── 1. Top Stat Metrics Banner ──────────────── */}
           <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
@@ -1729,7 +1792,8 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
         </div>
       </div>
 
-      {/* ── 2. Top Winners & Losers Section (1:1 with Nexus Journal) ─────────── */}
+      {/* ── 2. Top Winners & Losers Section ─────────── */}
+      {trades.length > 0 && (
       <div style={{ marginBottom: '32px' }}>
         
         {/* Section Header with Segmented Switchers & Filter Dropdown */}
@@ -1890,7 +1954,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
           </div>
         </div>
 
-        {/* 3-Column Card Grid (1:1 with Nexus Journal Cards) */}
+        {/* 3-Column Card Grid */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
@@ -1898,7 +1962,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
         }}>
           {(viewTab === 'winners' ? topWinners : topLosers).slice(0, 12).map((item, idx) => {
             const sym = sourceMode === 'trades' ? (item.name || item.symbol) : item.symbol;
-            const isSelected = selectedSymbol.toUpperCase() === sym.toUpperCase();
+            const isSelected = selectedSymbol && selectedSymbol.toUpperCase() === sym.toUpperCase();
             const pnl = item.pnl || 0;
             const isGain = pnl >= 0;
 
@@ -1986,6 +2050,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
           })}
         </div>
       </div>
+      )}
         </>
       )}
 
@@ -2008,6 +2073,72 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
         boxShadow: 'none',
         position: 'relative'
       }}>
+
+        {/* Market Analysis Mode Banner (Shown when analyzing a symbol not in portfolio trades) */}
+        {isMarketMode && selectedSymbol && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 14px',
+            backgroundColor: 'rgba(59, 130, 246, 0.05)',
+            border: '1px solid rgba(59, 130, 246, 0.18)',
+            borderRadius: '12px',
+            marginBottom: '12px',
+            fontSize: '12px',
+            color: '#1e40af',
+            flexWrap: 'wrap',
+            gap: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#3b82f6', flexShrink: 0 }} />
+              <span>
+                <strong>Market Analysis Mode:</strong> Viewing live <strong>{selectedSymbol}</strong> price chart. No trade executions logged for this symbol in current portfolio.
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {onOpenQuickLog && (
+                <button
+                  type="button"
+                  onClick={() => onOpenQuickLog(selectedSymbol)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    backgroundColor: '#2563eb',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  + Log Trade for {selectedSymbol}
+                </button>
+              )}
+              {trades.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSymbol(null);
+                    setIsMarketExplorerMode(false);
+                    if (onSelectSymbol) onSelectSymbol(null);
+                  }}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-muted, #71717a)',
+                    border: '1px solid var(--border-color, #e4e4e7)',
+                    fontSize: '11px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ← Clear Chart
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         
         {/* Top Control Bar: Symbol Logo & Name, Range, Interval, Custom Date, Replay, Candles, Classic */}
         <div style={{
@@ -2043,9 +2174,24 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
                 if (!isStockDropdownOpen) e.currentTarget.style.backgroundColor = 'var(--bg-card, #ffffff)';
               }}
             >
-              <SymbolLogo symbol={selectedSymbol} size={22} />
+              {selectedSymbol ? (
+                <SymbolLogo symbol={selectedSymbol} size={22} />
+              ) : (
+                <div style={{
+                  width: '22px',
+                  height: '22px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#2563eb'
+                }}>
+                  <BarChart2 size={13} strokeWidth={2.5} />
+                </div>
+              )}
               <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary, #111827)', letterSpacing: '0.02em' }}>
-                {selectedSymbol}
+                {selectedSymbol || 'Select Stock'}
               </span>
               <ChevronDown size={14} color="var(--text-muted, #71717a)" />
             </button>
@@ -2083,7 +2229,15 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
                         type="text"
                         value={stockSearchQuery}
                         onChange={(e) => setStockSearchQuery(e.target.value)}
-                        placeholder="Search stock..."
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && stockSearchQuery.trim()) {
+                            e.preventDefault();
+                            handleSelectSymbol(stockSearchQuery.trim().toUpperCase());
+                            setIsStockDropdownOpen(false);
+                            setStockSearchQuery('');
+                          }
+                        }}
+                        placeholder="Search stock or type symbol..."
                         autoFocus
                         style={{
                           width: '100%',
@@ -2108,12 +2262,73 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
                     scrollbarWidth: 'thin'
                   }}>
                     {filteredTradeStocks.length === 0 ? (
-                      <div style={{ padding: '16px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
-                        No matching stocks found.
+                      <div style={{ padding: '14px 12px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {stockSearchQuery.trim() ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <span>No journal trades for "{stockSearchQuery.trim().toUpperCase()}"</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleSelectSymbol(stockSearchQuery.trim().toUpperCase());
+                                setIsStockDropdownOpen(false);
+                                setStockSearchQuery('');
+                              }}
+                              style={{
+                                padding: '5px 12px',
+                                borderRadius: '6px',
+                                backgroundColor: '#2563eb',
+                                color: '#ffffff',
+                                border: 'none',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Chart Market Symbol
+                            </button>
+                          </div>
+                        ) : (
+                          <div>
+                            <div style={{ marginBottom: '10px', color: 'var(--text-muted, #71717a)' }}>No journal trades in portfolio.</div>
+                            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted, #a1a1aa)', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px', textAlign: 'left' }}>
+                              Explore Market Stocks
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {['NIFTY', 'BANKNIFTY', 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK'].map(popSym => (
+                                <div
+                                  key={popSym}
+                                  onClick={() => {
+                                    handleSelectSymbol(popSym);
+                                    setIsStockDropdownOpen(false);
+                                    setStockSearchQuery('');
+                                  }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    padding: '6px 8px',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    backgroundColor: 'transparent',
+                                    transition: 'background 0.12s ease'
+                                  }}
+                                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.04)'}
+                                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <SymbolLogo symbol={popSym} size={18} />
+                                    <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--text-primary, #111827)' }}>{popSym}</span>
+                                  </div>
+                                  <span style={{ fontSize: '10px', color: '#2563eb', fontWeight: 500 }}>Chart →</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       filteredTradeStocks.map((s, i) => {
-                        const isSelected = selectedSymbol.toUpperCase() === s.symbol.toUpperCase();
+                        const isSelected = selectedSymbol && selectedSymbol.toUpperCase() === s.symbol.toUpperCase();
                         const isGain = s.pnl >= 0;
                         return (
                           <div
@@ -2615,7 +2830,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
               onChange={(val) => handleIntervalChange(val)}
             />
 
-            {/* Custom Date Range Pill & Calendar Popover (1:1 with Nexus Journal) */}
+            {/* Custom Date Range Pill & Calendar Popover */}
             <div style={{ position: 'relative' }}>
               <button
                 onClick={() => setShowCustomDateModal(!showCustomDateModal)}
@@ -2756,6 +2971,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
             {/* TradingView-Style Bar Replay Button (Between Custom Date and MA) */}
             <button
               onClick={() => {
+                if (candles.length === 0 && !replayModeActive) return;
                 if (replayModeActive) {
                   setReplayModeActive(false);
                   setIsReplaying(false);
@@ -3011,7 +3227,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
           width: '100%',
           backgroundColor: 'transparent'
         }}>
-          {/* Floating Fullscreen Expand / Collapse Toggle (Positioned below stock logo on chart canvas, matching Nexus) */}
+          {/* Floating Fullscreen Expand / Collapse Toggle (Positioned below stock logo on chart canvas) */}
           <div
             style={{
               position: 'absolute',
@@ -3051,7 +3267,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
             </button>
           </div>
 
-          {loading && (
+          {loading && selectedSymbol && (
             <div style={{
               position: 'absolute',
               inset: 0,
@@ -3070,7 +3286,7 @@ export default function StockChartsPage({ trades = [], selectedSymbol: propSymbo
             </div>
           )}
 
-          {!loading && visibleCandles.length === 0 && (
+          {!loading && Boolean(selectedSymbol) && visibleCandles.length === 0 && (
             <div style={{
               position: 'absolute',
               inset: 0,

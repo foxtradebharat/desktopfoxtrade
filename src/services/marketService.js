@@ -2,7 +2,7 @@
  * marketService.js
  *
  * Fetches live market status and trading holiday list from NSE via Vite proxy.
- * Calculates 100% precise Indian Standard Time (IST) market countdowns matching Nexus Journal.
+ * Calculates 100% precise Indian Standard Time (IST) market countdowns.
  * 
  * Sessions:
  *   - Pre-Open:        09:00:00 - 09:15:00 IST
@@ -20,7 +20,7 @@ const STATUS_CACHE_TTL     = 60 * 1000; // 60 seconds
 
 import { MarketTimingService, INDIAN_HOLIDAYS } from './marketTimingService';
 
-// Comprehensive NSE 2026 standard holiday list matching Nexus Journal
+// Comprehensive NSE 2026 standard holiday list
 const DEFAULT_NSE_HOLIDAYS = INDIAN_HOLIDAYS.map(h => h.date);
 
 function readLocalStorage(key, tsKey, ttl) {
@@ -188,7 +188,7 @@ export function getCalculatedMarketInfo(isHoliday = false) {
 /**
  * 100% Precise IST Market Countdown Engine
  * Accurately handles weekdays, weekends, live hours, pre-open, post-market, and NSE holiday closures.
- * Returns formatted text matching Nexus Journal: "Market opens on Monday 44h 25m 10s" / "Market closes in 2h 15m 05s"
+ * Returns formatted text: "Market opens on Monday 44h 25m 10s" / "Market closes in 2h 15m 05s"
  */
 export function getLiveMarketCountdown(market = 'india') {
   return MarketTimingService.getLiveMarketCountdown(market);

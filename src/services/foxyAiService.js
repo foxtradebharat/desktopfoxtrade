@@ -16,6 +16,13 @@
 
 import { getConfig, setConfig } from '../db/configStore.js';
 import { getValidAccessToken, getActivePortfolioId, getTradesWithDeleted, triggerAutoSync } from '../db/index.js';
+import {
+  getFoxyChatHistory,
+  saveFoxyChatHistory,
+  getTraderCommitments,
+  saveTraderCommitments,
+  addTraderCommitment,
+} from '../db/foxyStore.js';
 import { calculateTradeDiagnostics } from './aiService.js';
 import { runQuery, executeQueryAndFormat } from './tradeQueryEngine.js';
 import { getOrComputeDNA, formatDNAForContext } from '../utils/traderDNA.js';
@@ -156,38 +163,8 @@ export async function saveFoxyConfig({ provider, model, apiKey }) {
   scheduleFoxyDriveSync();
 }
 
-const CONFIG_KEY_COMMITMENTS = 'foxy_trader_commitments';
-
-/**
- * Get active trader rules and commitments persisted in IndexedDB
- */
-export async function getTraderCommitments() {
-  const comms = await getConfig(CONFIG_KEY_COMMITMENTS, []);
-  return Array.isArray(comms) ? comms : [];
-}
-
-/**
- * Save active trader rules and commitments to IndexedDB
- */
-export async function saveTraderCommitments(commitments) {
-  if (Array.isArray(commitments)) {
-    await setConfig(CONFIG_KEY_COMMITMENTS, commitments);
-    scheduleFoxyDriveSync();
-  }
-}
-
-/**
- * Add a new commitment to the trader's behavioral coach memory
- */
-export async function addTraderCommitment(ruleText) {
-  if (!ruleText || typeof ruleText !== 'string') return;
-  const current = await getTraderCommitments();
-  const cleaned = ruleText.trim();
-  if (cleaned && !current.includes(cleaned)) {
-    current.push(cleaned);
-    await saveTraderCommitments(current.slice(-10));
-  }
-}
+// Re-export structured trader commitments from foxyStore
+export { getTraderCommitments, saveTraderCommitments, addTraderCommitment };
 
 /**
  * Check if user is eligible to generate their weekly comprehensive AI report (1 per user per week)
@@ -718,7 +695,7 @@ export function buildFoxyJournalContext(trades = [], portfolioId = 'portfolio-de
 LIVE DASHBOARD HEADER STAT CARDS (EXACT SYSTEM OF RECORD — ZERO HALLUCINATION):
 - Total Recorded Trades: ${exactTotalTrades}
 - Active Open Positions: ${exactOpenPositions} (strictly openQty > 0)
-- Win Rate (Nexus P/L Method): ${exactWinRate}%
+- Win Rate (FoxTrade P/L Method): ${exactWinRate}%
 - Gross Realized P/L: ${exactGrossRealizedPL >= 0 ? '▲ +' : '▼ '}₹${Math.round(Math.abs(exactGrossRealizedPL)).toLocaleString('en-IN')}
 - Total Unrealized P/L (open positions): ${exactUnrealizedPL >= 0 ? '▲ +' : '▼ '}₹${Math.round(Math.abs(exactUnrealizedPL)).toLocaleString('en-IN')} (${exactUnrealizedPLPct}% of portfolio)
 - Capital at Risk (Downside to SL): ${exactCapitalAtRiskPct}% (₹${Math.round(exactTotalRisk).toLocaleString('en-IN')})
@@ -844,7 +821,7 @@ FOXTRADE CALCULATION METHODOLOGY (KNOW THESE TO RULE OUT CONFLICTS):
 
 4. R-MULTIPLE (rewardRisk field) = realized pnl / initial risk per unit × 1
    Initial risk per unit = (avgEntry - SL) for long trades
-   Pre-calculated by FoxTrade's NexusCalculationEngine for each trade.
+   Pre-calculated by FoxTrade's Calculation Engine for each trade.
 
 5. CAPITAL AT RISK (openHeat) = (entry - SL) × openQty / portfolioCapital × 100
    Represents the % of portfolio at risk if SL is hit on an open position.
@@ -1263,8 +1240,10 @@ export async function askFoxy({
     let contents = [];
     const histSlice = conversationHistory.slice(-10);
     for (const msg of histSlice) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        contents.push({ role: msg.role === 'assistant' ? 'model' : 'user', parts: [{ text: msg.content }] });
+      const isUser = msg.role === 'user' || msg.sender === 'user';
+      const text = String(msg.content !== undefined && msg.content !== null ? msg.content : (msg.text || '')).trim();
+      if (text) {
+        contents.push({ role: isUser ? 'user' : 'model', parts: [{ text }] });
       }
     }
     contents.push({ role: 'user', parts: [{ text: prompt }] });
@@ -1465,10 +1444,12 @@ export async function askFoxy({
     const timeoutTimer = setTimeout(() => controller.abort(), 15000);
     try {
       const anthropicMessages = [
-        ...conversationHistory.slice(-8).map(m => ({ 
-          role: m.role === 'assistant' ? 'assistant' : 'user', 
-          content: m.content 
-        })),
+        ...conversationHistory.slice(-8)
+          .filter(m => (m.content || m.text || '').trim())
+          .map(m => ({ 
+            role: (m.role === 'user' || m.sender === 'user') ? 'user' : 'assistant', 
+            content: (m.content !== undefined && m.content !== null ? m.content : (m.text || '')).trim() 
+          })),
         { role: 'user', content: prompt }
       ];
 
@@ -1510,7 +1491,12 @@ export async function askFoxy({
 
   const messages = [
     { role: 'system', content: fullSystemPrompt },
-    ...conversationHistory.slice(-8).map(m => ({ role: m.role, content: m.content })),
+    ...conversationHistory.slice(-8)
+      .filter(m => (m.content || m.text || '').trim())
+      .map(m => ({ 
+        role: (m.role === 'user' || m.sender === 'user') ? 'user' : 'assistant', 
+        content: (m.content !== undefined && m.content !== null ? m.content : (m.text || '')).trim() 
+      })),
     { role: 'user', content: prompt }
   ];
 
@@ -1644,7 +1630,7 @@ All active open trades have stop losses recorded. Maintain this discipline and e
 **Account & Portfolio Summary**
 • **Total Trades**: ${totalTrades}
 • **Active Open Positions**: ${openPositions}
-• **Win Rate**: ${winRate}% (Nexus P/L Method)
+• **Win Rate**: ${winRate}% (FoxTrade P/L Method)
 • **Gross Realized P&L**: ${plSign}₹${Math.round(Math.abs(grossPL)).toLocaleString('en-IN')}
 • **Capital at Risk**: ${capitalAtRisk}%
 • **Reward-to-Risk Ratio**: ${diagnostics.winLossRatio}x`;
@@ -1653,14 +1639,5 @@ All active open trades have stop losses recorded. Maintain this discipline and e
   return advice;
 }
 
-/**
- * Chat History Management in IndexedDB
- */
-export async function getFoxyChatHistory() {
-  return await getConfig(CONFIG_KEY_CHATS, []);
-}
-
-export async function saveFoxyChatHistory(chats) {
-  await setConfig(CONFIG_KEY_CHATS, chats);
-  scheduleFoxyDriveSync();
-}
+// Re-export structured chat history management from foxyStore
+export { getFoxyChatHistory, saveFoxyChatHistory };

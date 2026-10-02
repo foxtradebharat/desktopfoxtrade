@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import { pairExecutionFills } from '../services/brokerApiService.js';
-import { enrichTradeWithNexusFormulas } from './nexusCalculationEngine.js';
+import { enrichTradeWithFoxFormulas } from './foxCalculationEngine.js';
 import { getCanonicalSymbol } from './securityMaster.js';
 
 export const SUPPORTED_BROKERS = [
@@ -16,12 +16,12 @@ export const SUPPORTED_BROKERS = [
   { id: 'motilal', name: 'Motilal Oswal', markers: ['scrip name', 'trade date', 'buy/sell'], mandatory: ['scrip name'] },
   { id: 'kotak', name: 'Kotak Neo', markers: ['order no', 'exchange trade id'], mandatory: ['order no'] },
   { id: 'stockymind', name: 'Stocky Mind', markers: ['position status', 'plan followed?'], mandatory: ['stock symbol'] },
-  { id: 'nexus', name: 'Nexus Journal', markers: ['tradeno', 'initialqty', 'p1price', 'positionstatus', 'pfimpact', 'cummpf'], mandatory: ['tradeno'] },
+  { id: 'generic_journal', name: 'Journal Export (CSV)', markers: ['tradeno', 'initialqty', 'p1price', 'positionstatus', 'pfimpact', 'cummpf'], mandatory: ['tradeno'] },
   { id: 'foxtrade', name: 'FoxTrade Journal', markers: ['trade no.', 'initial qty/lot', 'p1 price (₹)', 'position status'], mandatory: ['trade no.'] },
 ];
 
 /**
- * Detect Broker from headers using marker heuristics matching Nexus vt registry
+ * Detect Broker from headers using marker heuristics
  */
 export function detectBrokerFromHeaders(headers = []) {
   if (!headers || headers.length === 0) return { id: 'unknown', name: 'Custom CSV / Excel' };
@@ -42,7 +42,7 @@ export function detectBrokerFromHeaders(headers = []) {
   if (flat.includes('scrip code') && flat.includes('side')) return { id: 'upstox', name: 'Upstox' };
   if (flat.includes('trade price') && flat.includes('trade value')) return { id: 'dhan', name: 'Dhan HQ' };
   if (flat.includes('order execution time')) return { id: 'zerodha', name: 'Zerodha Kite' };
-  if (flat.includes('tradeno') || flat.includes('trade no')) return { id: 'foxtrade', name: 'FoxTrade / Nexus Journal' };
+  if (flat.includes('tradeno') || flat.includes('trade no')) return { id: 'foxtrade', name: 'FoxTrade Journal' };
 
   return { id: 'unknown', name: 'Custom CSV / Excel' };
 }
@@ -333,7 +333,7 @@ export async function previewTradesFromFile(fileInput, options = {}) {
 
 /**
  * Universal Trade Importer Engine
- * Parses full journal exports (Nexus / FoxTrade) or Indian broker execution tradebooks.
+ * Parses full journal exports (FoxTrade) or Indian broker execution tradebooks.
  */
 export async function parseTradesFromFile(fileInput, options = {}) {
   const {
@@ -469,7 +469,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
           notes: `Imported from ${detectedBroker.name} tradebook (${p.date})`
         };
 
-        return enrichTradeWithNexusFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'fifo' });
+        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' });
       });
     } else {
       // Individual Fills imported directly
@@ -495,11 +495,11 @@ export async function parseTradesFromFile(fileInput, options = {}) {
           broker: detectedBroker.id !== 'unknown' ? detectedBroker.id : 'Broker Import',
           notes: `Raw fill: ${f.orderId ? `Order #${f.orderId}` : ''} at ${f.entryTime}`
         };
-        return enrichTradeWithNexusFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'fifo' });
+        return enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' });
       });
     }
   }
-  // ── BRANCH 2: FULL JOURNAL EXPORT (FoxTrade / Nexus / Custom) ───────────
+  // ── BRANCH 2: FULL JOURNAL EXPORT (FoxTrade / Custom) ───────────
   else {
     const idxEntryType   = getIndex(['ENTRYTYPE', 'ENTRY TYPE', 'ORDER TYPE']);
     const idxAvgEntry    = getIndex(['AVGENTRY', 'AVG ENTRY', 'AVERAGE ENTRY', 'BUY AVERAGE'], ['P1', 'P2', 'P3', 'P4', 'E1', 'E2', 'E3', 'E4']);
@@ -725,7 +725,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         currentAllocation: currentAllocVal,
       };
 
-      resultTrades.push(enrichTradeWithNexusFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'fifo' }));
+      resultTrades.push(enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: 'lifo' }));
     }
   }
 

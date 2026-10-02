@@ -616,7 +616,7 @@ Based on 3 months and 287 trades, here's who you actually are:
 
 # SECTION D: Summary Table — Our Platform vs Everyone
 
-| Feature | Nexus | TraderSync | Edgewonk | Tradervue | Chartlog | **Our Platform** |
+| Feature | Competitor | TraderSync | Edgewonk | Tradervue | Chartlog | **Our Platform** |
 |---------|-------|-----------|---------|---------|---------|----------|
 | India Broker Support | ✅ | ❌ | ❌ | ❌ | ❌ | ✅✅ |
 | INR Billing + UPI | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |

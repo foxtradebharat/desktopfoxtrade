@@ -118,7 +118,7 @@ export default function CorporateNewsFeedView({ trades = [], onOpenStockChart })
         padding: '6px 24px 90px 24px'
       }}
     >
-      {/* ── Top Bar: Nexus 1:1 Aesthetic Navigation & Expandable Search ── */}
+      {/* ── Top Bar: Aesthetic Navigation & Expandable Search ── */}
       <div 
         style={{
           position: 'sticky',
@@ -267,7 +267,7 @@ export default function CorporateNewsFeedView({ trades = [], onOpenStockChart })
         </div>
       </div>
 
-      {/* ── 2-Column Grid of Beautiful Authentic News Cards (Nexus 1:1) ── */}
+      {/* ── 2-Column Grid of Authentic News Cards ── */}
       <div 
         style={{
           display: 'grid',

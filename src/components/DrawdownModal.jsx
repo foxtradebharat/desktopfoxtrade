@@ -7,9 +7,9 @@ import { formatFullIndianRupee } from '../utils/indianCurrencyFormatter';
 export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues = false, metrics = {} }) {
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'visualizer'
 
-  // Dynamic Drawdown calculations matching 100% exact Nexus Journal sequence & formulas
+  // Dynamic Drawdown calculations matching journal sequence & formulas
   const ddData = useMemo(() => {
-    // Nexus tracks equity curve and portfolio impact strictly in Journal sequence (tradeNo)
+    // Tracks equity curve and portfolio impact strictly in Journal sequence (tradeNo)
     const closed = (trades || [])
       .filter(t => t.status === 'Closed' || (t.status === 'Partial' && (parseFloat(t.pnl) || parseFloat(t.pl) || 0) !== 0))
       .sort((a, b) => (Number(a.tradeNo) || 0) - (Number(b.tradeNo) || 0));
@@ -48,7 +48,7 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
 
       runningNet += net;
 
-      // In Nexus, cumulative portfolio impact is either stored directly or accumulated
+      // Cumulative portfolio impact is either stored directly or accumulated
       if (t.cummPf !== undefined && t.cummPf !== null && t.cummPf !== 0) {
         cummPfImpact = Number(t.cummPf);
       } else {

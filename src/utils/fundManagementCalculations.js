@@ -1,5 +1,5 @@
 // Full Dynamic Fund Management & Portfolio Capital Calculation Engine
-// 100% Mathematical & Data-driven parity with Nexus Journal
+// 100% Mathematical & Data-driven logic for FoxTrade
 
 export const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -74,17 +74,95 @@ export function parseMonthAndYear(dateStr) {
   return null;
 }
 
-import { matchLots } from './nexusCalculationEngine.js';
+import { matchLots } from './foxCalculationEngine.js';
 
 /**
- * Calculates dynamic month-by-month compounding performance matrix matching Nexus Journal
+ * Resolves December ending capital from the preceding year (or chain of preceding years).
+ * Exact FoxTrade rollover logic: closing balance of Dec 31 carries into Jan 1 opening balance.
  */
-export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, selectedYear = '2026') {
+export function getPreviousYearEndingCapital(trades = [], selectedYear = '2026', portfolioId = 'portfolio-default', options = {}) {
+  const numYear = parseInt(selectedYear, 10);
+  if (!numYear || isNaN(numYear)) return 0;
+
+  // Scan prior years up to 15 years back
+  const priorYears = [];
+  for (let yr = numYear - 1; yr >= numYear - 15; yr--) {
+    const yrStr = String(yr);
+    const capChanges = getStoredCapitalChanges(portfolioId, yrStr);
+    const hasCap = Object.values(capChanges).some(m => Number(m?.added || 0) > 0 || Number(m?.withdrawn || 0) > 0);
+    const hasTrades = Array.isArray(trades) && trades.some(t => {
+      const d = parseMonthAndYear(t.date || t.entryDate || t.exitDate || t.e1Date);
+      return d && d.year === yr;
+    });
+
+    if (hasCap || hasTrades) {
+      priorYears.push(yr);
+    }
+  }
+
+  if (priorYears.length === 0) {
+    return 0;
+  }
+
+  // Sort chronologically ascending
+  priorYears.sort((a, b) => a - b);
+  const earliestPriorYear = priorYears[0];
+
+  // Roll forward from the earliest prior year to numYear - 1
+  let rolledDecCapital = 0;
+  for (let yr = earliestPriorYear; yr < numYear; yr++) {
+    const yrStr = String(yr);
+    const capChanges = getStoredCapitalChanges(portfolioId, yrStr);
+
+    const months = calculateMonthlyPerformance(trades, capChanges, yrStr, {
+      ...options,
+      costBasisMethod: options?.costBasisMethod || 'fifo',
+      prevYearDecCapital: rolledDecCapital,
+      skipPrevYearLookup: true
+    });
+
+    const decMonth = months[11];
+    if (decMonth && decMonth.finalCapital > 0) {
+      rolledDecCapital = decMonth.finalCapital;
+    }
+  }
+
+  return rolledDecCapital;
+}
+
+/**
+ * Calculates dynamic month-by-month compounding performance matrix for FoxTrade
+ */
+export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, selectedYear = '2026', options = {}) {
+  const costBasisMethod = options?.costBasisMethod || 'fifo';
   let runningCapital = 0;
   let cumulativeMultiplier = 1.0;
+  let preTaxCumulativeMultiplier = 1.0;
   let firstTradeMonthIdx = -1;
   let latestTradeMonthIdx = -1;
   const numYear = parseInt(selectedYear, 10) || 2026;
+
+  // Carryover starting capital from prior year December final capital
+  let prevYearDecCapital = 0;
+  if (options?.prevYearDecCapital !== undefined) {
+    prevYearDecCapital = Number(options.prevYearDecCapital) || 0;
+  } else if (!options?.skipPrevYearLookup) {
+    const portfolioId = options?.portfolioId || 'portfolio-default';
+    prevYearDecCapital = getPreviousYearEndingCapital(trades, selectedYear, portfolioId, options);
+  }
+
+  // Determine elapsed months boundary across trading calendar
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth(); // 0-indexed
+  let maxElapsedMonthIdx = -1;
+  if (numYear < currentYear) {
+    maxElapsedMonthIdx = 11;
+  } else if (numYear === currentYear) {
+    maxElapsedMonthIdx = currentMonth;
+  } else {
+    maxElapsedMonthIdx = -1;
+  }
 
   // Compute each trade's exit contributions by month dynamically
   const monthlyTradeStats = {};
@@ -92,6 +170,7 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
   trades.forEach(t => {
     const side = (t.type || t.side || 'Buy');
     const isSell = String(side).toLowerCase() === 'sell';
+    const isClosed = String(t.status || t.positionStatus || '').toLowerCase() === 'closed';
 
     // Collect Entry Legs
     const entryLots = [];
@@ -128,17 +207,27 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     ].filter(l => l.qty > 0 && l.price > 0 && l.date);
 
     if (exitLots.length > 0 && entryLots.length > 0) {
-      const { matches } = matchLots(entryLots, exitLots, 'fifo', side);
+      const { matches } = matchLots(entryLots, exitLots, costBasisMethod, side);
 
       // Group matched realized P/L by exit month
       const matchesByMonth = {};
+      const tradeTaxes = Number(t.taxes || t.charges?.total || t.brokerage || 0);
+      const tradeGrossPl = Number.isFinite(Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl)) ? Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl) : null;
+      const totalMatches = matches.length || 1;
+
       matches.forEach(m => {
         const d = parseMonthAndYear(m.exitDate || t.date);
         if (d && d.year === numYear) {
           if (!matchesByMonth[d.month]) {
-            matchesByMonth[d.month] = { netPl: 0, count: 0, gains: [], lossVals: [] };
+            matchesByMonth[d.month] = { netPl: 0, grossPl: 0, taxes: 0, count: 0, gains: [], lossVals: [] };
           }
-          matchesByMonth[d.month].netPl += m.pl;
+          const chunkTax = tradeTaxes > 0 ? (tradeTaxes / totalMatches) : 0;
+          const chunkGross = m.pl;
+          const chunkNet = chunkGross - chunkTax;
+
+          matchesByMonth[d.month].grossPl += chunkGross;
+          matchesByMonth[d.month].taxes += chunkTax;
+          matchesByMonth[d.month].netPl += chunkNet;
           matchesByMonth[d.month].count += 1;
         }
       });
@@ -149,34 +238,58 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
         if (mIdx > latestTradeMonthIdx) latestTradeMonthIdx = mIdx;
 
         if (!monthlyTradeStats[mIdx]) {
-          monthlyTradeStats[mIdx] = { netPl: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
+          monthlyTradeStats[mIdx] = { netPl: 0, grossPl: 0, taxes: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
         }
 
         monthlyTradeStats[mIdx].netPl += monthData.netPl;
+        monthlyTradeStats[mIdx].grossPl += monthData.grossPl;
+        monthlyTradeStats[mIdx].taxes += monthData.taxes;
         monthlyTradeStats[mIdx].trades += 1; // count trade once per month it exits in
 
-        if (monthData.netPl > 0) {
-          monthlyTradeStats[mIdx].wins += 1;
-          const avgEntry = parseFloat(t.avgEntry || t.entry) || 0;
-          const avgExitPrice = parseFloat(t.avgExitPrice) || 0;
-          const movePct = avgEntry > 0 ? Math.abs((avgExitPrice - avgEntry) / avgEntry * 100) : 0;
-          monthlyTradeStats[mIdx].gains.push(movePct);
-        } else if (monthData.netPl < 0) {
-          monthlyTradeStats[mIdx].losses += 1;
-          const avgEntry = parseFloat(t.avgEntry || t.entry) || 0;
-          const avgExitPrice = parseFloat(t.avgExitPrice) || 0;
-          const movePct = avgEntry > 0 ? Math.abs((avgExitPrice - avgEntry) / avgEntry * 100) : 0;
-          monthlyTradeStats[mIdx].lossVals.push(movePct);
+        // Win rate rule: Only Closed positions qualify as wins/losses
+        if (isClosed) {
+          if (monthData.netPl > 0) {
+            monthlyTradeStats[mIdx].wins += 1;
+          } else if (monthData.netPl < 0) {
+            monthlyTradeStats[mIdx].losses += 1;
+          }
         }
 
-        if (t.rewardRisk !== undefined && t.rewardRisk !== null && t.rewardRisk !== '' && !isNaN(parseFloat(t.rewardRisk))) {
-          monthlyTradeStats[mIdx].rrList.push(parseFloat(t.rewardRisk));
+        // Gain / Loss move percent
+        const rawStockMove = (t.stockMove !== undefined && t.stockMove !== null && t.stockMove !== '' && !isNaN(parseFloat(t.stockMove)))
+          ? parseFloat(t.stockMove)
+          : null;
+
+        if (rawStockMove !== null) {
+          if (rawStockMove > 0) {
+            monthlyTradeStats[mIdx].gains.push(Math.abs(rawStockMove));
+          } else if (rawStockMove < 0) {
+            monthlyTradeStats[mIdx].lossVals.push(Math.abs(rawStockMove));
+          }
+        } else {
+          const avgEntry = parseFloat(t.avgEntry || t.entry) || 0;
+          const avgExitPrice = parseFloat(t.avgExitPrice) || 0;
+          const movePct = avgEntry > 0 ? Math.abs((avgExitPrice - avgEntry) / avgEntry * 100) : 0;
+          if (monthData.netPl > 0) {
+            monthlyTradeStats[mIdx].gains.push(movePct);
+          } else if (monthData.netPl < 0) {
+            monthlyTradeStats[mIdx].lossVals.push(movePct);
+          }
         }
-        if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(parseInt(t.holdingDays, 10))) {
-          monthlyTradeStats[mIdx].holdingDays.push(parseInt(t.holdingDays, 10));
+
+        // R rule: Exclude 0R breakeven from the count denominator
+        const rrVal = parseFloat(t.weightedRR ?? t.rewardRisk);
+        if (!isNaN(rrVal) && rrVal !== 0) {
+          monthlyTradeStats[mIdx].rrList.push(rrVal);
+        }
+
+        // Holding days
+        const daysVal = parseFloat(t.holdingDays);
+        if (!isNaN(daysVal) && daysVal > 0) {
+          monthlyTradeStats[mIdx].holdingDays.push(daysVal);
         }
       });
-    } else if (t.status === 'Closed' && (t.pnl !== undefined || t.avgExitPrice !== undefined)) {
+    } else if (isClosed && (t.pnl !== undefined || t.avgExitPrice !== undefined)) {
       // Fallback: no exit leg data — use stored pnl and exitDate
       const d = parseMonthAndYear(t.exitDate || t.date);
       if (d && d.year === numYear) {
@@ -185,31 +298,41 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
         if (mIdx > latestTradeMonthIdx) latestTradeMonthIdx = mIdx;
 
         if (!monthlyTradeStats[mIdx]) {
-          monthlyTradeStats[mIdx] = { netPl: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
+          monthlyTradeStats[mIdx] = { netPl: 0, grossPl: 0, taxes: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
         }
         const tradePl = (t.pnl !== undefined && t.pnl !== null && !isNaN(parseFloat(t.pnl))) ? parseFloat(t.pnl) : 0;
+        const tradeTaxes = Number(t.taxes || t.charges?.total || t.brokerage || 0);
+        const tradeGross = Number.isFinite(Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl)) ? Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl) : (tradePl + tradeTaxes);
         monthlyTradeStats[mIdx].netPl += tradePl;
+        monthlyTradeStats[mIdx].grossPl += tradeGross;
+        monthlyTradeStats[mIdx].taxes += tradeTaxes;
         monthlyTradeStats[mIdx].trades += 1;
 
-        // P/L Method: breakeven excluded from win/loss decided count (same as stat card)
         if (tradePl > 0) {
           monthlyTradeStats[mIdx].wins += 1;
-          if (t.stockMove !== undefined && t.stockMove !== null && t.stockMove !== '' && !isNaN(parseFloat(t.stockMove))) {
-            monthlyTradeStats[mIdx].gains.push(Math.abs(parseFloat(t.stockMove)));
-          }
         } else if (tradePl < 0) {
           monthlyTradeStats[mIdx].losses += 1;
-          if (t.stockMove !== undefined && t.stockMove !== null && t.stockMove !== '' && !isNaN(parseFloat(t.stockMove))) {
-            monthlyTradeStats[mIdx].lossVals.push(Math.abs(parseFloat(t.stockMove)));
+        }
+
+        const rawStockMove = (t.stockMove !== undefined && t.stockMove !== null && t.stockMove !== '' && !isNaN(parseFloat(t.stockMove)))
+          ? parseFloat(t.stockMove)
+          : null;
+        if (rawStockMove !== null) {
+          if (rawStockMove > 0) {
+            monthlyTradeStats[mIdx].gains.push(Math.abs(rawStockMove));
+          } else if (rawStockMove < 0) {
+            monthlyTradeStats[mIdx].lossVals.push(Math.abs(rawStockMove));
           }
         }
-        // Breakeven: tradePl === 0 → not counted in wins/losses/gains/lossVals
 
-        if (t.rewardRisk !== undefined && t.rewardRisk !== null && t.rewardRisk !== '' && !isNaN(parseFloat(t.rewardRisk))) {
-          monthlyTradeStats[mIdx].rrList.push(parseFloat(t.rewardRisk));
+        const rrVal = parseFloat(t.weightedRR ?? t.rewardRisk);
+        if (!isNaN(rrVal) && rrVal !== 0) {
+          monthlyTradeStats[mIdx].rrList.push(rrVal);
         }
-        if (t.holdingDays !== undefined && t.holdingDays !== null && t.holdingDays !== '' && !isNaN(parseInt(t.holdingDays, 10))) {
-          monthlyTradeStats[mIdx].holdingDays.push(parseInt(t.holdingDays, 10));
+
+        const daysVal = parseFloat(t.holdingDays);
+        if (!isNaN(daysVal) && daysVal > 0) {
+          monthlyTradeStats[mIdx].holdingDays.push(daysVal);
         }
       }
     }
@@ -221,20 +344,22 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     const withdrawn = parseFloat(capitalChanges[idx]?.withdrawn) || 0;
     const withdrawnNotes = capitalChanges[idx]?.withdrawnNotes || '';
 
-    const stats = monthlyTradeStats[idx] || { netPl: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
+    const stats = monthlyTradeStats[idx] || { netPl: 0, grossPl: 0, taxes: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
     const netPl = Math.round(stats.netPl * 100) / 100;
+    const grossPl = Math.round((stats.grossPl !== undefined ? stats.grossPl : stats.netPl) * 100) / 100;
+    const taxes = Math.round((stats.taxes || 0) * 100) / 100;
     const tradeCount = stats.trades;
-    const decided = stats.wins + stats.losses;
-    const winPct = decided > 0 ? (stats.wins / decided) * 100 : 0;
+    // Win rate: Total wins divided by total monthly trade count
+    const winPct = tradeCount > 0 ? (stats.wins / tradeCount) * 100 : 0;
     const avgGainPct = stats.gains.length > 0 ? stats.gains.reduce((a, b) => a + b, 0) / stats.gains.length : 0;
     const avgLossPct = stats.lossVals.length > 0 ? stats.lossVals.reduce((a, b) => a + b, 0) / stats.lossVals.length : 0;
     const avgRR = stats.rrList.length > 0 ? stats.rrList.reduce((a, b) => a + b, 0) / stats.rrList.length : 0;
-    const avgDays = stats.holdingDays.length > 0 ? Math.round(stats.holdingDays.reduce((a, b) => a + b, 0) / stats.holdingDays.length) : 0;
+    const avgDays = stats.holdingDays.length > 0 ? (stats.holdingDays.reduce((a, b) => a + b, 0) / stats.holdingDays.length) : 0;
 
     // Capital Rollover & Compounding:
     let startingCapital = runningCapital;
     if (idx === 0) {
-      startingCapital = added - withdrawn;
+      startingCapital = prevYearDecCapital + added - withdrawn;
       runningCapital = startingCapital;
     } else {
       startingCapital = runningCapital + added - withdrawn;
@@ -244,22 +369,26 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     const finalCapital = startingCapital + netPl;
     runningCapital = finalCapital;
 
-    const pctPl = startingCapital > 0 && netPl !== 0 ? (netPl / startingCapital) * 100 : 0;
+    const pctPl = startingCapital > 0 && netPl !== 0 ? Math.round((netPl / startingCapital) * 10000) / 100 : 0;
+    const preTaxPctPl = startingCapital > 0 && grossPl !== 0 ? Math.round((grossPl / startingCapital) * 10000) / 100 : 0;
 
-    // Compounded Multiplier:
+    // Compounded Multiplier (FoxTrade uses rounded monthly plPct for compounding):
     if (startingCapital > 0 && netPl !== 0) {
-      cumulativeMultiplier *= (1 + netPl / startingCapital);
+      cumulativeMultiplier *= (1 + pctPl / 100);
+    }
+    if (startingCapital > 0 && grossPl !== 0) {
+      preTaxCumulativeMultiplier *= (1 + preTaxPctPl / 100);
     }
 
-    // Exact Nexus Annualized CAGR Formula:
+    // FoxTrade Annualized CAGR Formula across elapsed months
     let cagr = 0;
-    if (firstTradeMonthIdx !== -1 && idx >= firstTradeMonthIdx && idx <= latestTradeMonthIdx) {
+    if (firstTradeMonthIdx !== -1 && idx >= firstTradeMonthIdx && (maxElapsedMonthIdx === -1 || idx <= maxElapsedMonthIdx)) {
       const elapsedYears = (idx + 1) / 12;
       if (elapsedYears > 0) {
         if (cumulativeMultiplier >= 0) {
-          cagr = (Math.pow(cumulativeMultiplier, 1 / elapsedYears) - 1) * 100;
+          cagr = Math.round(((Math.pow(cumulativeMultiplier, 1 / elapsedYears) - 1) * 100) * 100) / 100;
         } else {
-          cagr = -((Math.pow(Math.abs(cumulativeMultiplier), 1 / elapsedYears) - 1) * 100);
+          cagr = Math.round((-((Math.pow(Math.abs(cumulativeMultiplier), 1 / elapsedYears) - 1) * 100)) * 100) / 100;
         }
       }
     }
@@ -273,7 +402,10 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
       withdrawnNotes,
       startingCapital,
       netPl,
+      grossPl,
+      taxes,
       pctPl,
+      preTaxPctPl,
       finalCapital,
       trades: tradeCount,
       winPct,
@@ -282,7 +414,9 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
       avgRR,
       avgDays,
       cagr,
-      cumulativeMultiplier
+      cumulativeMultiplier,
+      preTaxCumulativeMultiplier,
+      prevYearDecCapital: idx === 0 ? prevYearDecCapital : 0
     };
   });
 }
@@ -309,8 +443,8 @@ export function getActivePortfolioCapital(trades = [], capitalChanges = {}, sele
 /**
  * Calculates yearly fund summary with starting, ending, deposits, withdrawals, and CAGR
  */
-export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, selectedYear = '2026') {
-  const months = calculateMonthlyPerformance(trades, capitalChanges, selectedYear);
+export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, selectedYear = '2026', options = {}) {
+  const months = calculateMonthlyPerformance(trades, capitalChanges, selectedYear, options);
   const activeMonths = months.filter(m => m.trades > 0 || m.added > 0 || m.withdrawn > 0);
   
   const totalAdded = months.reduce((acc, m) => acc + m.added, 0);
@@ -320,11 +454,9 @@ export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, sel
   const totalTrades = months.reduce((acc, m) => acc + m.trades, 0);
   
   let startingCapital = 0;
-  for (const m of months) {
-    if (m.startingCapital > 0) {
-      startingCapital = m.startingCapital;
-      break;
-    }
+  const firstActiveMonth = activeMonths[0] || months[0];
+  if (firstActiveMonth) {
+    startingCapital = firstActiveMonth.startingCapital;
   }
   
   let endingCapital = startingCapital;
@@ -340,8 +472,27 @@ export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, sel
     if (m.finalCapital > peakCapital) peakCapital = m.finalCapital;
   });
 
-  const finalMultiplier = months.slice(-1)[0]?.cumulativeMultiplier || 1.0;
-  const finalCagr = months.filter(m => m.cagr !== 0).slice(-1)[0]?.cagr || 0;
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const numYear = parseInt(selectedYear, 10) || 2026;
+  const maxElapsedMonthIdx = numYear < currentYear ? 11 : (numYear === currentYear ? currentMonth : -1);
+
+  // Period months for elapsed year
+  const elapsedMonths = maxElapsedMonthIdx >= 0 ? months.filter(m => m.monthIdx <= maxElapsedMonthIdx) : [];
+  const u = elapsedMonths.length;
+
+  // Post-tax metrics
+  const finalMultiplier = elapsedMonths.length > 0 ? elapsedMonths[elapsedMonths.length - 1].cumulativeMultiplier : 1.0;
+  const totalCompounded = (finalMultiplier - 1) * 100;
+  const monthlyAvgReturn = u > 0 ? (Math.pow(Math.max(0, finalMultiplier), 1 / u) - 1) * 100 : 0;
+  const annualizedCagr = u > 0 ? (Math.pow(Math.max(0, finalMultiplier), 12 / u) - 1) * 100 : 0;
+
+  // Pre-tax metrics (for Pre-Tax toggle)
+  const preTaxFinalMultiplier = elapsedMonths.length > 0 ? elapsedMonths[elapsedMonths.length - 1].preTaxCumulativeMultiplier : 1.0;
+  const preTaxTotalCompounded = (preTaxFinalMultiplier - 1) * 100;
+  const preTaxMonthlyAvgReturn = u > 0 ? (Math.pow(Math.max(0, preTaxFinalMultiplier), 1 / u) - 1) * 100 : 0;
+  const preTaxAnnualizedCagr = u > 0 ? (Math.pow(Math.max(0, preTaxFinalMultiplier), 12 / u) - 1) * 100 : 0;
 
   return {
     year: String(selectedYear),
@@ -353,8 +504,14 @@ export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, sel
     endingCapital: Math.round(endingCapital * 100) / 100,
     peakCapital: Math.round(peakCapital * 100) / 100,
     totalTrades,
-    annualizedCagr: Math.round(finalCagr * 100) / 100,
+    annualizedCagr: Math.round(annualizedCagr * 100) / 100,
+    totalCompounded: Math.round(totalCompounded * 100) / 100,
+    monthlyAvgReturn: Math.round(monthlyAvgReturn * 100) / 100,
     cumulativeMultiplier: Math.round(finalMultiplier * 1000) / 1000,
+    preTaxAnnualizedCagr: Math.round(preTaxAnnualizedCagr * 100) / 100,
+    preTaxTotalCompounded: Math.round(preTaxTotalCompounded * 100) / 100,
+    preTaxMonthlyAvgReturn: Math.round(preTaxMonthlyAvgReturn * 100) / 100,
+    preTaxCumulativeMultiplier: Math.round(preTaxFinalMultiplier * 1000) / 1000,
     months,
     activeMonths
   };
@@ -365,8 +522,9 @@ export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, sel
  */
 export function getAvailableFundYears(trades = [], activePortfolioId = 'portfolio-default') {
   const yearsSet = new Set();
-  const presentYear = new Date().getFullYear().toString();
-  yearsSet.add(presentYear);
+  const presentYear = new Date().getFullYear();
+  yearsSet.add(String(presentYear));
+  yearsSet.add(String(presentYear + 1));
 
   if (Array.isArray(trades)) {
     trades.forEach(t => {
@@ -429,6 +587,9 @@ export function formatFundManagementForFoxy(fundSummary) {
   if (annualizedCagr !== 0) {
     out += `• **Annualized CAGR**: ${annualizedCagr}%\n`;
   }
+  if (startingCapital === 0 && totalAdded === 0) {
+    out += `• **Base Capital Advisory**: No initial deposit has been recorded in the Fund Management tab (Base Capital: ₹0). All growth is compounded from ₹0 initial deposit + accumulated trade P/L. To track realistic portfolio percentage returns, enter your starting capital in the Fund Management tab.\n`;
+  }
   out += `\n`;
 
   if (activeMonths && activeMonths.length > 0) {
@@ -436,7 +597,8 @@ export function formatFundManagementForFoxy(fundSummary) {
     const tableRows = activeMonths.map(m => {
       const plSign = m.netPl >= 0 ? '▲ +' : '▼ -';
       const pctSign = m.pctPl >= 0 ? '+' : '';
-      return `${m.month},₹${Math.round(m.startingCapital).toLocaleString('en-IN')},₹${Math.round(m.added).toLocaleString('en-IN')},₹${Math.round(m.withdrawn).toLocaleString('en-IN')},${plSign}₹${Math.round(Math.abs(m.netPl)).toLocaleString('en-IN')},${pctSign}${m.pctPl}%,₹${Math.round(m.finalCapital).toLocaleString('en-IN')},${m.trades},${Math.round(m.winPct)}%`;
+      const pctReturnFormatted = m.startingCapital > 0 ? `${pctSign}${m.pctPl}%` : '-';
+      return `${m.month},₹${Math.round(m.startingCapital).toLocaleString('en-IN')},₹${Math.round(m.added).toLocaleString('en-IN')},₹${Math.round(m.withdrawn).toLocaleString('en-IN')},${plSign}₹${Math.round(Math.abs(m.netPl)).toLocaleString('en-IN')},${pctReturnFormatted},₹${Math.round(m.finalCapital).toLocaleString('en-IN')},${m.trades},${Math.round(m.winPct)}%`;
     }).join(' | ');
     out += `[TABLE: ${tableHeaders} | ${tableRows}]\n`;
   }

@@ -495,9 +495,9 @@ const csvRows = [
 
 const csvContent = csvRows.join("\n");
 
-fs.writeFileSync("d:/tradeontip/dummy_nexus_10_trades.csv", csvContent, "utf8");
+fs.writeFileSync("d:/tradeontip/dummy_fox_10_trades.csv", csvContent, "utf8");
 try {
-  fs.writeFileSync("C:/Users/iMAC/Downloads/dummy_nexus_10_trades.csv", csvContent, "utf8");
+  fs.writeFileSync("C:/Users/iMAC/Downloads/dummy_fox_10_trades.csv", csvContent, "utf8");
   console.log("Saved to Downloads successfully!");
 } catch (e) {
   console.log("Could not write directly to Downloads:", e.message);

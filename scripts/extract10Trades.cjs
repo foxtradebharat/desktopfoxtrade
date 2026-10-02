@@ -1,16 +1,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const srcFile = 'C:\\Users\\iMAC\\Downloads\\nexus-complete-data-01a04c22-5a1f-7729-ad82-569fc8406adf-2026-08-29.json';
-const rawData = JSON.parse(fs.readFileSync(srcFile, 'utf8'));
+const srcFile = fs.existsSync('C:\\Users\\iMAC\\Downloads\\foxtrade-complete-data.json')
+  ? 'C:\\Users\\iMAC\\Downloads\\foxtrade-complete-data.json'
+  : (fs.existsSync('C:\\Users\\iMAC\\Downloads\\complete-data.json') ? 'C:\\Users\\iMAC\\Downloads\\complete-data.json' : 'C:\\Users\\iMAC\\Downloads\\foxtrade-complete-data.json');
+const rawData = fs.existsSync(srcFile) ? JSON.parse(fs.readFileSync(srcFile, 'utf8')) : { data: { journal: { rows: [] } } };
 
 // Clone the backup structure and keep only 10 rows
 const tenRowsBackup = JSON.parse(JSON.stringify(rawData));
 const rows = (rawData.data?.journal?.rows || []).slice(0, 10);
 tenRowsBackup.data.journal.rows = rows;
 
-// 1. Save as Nexus Backup JSON
-const jsonOutputPath = 'C:\\Users\\iMAC\\Downloads\\nexus-10-trades.json';
+// 1. Save as FoxTrade Backup JSON
+const jsonOutputPath = 'C:\\Users\\iMAC\\Downloads\\foxtrade-10-trades.json';
 fs.writeFileSync(jsonOutputPath, JSON.stringify(tenRowsBackup, null, 2));
 console.log('Saved 10-trades JSON backup to:', jsonOutputPath);
 
@@ -86,7 +88,7 @@ const tradeOnTipTrades = rows.map((r, i) => ({
   unrealizedPL: r.unrealizedPL || 0
 }));
 
-const totOutputPath = path.join(__dirname, '..', 'src', 'data', 'nexusImportedTrades.json');
+const totOutputPath = path.join(__dirname, '..', 'src', 'data', 'foxtradeImportedTrades.json');
 fs.writeFileSync(totOutputPath, JSON.stringify(tradeOnTipTrades, null, 2));
 console.log('Saved 10 trades to TradeOnTip data file:', totOutputPath);
 
@@ -168,6 +170,6 @@ rows.forEach(r => {
   csvRows.push(vals.join(','));
 });
 
-const csvOutputPath = 'C:\\Users\\iMAC\\Downloads\\nexus-10-trades.csv';
+const csvOutputPath = 'C:\\Users\\iMAC\\Downloads\\foxtrade-10-trades.csv';
 fs.writeFileSync(csvOutputPath, csvRows.join('\n'));
 console.log('Saved 10-trades CSV to:', csvOutputPath);
