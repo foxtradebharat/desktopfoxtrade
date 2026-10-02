@@ -63,6 +63,45 @@ export default function AddTradeModal({
   const [isFetchingCmp, setIsFetchingCmp] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
+  // Keyboard navigation & safe selection for stock suggestions
+  const [highlightedStockIndex, setHighlightedStockIndex] = useState(0);
+  const highlightedStockRef = useRef(0);
+  const stockListRef = useRef(null);
+  const isSelectingStockRef = useRef(false);
+
+  useEffect(() => {
+    highlightedStockRef.current = 0;
+    setHighlightedStockIndex(0);
+  }, [stockSuggestions]);
+
+  useEffect(() => {
+    if (showStockDropdown && stockListRef.current) {
+      const itemEl = stockListRef.current.children[highlightedStockIndex];
+      if (itemEl && typeof itemEl.scrollIntoView === 'function') {
+        itemEl.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [highlightedStockIndex, showStockDropdown]);
+
+  const handleSelectStock = async (stockOrSymbol) => {
+    if (!stockOrSymbol) return;
+    isSelectingStockRef.current = true;
+    const rawSymbol = typeof stockOrSymbol === 'string' ? stockOrSymbol : stockOrSymbol.symbol;
+    const canonical = getCanonicalSymbol(rawSymbol);
+    setStockName(canonical);
+    setSearchFilter(canonical);
+    setShowStockDropdown(false);
+    setIsFetchingCmp(true);
+    try {
+      const price = await fetchLiveCMPForSymbol(canonical);
+      if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
+    } catch {}
+    finally {
+      setIsFetchingCmp(false);
+      setTimeout(() => { isSelectingStockRef.current = false; }, 150);
+    }
+  };
+
   // Broker picker state — persists last used broker
   const [broker, setBroker] = useState(() => localStorage.getItem('foxtrade_last_broker') || 'not_defined');
   const [brokerPickerOpen, setBrokerPickerOpen] = useState(false);
@@ -391,37 +430,96 @@ export default function AddTradeModal({
                       <label style={{ display:'block', fontSize:'11px', fontWeight:500, color:'var(--text-muted, #9ca3af)', marginBottom:'6px' }}>Stock Name</label>
                       <input
                         type="text" placeholder="Type a stock name" value={stockName}
-                        onChange={(e) => { setStockName(e.target.value); setSearchFilter(e.target.value); setShowStockDropdown(true); }}
-                        onFocus={() => setShowStockDropdown(true)}
-                        onBlur={async () => {
-                          if ((!cmp || Number(cmp) === 0) && stockName.trim()) {
-                            setIsFetchingCmp(true);
-                            try {
-                              const canonical = getCanonicalSymbol(stockName.trim());
-                              const price = await fetchLiveCMPForSymbol(canonical);
-                              if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
-                            } catch {}
-                            finally { setIsFetchingCmp(false); }
+                        onChange={(e) => { 
+                          setStockName(e.target.value); 
+                          setSearchFilter(e.target.value); 
+                          setShowStockDropdown(true); 
+                          setHighlightedStockIndex(0);
+                        }}
+                        onFocus={() => {
+                          if (stockName.trim().length > 0) setShowStockDropdown(true);
+                        }}
+                        onKeyDown={(e) => {
+                          if (showStockDropdown && stockSuggestions.length > 0) {
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              const next = Math.min(highlightedStockRef.current + 1, stockSuggestions.length - 1);
+                              highlightedStockRef.current = next;
+                              setHighlightedStockIndex(next);
+                            } else if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              const prev = Math.max(highlightedStockRef.current - 1, 0);
+                              highlightedStockRef.current = prev;
+                              setHighlightedStockIndex(prev);
+                            } else if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const targetIdx = highlightedStockRef.current;
+                              if (stockSuggestions[targetIdx]) {
+                                handleSelectStock(stockSuggestions[targetIdx]);
+                              } else if (stockName.trim()) {
+                                handleSelectStock(stockName.trim());
+                              }
+                            } else if (e.key === 'Tab') {
+                              const targetIdx = highlightedStockRef.current;
+                              if (stockSuggestions[targetIdx]) {
+                                handleSelectStock(stockSuggestions[targetIdx]);
+                              } else {
+                                setShowStockDropdown(false);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setShowStockDropdown(false);
+                            }
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (stockName.trim()) {
+                              handleSelectStock(stockName.trim());
+                            }
                           }
+                        }}
+                        onBlur={async () => {
+                          setTimeout(async () => {
+                            if (isSelectingStockRef.current) return;
+                            setShowStockDropdown(false);
+                            if ((!cmp || Number(cmp) === 0) && stockName.trim()) {
+                              setIsFetchingCmp(true);
+                              try {
+                                const canonical = getCanonicalSymbol(stockName.trim());
+                                const price = await fetchLiveCMPForSymbol(canonical);
+                                if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
+                              } catch {}
+                              finally { setIsFetchingCmp(false); }
+                            }
+                          }, 150);
                         }}
                         style={{ width:'100%', padding:'8px 12px', borderRadius:'10px', border:'1px solid var(--border-color, rgba(0,0,0,0.1))', fontSize:'13px', outline:'none', boxSizing:'border-box', backgroundColor:'var(--bg-card, #fff)', color:'var(--text-primary, #111827)' }}
                       />
                       {showStockDropdown && searchFilter && (
-                        <div style={{ position:'absolute', top:'100%', left:0, right:0, backgroundColor:'var(--bg-card, #fff)', border:'1px solid var(--border-color, rgba(0,0,0,0.1))', borderRadius:'12px', boxShadow:'0 15px 30px -5px rgba(0,0,0,0.3)', zIndex:100, maxHeight:'220px', overflowY:'auto', marginTop:'4px', padding:'4px 0' }}>
-                          {stockSuggestions.map((stock) => (
+                        <div 
+                          ref={stockListRef}
+                          style={{ position:'absolute', top:'100%', left:0, right:0, backgroundColor:'var(--bg-card, #fff)', border:'1px solid var(--border-color, rgba(0,0,0,0.1))', borderRadius:'12px', boxShadow:'0 15px 30px -5px rgba(0,0,0,0.3)', zIndex:100, maxHeight:'220px', overflowY:'auto', marginTop:'4px', padding:'4px 0' }}
+                        >
+                          {stockSuggestions.map((stock, i) => (
                             <div key={`${stock.symbol}-${stock.exchange}`}
-                              onClick={async () => {
-                                const canonical = getCanonicalSymbol(stock.symbol);
-                                setStockName(canonical); setShowStockDropdown(false); setIsFetchingCmp(true);
-                                try {
-                                  const price = await fetchLiveCMPForSymbol(canonical);
-                                  if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
-                                } catch {}
-                                finally { setIsFetchingCmp(false); }
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                handleSelectStock(stock);
                               }}
-                              style={{ padding:'8px 12px', cursor:'pointer', fontSize:'12px', borderBottom:'1px solid var(--border-color, #f9fafb)', display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px' }}
-                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor='var(--bg-hover, #f8faff)'}
-                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor='transparent'}
+                              onMouseEnter={() => {
+                                highlightedStockRef.current = i;
+                                setHighlightedStockIndex(i);
+                              }}
+                              style={{ 
+                                padding:'8px 12px', 
+                                cursor:'pointer', 
+                                fontSize:'12px', 
+                                borderBottom:'1px solid var(--border-color, #f9fafb)', 
+                                display:'flex', 
+                                alignItems:'center', 
+                                justifyContent:'space-between', 
+                                gap:'8px',
+                                backgroundColor: i === highlightedStockIndex ? 'var(--bg-hover, #f8faff)' : 'transparent',
+                                transition: 'background-color 0.1s ease'
+                              }}
                             >
                               <div style={{ display:'flex', alignItems:'center', gap:'8px', overflow:'hidden' }}>
                                 <SymbolLogo symbol={stock.symbol} companyName={stock.name} size={20} />

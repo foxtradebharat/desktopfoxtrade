@@ -15,14 +15,28 @@ export default function StockAutocomplete({
   const [query, setQuery] = useState(value || '');
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
+  const highlightedRef = useRef(0);
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 280 });
   const [suggestions, setSuggestions] = useState(() => getFallbackList(market).slice(0, 10));
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
+  const listRef = useRef(null);
   const searchTimeoutRef = useRef(null);
+  const isSelectingRef = useRef(false);
 
   // Sync external value
   useEffect(() => { setQuery(value || ''); }, [value]);
+
+  // Keep highlighted suggestion in view when navigating via arrow keys
+  useEffect(() => {
+    if (open && listRef.current) {
+      // Child 0 is header, so child (highlighted + 1) is the item
+      const itemEl = listRef.current.children[highlighted + 1];
+      if (itemEl && typeof itemEl.scrollIntoView === 'function') {
+        itemEl.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }, [highlighted, open]);
 
   // Execute search when query or market changes
   useEffect(() => {
@@ -31,6 +45,8 @@ export default function StockAutocomplete({
     const q = query.trim();
     if (!q) {
       setSuggestions(getFallbackList(market).slice(0, 10));
+      highlightedRef.current = 0;
+      setHighlighted(0);
       return;
     }
 
@@ -39,6 +55,8 @@ export default function StockAutocomplete({
       try {
         const results = await searchStocks(q, market, 12);
         setSuggestions(results);
+        highlightedRef.current = 0;
+        setHighlighted(0);
       } catch {
         setSuggestions([]);
       } finally {
@@ -79,12 +97,31 @@ export default function StockAutocomplete({
   const openDropdown = useCallback(() => {
     updateDropPos();
     setOpen(true);
+    highlightedRef.current = 0;
     setHighlighted(0);
   }, [updateDropPos]);
+
+  const commitSelection = (chosenSymbol) => {
+    if (!chosenSymbol) return;
+    isSelectingRef.current = true;
+    const finalVal = getCanonicalSymbol(chosenSymbol);
+    setQuery(finalVal);
+    if (inputRef.current) {
+      inputRef.current.value = finalVal;
+    }
+    setOpen(false);
+    if (onChange && finalVal !== value) {
+      onChange(finalVal);
+    }
+    setTimeout(() => {
+      isSelectingRef.current = false;
+    }, 150);
+  };
 
   const handleInput = (e) => {
     const val = e.target.value.toUpperCase();
     setQuery(val);
+    highlightedRef.current = 0;
     setHighlighted(0);
     if (val.trim().length > 0) {
       updateDropPos();
@@ -97,40 +134,47 @@ export default function StockAutocomplete({
   const handleKeyDown = (e) => {
     if (e.key === 'ArrowDown' && open && suggestions.length > 0) { 
       e.preventDefault(); 
-      setHighlighted(i => Math.min(i + 1, suggestions.length - 1)); 
+      const next = Math.min(highlightedRef.current + 1, suggestions.length - 1);
+      highlightedRef.current = next;
+      setHighlighted(next); 
     }
     else if (e.key === 'ArrowUp' && open && suggestions.length > 0) { 
       e.preventDefault(); 
-      setHighlighted(i => Math.max(i - 1, 0)); 
+      const prev = Math.max(highlightedRef.current - 1, 0);
+      highlightedRef.current = prev;
+      setHighlighted(prev); 
     }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      const chosen = open && suggestions.length > 0 ? suggestions[highlighted] : null;
-      const rawVal = chosen ? chosen.symbol : query.trim().toUpperCase();
-      const finalVal = getCanonicalSymbol(rawVal);
-      setQuery(finalVal);
-      if (onChange) onChange(finalVal);
-      setOpen(false);
+      const targetIdx = highlightedRef.current;
+      if (open && suggestions.length > 0 && suggestions[targetIdx]) {
+        commitSelection(suggestions[targetIdx].symbol);
+      } else if (query.trim()) {
+        commitSelection(query.trim().toUpperCase());
+      }
       inputRef.current?.blur();
     } else if (e.key === 'Escape') { 
       setOpen(false); 
     }
     else if (e.key === 'Tab') { 
-      setOpen(false); 
+      const targetIdx = highlightedRef.current;
+      if (open && suggestions.length > 0 && suggestions[targetIdx]) {
+        commitSelection(suggestions[targetIdx].symbol);
+      } else {
+        setOpen(false); 
+      }
     }
   };
 
   const handleSelect = (stock) => {
-    const finalVal = getCanonicalSymbol(stock.symbol);
-    setQuery(finalVal);
-    if (onChange) onChange(finalVal);
-    setOpen(false);
+    commitSelection(stock.symbol);
   };
 
   // Portal dropdown
   const dropdown = open && suggestions.length > 0
     ? ReactDOM.createPortal(
         <div
+          ref={listRef}
           data-stock-portal="true"
           style={{
             position: 'absolute',
@@ -168,7 +212,10 @@ export default function StockAutocomplete({
               key={`${stock.symbol}-${stock.exchange || 'NSE'}`}
               data-stock-portal="true"
               onMouseDown={(e) => { e.preventDefault(); handleSelect(stock); }}
-              onMouseEnter={() => setHighlighted(i)}
+              onMouseEnter={() => {
+                highlightedRef.current = i;
+                setHighlighted(i);
+              }}
               style={{
                 padding: '8px 12px',
                 cursor: 'pointer',
@@ -285,6 +332,7 @@ export default function StockAutocomplete({
           if (query.trim().length > 0) openDropdown();
         }}
         onBlur={(e) => {
+          if (isSelectingRef.current) return;
           const rawVal = e.target.value.trim().toUpperCase();
           const finalVal = getCanonicalSymbol(rawVal);
           setQuery(finalVal);
