@@ -3,7 +3,7 @@ import { db } from './services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { saveUserTrades, subscribeToUserTrades, setDriveContext, clearAllLocalTrades } from './services/dbService';
 import { fetchStockPrice } from './services/yahooService';
-import { fetchLiveCMPForSymbol } from './services/strikePriceService';
+import { fetchLiveCMPForSymbol, getCachedCMP } from './services/strikePriceService';
 import { liveMarketFeed } from './services/liveMarketFeed';
 import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups } from './services/googleDrive';
 import TopBar from './components/TopBar';
@@ -1463,12 +1463,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           if (!updated.symbol || updated.symbol === t.name) {
             updated.symbol = value;
           }
-          if ((!t.cmp || Number(t.cmp) === 0) && value) {
+          if (value) {
             const sym = getCanonicalSymbol(value);
-            const cachedPrice = liveCMPs?.[sym] || liveCMPs?.[value.toUpperCase()];
+            const cachedPrice = getCachedCMP(sym) || liveCMPs?.[sym] || liveCMPs?.[value.toUpperCase()];
             if (cachedPrice && Number(cachedPrice) > 0) {
               updated.cmp = Number(cachedPrice);
-            } else {
+            } else if (!t.cmp || Number(t.cmp) === 0) {
               fetchLiveCMPForSymbol(sym).then(p => {
                 if (p > 0) {
                   setTrades(latest => latest.map(item => {

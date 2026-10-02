@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { 
   Plus, GripVertical, Calendar, Pencil, ChevronDown, Upload, ChevronLeft, ChevronRight, 
   Trash2, Columns, ArrowUpRight, Image as ImageIcon, UploadCloud, Hash, PenLine, Folder,
-  Check, X, CheckSquare
+  Check, X, CheckSquare, Loader2
 } from 'lucide-react';
 import TradeHoverCard from './TradeHoverCard';
 import StockAutocomplete from './StockAutocomplete';
@@ -16,7 +16,7 @@ import EntryTypeDropdown from './EntryTypeDropdown';
 import GrowthAreaDropdown from './GrowthAreaDropdown';
 import ExitTriggerDropdown from './ExitTriggerDropdown';
 import TradeSummaryPopover from './TradeSummaryPopover';
-import { fetchLiveCMPForSymbol } from '../services/strikePriceService';
+import { fetchLiveCMPForSymbol, getCachedCMP } from '../services/strikePriceService';
 
 const COLUMNS = [
   { id: 'tradeNo', label: 'TRADE NO.', width: '108px' },
@@ -190,7 +190,7 @@ function toDisplayDateFormat(dateStr) {
 /**
  * Clean inline editable cell
  */
-function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteger = false, onChange, align = 'left', isCmp = false }) {
+function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteger = false, onChange, align = 'left', isCmp = false, isFetching = false }) {
   const [isEditing, setIsEditing] = useState(false);
   const [tempVal, setTempVal] = useState(value || '');
   const inputRef = useRef(null);
@@ -248,6 +248,26 @@ function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteg
           boxSizing: 'border-box'
         }}
       />
+    );
+  }
+
+  if (isFetching) {
+    return (
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+          width: '100%',
+          height: '28px',
+          padding: '2px 6px',
+          gap: '5px',
+          boxSizing: 'border-box'
+        }}
+      >
+        <Loader2 size={11} style={{ animation: 'spin 0.8s linear infinite', color: '#10b981', flexShrink: 0 }} />
+        <span style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', fontVariantNumeric: 'tabular-nums' }}>Live...</span>
+      </div>
     );
   }
 
@@ -1796,6 +1816,7 @@ export default function JournalTable({
   const setVisibleCols = propSetVisibleCols || setInternalVisibleCols;
 
   const [uploadModalTrade, setUploadModalTrade] = useState(null);
+  const [fetchingCmpTradeIds, setFetchingCmpTradeIds] = useState(new Set());
   const [isRowsDropdownOpen, setIsRowsDropdownOpen] = useState(false);
   const rowsDropdownRef = useRef(null);
   const tableCardRef = useRef(null);
@@ -3020,13 +3041,26 @@ export default function JournalTable({
                                 onChange={async (newSymbol) => {
                                   if (newSymbol !== trade.name) {
                                     onUpdateTrade(trade.id, 'name', newSymbol);
-                                    if ((!trade.cmp || Number(trade.cmp) === 0) && newSymbol) {
-                                      try {
-                                        const p = await fetchLiveCMPForSymbol(newSymbol);
-                                        if (p > 0) {
-                                          onUpdateTrade(trade.id, 'cmp', p);
+                                    if (newSymbol) {
+                                      const cachedPrice = getCachedCMP(newSymbol);
+                                      if (cachedPrice > 0) {
+                                        onUpdateTrade(trade.id, 'cmp', cachedPrice);
+                                      } else {
+                                        setFetchingCmpTradeIds(prev => new Set(prev).add(trade.id));
+                                        try {
+                                          const p = await fetchLiveCMPForSymbol(newSymbol);
+                                          if (p > 0) {
+                                            onUpdateTrade(trade.id, 'cmp', p);
+                                          }
+                                        } catch (_) {
+                                        } finally {
+                                          setFetchingCmpTradeIds(prev => {
+                                            const next = new Set(prev);
+                                            next.delete(trade.id);
+                                            return next;
+                                          });
                                         }
-                                      } catch (_) {}
+                                      }
                                     }
                                   }
                                 }}
@@ -3149,6 +3183,7 @@ export default function JournalTable({
                             isCurrency={true}
                             align="right"
                             isCmp={col.id === 'cmp'}
+                            isFetching={col.id === 'cmp' && fetchingCmpTradeIds.has(trade.id)}
                             onChange={(newVal) => onUpdateTrade(trade.id, col.id, newVal)}
                           />
                         </td>

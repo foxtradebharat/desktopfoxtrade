@@ -49,8 +49,7 @@ export async function fetchStrikePrice(symbol) {
       const res = await fetch(url, {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Accept': 'application/json'
         },
         signal: controller.signal
       });
@@ -258,20 +257,40 @@ export async function fetchStrikeHistoricalCandles(symbol, range = '1y', interva
   return null;
 }
 
+const _liveCMPMemoryCache = new Map();
+
+export function getCachedCMP(symbol) {
+  if (!symbol) return 0;
+  const canonical = getCanonicalSymbol ? getCanonicalSymbol(symbol) : String(symbol).trim().toUpperCase();
+  const entry = _liveCMPMemoryCache.get(canonical);
+  if (entry && (Date.now() - entry.time < 5 * 60 * 1000) && entry.price > 0) {
+    return entry.price;
+  }
+  return 0;
+}
+
 export async function fetchLiveCMPForSymbol(symbol) {
   if (!symbol) return 0;
   const canonical = getCanonicalSymbol ? getCanonicalSymbol(symbol) : String(symbol).trim().toUpperCase();
+
+  const cached = getCachedCMP(canonical);
+  if (cached > 0) return cached;
+
   try {
     const strike = await fetchStrikePrice(canonical);
     if (strike?.price && Number(strike.price) > 0) {
-      return Number(strike.price);
+      const p = Number(strike.price);
+      _liveCMPMemoryCache.set(canonical, { price: p, time: Date.now() });
+      return p;
     }
   } catch (_) {}
 
   try {
     const yahoo = await fetchStockPrice(canonical);
     if (yahoo?.price && Number(yahoo.price) > 0) {
-      return Number(yahoo.price);
+      const p = Number(yahoo.price);
+      _liveCMPMemoryCache.set(canonical, { price: p, time: Date.now() });
+      return p;
     }
   } catch (_) {}
 
@@ -281,6 +300,7 @@ export async function fetchLiveCMPForSymbol(symbol) {
 export default {
   fetchStrikePrice,
   fetchStrikeHistoricalCandles,
-  fetchLiveCMPForSymbol
+  fetchLiveCMPForSymbol,
+  getCachedCMP
 };
 

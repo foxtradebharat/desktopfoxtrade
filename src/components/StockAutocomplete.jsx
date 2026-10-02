@@ -132,17 +132,22 @@ export default function StockAutocomplete({
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'ArrowDown' && open && suggestions.length > 0) { 
-      e.preventDefault(); 
-      const next = Math.min(highlightedRef.current + 1, suggestions.length - 1);
-      highlightedRef.current = next;
-      setHighlighted(next); 
-    }
-    else if (e.key === 'ArrowUp' && open && suggestions.length > 0) { 
-      e.preventDefault(); 
-      const prev = Math.max(highlightedRef.current - 1, 0);
-      highlightedRef.current = prev;
-      setHighlighted(prev); 
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { 
+      if (!open) {
+        e.preventDefault();
+        openDropdown();
+        return;
+      }
+      e.preventDefault();
+      if (e.key === 'ArrowDown' && suggestions.length > 0) {
+        const next = Math.min(highlightedRef.current + 1, suggestions.length - 1);
+        highlightedRef.current = next;
+        setHighlighted(next); 
+      } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+        const prev = Math.max(highlightedRef.current - 1, 0);
+        highlightedRef.current = prev;
+        setHighlighted(prev); 
+      }
     }
     else if (e.key === 'Enter') {
       e.preventDefault();
@@ -327,9 +332,9 @@ export default function StockAutocomplete({
           }
         }}
         onFocus={(e) => {
+          e.target.select();
           e.currentTarget.style.border = '1px solid var(--border-color)';
           e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-          if (query.trim().length > 0) openDropdown();
         }}
         onBlur={(e) => {
           if (isSelectingRef.current) return;
