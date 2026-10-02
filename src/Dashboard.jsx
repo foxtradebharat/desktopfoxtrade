@@ -1434,6 +1434,25 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           if (!updated.symbol || updated.symbol === t.name) {
             updated.symbol = value;
           }
+          if ((!t.cmp || Number(t.cmp) === 0) && value) {
+            const sym = getCanonicalSymbol(value);
+            const cachedPrice = liveCMPs?.[sym] || liveCMPs?.[value.toUpperCase()];
+            if (cachedPrice && Number(cachedPrice) > 0) {
+              updated.cmp = Number(cachedPrice);
+            } else {
+              fetchStockPrice(sym).then(q => {
+                const p = parseFloat(q?.price || q?.cmp);
+                if (p && !isNaN(p) && p > 0) {
+                  setTrades(latest => latest.map(item => {
+                    if (item.id === id && (!item.cmp || Number(item.cmp) === 0)) {
+                      return enrichTradeWithLegs({ ...item, cmp: p });
+                    }
+                    return item;
+                  }));
+                }
+              }).catch(() => {});
+            }
+          }
         } else if (field === 'symbol') {
           updated.symbol = value;
           if (!updated.name || updated.name === t.symbol) {

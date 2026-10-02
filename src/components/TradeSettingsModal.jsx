@@ -374,7 +374,7 @@ export default function TradeSettingsModal({
                 {
                   id: 'liveCmpEnabled',
                   title: 'Live Market CMP',
-                  desc: 'Stream live prices from NSE exchange (default OFF for manual calculation verification)',
+                  desc: 'Stream live prices from NSE exchange (default OFF to preserve ledger & broker import integrity)',
                   val: liveCmpEnabled
                 },
                 {

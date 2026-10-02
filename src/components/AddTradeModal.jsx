@@ -393,6 +393,23 @@ export default function AddTradeModal({
                         type="text" placeholder="Type a stock name" value={stockName}
                         onChange={(e) => { setStockName(e.target.value); setSearchFilter(e.target.value); setShowStockDropdown(true); }}
                         onFocus={() => setShowStockDropdown(true)}
+                        onBlur={async () => {
+                          if ((!cmp || Number(cmp) === 0) && stockName.trim()) {
+                            setIsFetchingCmp(true);
+                            try {
+                              const canonical = getCanonicalSymbol(stockName.trim());
+                              let price = null;
+                              const yData = await fetchStockPrice(canonical);
+                              if (yData?.price || yData?.cmp) price = parseFloat(yData.cmp || yData.price);
+                              else {
+                                const strikeData = await fetchStrikePrice(canonical);
+                                if (strikeData?.price) price = strikeData.price;
+                              }
+                              if (price && !isNaN(price)) setCmp(price.toFixed(2));
+                            } catch {}
+                            finally { setIsFetchingCmp(false); }
+                          }
+                        }}
                         style={{ width:'100%', padding:'8px 12px', borderRadius:'10px', border:'1px solid var(--border-color, rgba(0,0,0,0.1))', fontSize:'13px', outline:'none', boxSizing:'border-box', backgroundColor:'var(--bg-card, #fff)', color:'var(--text-primary, #111827)' }}
                       />
                       {showStockDropdown && searchFilter && (
