@@ -786,6 +786,34 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     }
   }, [trades, loadingTrades, user, autoBackup, accessToken]);
 
+  // Auto-resolve missing CMP for open trades that have a symbol but cmp is 0
+  const resolvedMissingCmpRef = useRef(new Set());
+  useEffect(() => {
+    if (loadingTrades || !trades || trades.length === 0) return;
+    const tradesMissingCmp = trades.filter(t => 
+      (t.status === 'Open' || t.status === 'Partial') && 
+      (!t.cmp || Number(t.cmp) === 0) && 
+      t.name && 
+      !resolvedMissingCmpRef.current.has(`${t.id}-${t.name}`)
+    );
+    if (tradesMissingCmp.length === 0) return;
+
+    tradesMissingCmp.forEach(async (t) => {
+      resolvedMissingCmpRef.current.add(`${t.id}-${t.name}`);
+      try {
+        const p = await fetchLiveCMPForSymbol(t.name);
+        if (p > 0) {
+          setTrades(latest => latest.map(item => {
+            if (item.id === t.id && (!item.cmp || Number(item.cmp) === 0)) {
+              return enrichTradeWithLegs({ ...item, cmp: p });
+            }
+            return item;
+          }));
+        }
+      } catch (_) {}
+    });
+  }, [trades, loadingTrades]);
+
   // Memoize unique symbols in the trade log to prevent interval thrashing
   const uniqueSymbolsStr = useMemo(() => {
     return Array.from(new Set(trades.map(t => (t.name || t.symbol || '').trim()).filter(Boolean))).sort().join(',');
