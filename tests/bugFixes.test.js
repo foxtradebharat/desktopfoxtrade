@@ -45,3 +45,68 @@ describe('Fix 3: Broker Charges & Zero Taxes Fix', () => {
     expect(res.total).toBe(0);
   });
 });
+
+import { calculateMonthlyPerformance } from '../src/utils/fundManagementCalculations.js';
+
+describe('Fix 2: Zero-Capital Compounding & Fund Management Fix', () => {
+  const fixtureTrades = [
+    { status: 'Closed', pnl: 14335, exitDate: '15-01-2026' },
+    { status: 'Closed', pnl: 9450, exitDate: '15-02-2026' },
+    { status: 'Closed', pnl: 20825, exitDate: '15-03-2026' },
+    { status: 'Closed', pnl: 13585, exitDate: '15-04-2026' },
+    { status: 'Closed', pnl: 10700, exitDate: '15-05-2026' },
+    { status: 'Closed', pnl: 2000, exitDate: '15-06-2026' },
+  ];
+
+  it('nulls pctPl and cagr when there is no ledger and no base capital (prevents 9,000% CAGR)', () => {
+    const months = calculateMonthlyPerformance(fixtureTrades, {}, '2026', {
+      baseCapital: 0,
+      skipPrevYearLookup: true
+    });
+
+    months.forEach(m => {
+      expect(m.capitalIsReal).toBe(false);
+      expect(m.startingCapital).toBe(null);
+      expect(m.finalCapital).toBe(null);
+      expect(m.pctPl).toBe(null);
+      expect(m.cagr).toBe(null);
+    });
+  });
+
+  it('compounds correctly on ₹10L base capital matching benchmark fixture', () => {
+    const months = calculateMonthlyPerformance(fixtureTrades, {}, '2026', {
+      baseCapital: 1000000,
+      skipPrevYearLookup: true
+    });
+
+    // Jan
+    expect(months[0].startingCapital).toBe(1000000);
+    expect(months[0].pctPl).toBe(1.43);
+    expect(months[0].finalCapital).toBe(1014335);
+
+    // Feb
+    expect(months[1].startingCapital).toBe(1014335);
+    expect(months[1].pctPl).toBe(0.93);
+    expect(months[1].finalCapital).toBe(1023785);
+
+    // Mar
+    expect(months[2].startingCapital).toBe(1023785);
+    expect(months[2].pctPl).toBe(2.03);
+    expect(months[2].finalCapital).toBe(1044610);
+
+    // Apr
+    expect(months[3].startingCapital).toBe(1044610);
+    expect(months[3].pctPl).toBe(1.30);
+    expect(months[3].finalCapital).toBe(1058195);
+
+    // May
+    expect(months[4].startingCapital).toBe(1058195);
+    expect(months[4].pctPl).toBe(1.01);
+    expect(months[4].finalCapital).toBe(1068895);
+
+    // Jun
+    expect(months[5].startingCapital).toBe(1068895);
+    expect(months[5].pctPl).toBe(0.19);
+    expect(months[5].finalCapital).toBe(1070895);
+  });
+});

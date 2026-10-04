@@ -161,9 +161,12 @@ function YearSelector({ value, onChange, options = [] }) {
 
 export default function FundManagementPage({
   trades = [],
+  allTrades = [],
   user,
   activePortfolioId = 'portfolio-default',
-  onUpdateCapitalBase
+  onUpdateCapitalBase,
+  dateRange = 'All Time',
+  resolvedDateFilter = null
 }) {
   // Dynamically extract all available years: Present Year + any years with logged trades or saved capital changes
   const availableYears = useMemo(() => {
@@ -173,8 +176,9 @@ export default function FundManagementPage({
     yearsSet.add(String(presentYear + 1));
 
     // Extract years from all trade entry/exit dates and pyramid legs
-    if (Array.isArray(trades)) {
-      trades.forEach((t) => {
+    const sourceTrades = (allTrades && allTrades.length > 0) ? allTrades : trades;
+    if (Array.isArray(sourceTrades)) {
+      sourceTrades.forEach((t) => {
         if (!t) return;
         const dateCandidates = [
           t.date, t.entryDate, t.exitDate,
@@ -206,11 +210,29 @@ export default function FundManagementPage({
     } catch {}
 
     return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
-  }, [trades, activePortfolioId]);
+  }, [allTrades, trades, activePortfolioId]);
 
   const [selectedYear, setSelectedYear] = useState(() => {
+    if (resolvedDateFilter?.from) {
+      return String(resolvedDateFilter.from.getFullYear());
+    }
     return new Date().getFullYear().toString();
   });
+
+  // Auto-sync selectedYear when date filter changes
+  useEffect(() => {
+    if (resolvedDateFilter?.from) {
+      setSelectedYear(String(resolvedDateFilter.from.getFullYear()));
+    } else if (dateRange === 'Pick This FY' || dateRange === 'This FY') {
+      const today = new Date();
+      const fyStartYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+      setSelectedYear(String(fyStartYear));
+    } else if (dateRange?.year) {
+      setSelectedYear(String(dateRange.year));
+    } else if (dateRange?.fy) {
+      setSelectedYear(String(dateRange.fy));
+    }
+  }, [resolvedDateFilter, dateRange]);
 
   // Keep selectedYear valid within availableYears
   useEffect(() => {
@@ -248,13 +270,19 @@ export default function FundManagementPage({
 
   // Compute monthly matrix dynamically from current trades and capital changes
   const monthlyData = useMemo(() => {
-    return calculateMonthlyPerformance(trades, capitalChanges, selectedYear, { portfolioId: activePortfolioId });
-  }, [trades, capitalChanges, selectedYear, activePortfolioId]);
+    return calculateMonthlyPerformance(trades, capitalChanges, selectedYear, { 
+      portfolioId: activePortfolioId,
+      allTrades: (allTrades && allTrades.length > 0) ? allTrades : trades
+    });
+  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId]);
 
   // Compute yearly fund summary and footer total metrics
   const yearlySummary = useMemo(() => {
-    return calculateYearlyFundSummary(trades, capitalChanges, selectedYear, { portfolioId: activePortfolioId });
-  }, [trades, capitalChanges, selectedYear, activePortfolioId]);
+    return calculateYearlyFundSummary(trades, capitalChanges, selectedYear, { 
+      portfolioId: activePortfolioId,
+      allTrades: (allTrades && allTrades.length > 0) ? allTrades : trades
+    });
+  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId]);
 
   // Save changes to localStorage and notify parent
   const handleSaveValue = (monthIdx, field) => {
@@ -299,6 +327,7 @@ export default function FundManagementPage({
   const activeMonthlyAvg = showPreTax ? (yearlySummary.preTaxMonthlyAvgReturn ?? yearlySummary.monthlyAvgReturn) : yearlySummary.monthlyAvgReturn;
   const activeTotalCompounded = showPreTax ? (yearlySummary.preTaxTotalCompounded ?? yearlySummary.totalCompounded) : yearlySummary.totalCompounded;
   const activeCagr = showPreTax ? (yearlySummary.preTaxAnnualizedCagr ?? yearlySummary.annualizedCagr) : yearlySummary.annualizedCagr;
+  const hasUnsetCapital = monthlyData.some(m => !m.capitalIsReal);
 
   return (
     <div style={{ padding: '0 24px 80px 24px', maxWidth: '1440px', margin: '0 auto' }}>
@@ -343,6 +372,32 @@ export default function FundManagementPage({
           />
         </div>
       </div>
+
+      {/* Starting Capital Unset Banner */}
+      {hasUnsetCapital && (
+        <div style={{
+          marginBottom: '20px',
+          padding: '12px 18px',
+          borderRadius: '12px',
+          background: 'rgba(245, 158, 11, 0.08)',
+          border: '1px solid rgba(245, 158, 11, 0.25)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          color: '#d97706',
+          fontSize: '13px',
+          fontWeight: 500,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '16px' }}>ℹ️</span>
+            <span>
+              Set your starting capital (portfolio base capital or a ledger deposit) to see returns. Cumulative Net P&L: <strong>₹ {yearlySummary.totalNetPl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Table Container */}
       <div style={{
@@ -792,7 +847,7 @@ export default function FundManagementPage({
 
                     {/* Starting Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      ₹ {row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {row.startingCapital !== null ? `₹ ${row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
                     </td>
 
                     {/* Net P/L */}
@@ -808,18 +863,18 @@ export default function FundManagementPage({
 
                     {/* % P/L */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      {row.pctPl !== 0 ? (
+                      {row.pctPl !== null && row.pctPl !== 0 ? (
                         <span style={{ color: row.pctPl > 0 ? '#10b981' : '#ef4444' }}>
                           {row.pctPl.toFixed(2)}%
                         </span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
                       )}
                     </td>
 
                     {/* Final Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                      ₹ {row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {row.finalCapital !== null ? `₹ ${row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
                     </td>
 
                     {/* Trades */}
@@ -860,12 +915,12 @@ export default function FundManagementPage({
 
                     {/* CAGR */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600 }}>
-                      {row.cagr !== 0 ? (
+                      {row.cagr !== null && row.cagr !== 0 ? (
                         <span style={{ color: row.cagr >= 0 ? '#10b981' : '#ef4444' }}>
                           {row.cagr.toFixed(2)}%
                         </span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
                       )}
                     </td>
                   </tr>
@@ -945,7 +1000,7 @@ export default function FundManagementPage({
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px', whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted)' }}>Monthly Avg:</span>
                       <span style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono, monospace)', color: activeMonthlyAvg > 0 ? '#10b981' : (activeMonthlyAvg < 0 ? '#ef4444' : 'var(--text-muted)') }}>
-                        {activeMonthlyAvg.toFixed(2)}% @ pm
+                        {activeMonthlyAvg !== null ? `${activeMonthlyAvg.toFixed(2)}% @ pm` : '—'}
                       </span>
                       <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
                         <Tooltip content="Geometric Mean Monthly Return. Represents the constant monthly growth rate. Formula: [(1 + Total Compounded)^(1/n) - 1]">
@@ -958,7 +1013,7 @@ export default function FundManagementPage({
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px', whiteSpace: 'nowrap' }}>
                       <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted)' }}>Total Compounded:</span>
                       <span style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 900, fontFamily: 'var(--font-mono, monospace)', color: activeTotalCompounded > 0 ? '#10b981' : (activeTotalCompounded < 0 ? '#ef4444' : 'var(--text-muted)') }}>
-                        {activeTotalCompounded >= 0 ? '+' : ''}{activeTotalCompounded.toFixed(2)}% pa
+                        {activeTotalCompounded !== null ? `${activeTotalCompounded >= 0 ? '+' : ''}${activeTotalCompounded.toFixed(2)}% pa` : '—'}
                       </span>
                       <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
                         <Tooltip content="Time-Weighted Return (TWR) for the period. Formula: [Product of (1 + Monthly P/L%) - 1]">
@@ -992,7 +1047,7 @@ export default function FundManagementPage({
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px' }}>
                       <span style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>CAGR:</span>
                       <span style={{ fontSize: '12px', fontWeight: 900, fontFamily: 'var(--font-mono, monospace)', color: activeCagr > 0 ? '#10b981' : (activeCagr < 0 ? '#ef4444' : 'var(--text-muted)') }}>
-                        {activeCagr >= 0 ? '+' : ''}{activeCagr.toFixed(2)}%
+                        {activeCagr !== null ? `${activeCagr >= 0 ? '+' : ''}${activeCagr.toFixed(2)}%` : '—'}
                       </span>
                       <span style={{ marginLeft: '6px', display: 'flex', alignItems: 'center' }}>
                         <Tooltip content="Compound Annual Growth Rate. Formula: [(1 + Total Compounded)^(12/n) - 1]">

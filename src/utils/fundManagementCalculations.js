@@ -75,6 +75,7 @@ export function parseMonthAndYear(dateStr) {
 }
 
 import { matchLots } from './foxCalculationEngine.js';
+import { toPaise, fromPaise } from './pnlEngine.js';
 
 /**
  * Resolves December ending capital from the preceding year (or chain of preceding years).
@@ -122,7 +123,7 @@ export function getPreviousYearEndingCapital(trades = [], selectedYear = '2026',
     });
 
     const decMonth = months[11];
-    if (decMonth && decMonth.finalCapital > 0) {
+    if (decMonth && decMonth.capitalIsReal && decMonth.finalCapital > 0) {
       rolledDecCapital = decMonth.finalCapital;
     }
   }
@@ -148,8 +149,33 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     prevYearDecCapital = Number(options.prevYearDecCapital) || 0;
   } else if (!options?.skipPrevYearLookup) {
     const portfolioId = options?.portfolioId || 'portfolio-default';
-    prevYearDecCapital = getPreviousYearEndingCapital(trades, selectedYear, portfolioId, options);
+    const sourceTradesForPrior = options?.allTrades || trades;
+    prevYearDecCapital = getPreviousYearEndingCapital(sourceTradesForPrior, selectedYear, portfolioId, options);
   }
+
+  // Resolve base capital fallback from portfolio settings
+  let baseCapital = Number(options?.baseCapital || 0);
+  if (!(baseCapital > 0)) {
+    try {
+      const activePfId = (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || options?.portfolioId || 'portfolio-default';
+      const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
+      if (rawPortfolios) {
+        const pfs = JSON.parse(rawPortfolios);
+        const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
+        if (match && Number(match.baseCapital) > 0) {
+          baseCapital = Number(match.baseCapital);
+        }
+      }
+      if (!(baseCapital > 0) && typeof localStorage !== 'undefined') {
+        const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
+        if (saved > 0) baseCapital = saved;
+      }
+    } catch (_) {}
+  }
+
+  // Flow basis tracks real money contributions (opening capital + deposits - withdrawals).
+  let flowBasis = prevYearDecCapital > 0 ? prevYearDecCapital : (baseCapital > 0 ? baseCapital : 0);
+  runningCapital = flowBasis;
 
   // Determine elapsed months boundary across trading calendar
   const now = new Date();
@@ -198,13 +224,13 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
       }
     }
 
-    // Collect Exit Legs
+    // Collect Exit Legs (fallback to t.exitDate or t.date if leg date missing)
     const exitLots = [
-      { id: 'e1', price: parseFloat(t.e1Price) || 0, qty: parseFloat(t.e1Qty) || 0, date: t.e1Date },
-      { id: 'e2', price: parseFloat(t.e2Price) || 0, qty: parseFloat(t.e2Qty) || 0, date: t.e2Date },
-      { id: 'e3', price: parseFloat(t.e3Price) || 0, qty: parseFloat(t.e3Qty) || 0, date: t.e3Date },
-      { id: 'e4', price: parseFloat(t.e4Price) || 0, qty: parseFloat(t.e4Qty) || 0, date: t.e4Date },
-    ].filter(l => l.qty > 0 && l.price > 0 && l.date);
+      { id: 'e1', price: parseFloat(t.e1Price) || 0, qty: parseFloat(t.e1Qty) || 0, date: t.e1Date || t.exitDate || t.date || '' },
+      { id: 'e2', price: parseFloat(t.e2Price) || 0, qty: parseFloat(t.e2Qty) || 0, date: t.e2Date || t.exitDate || t.date || '' },
+      { id: 'e3', price: parseFloat(t.e3Price) || 0, qty: parseFloat(t.e3Qty) || 0, date: t.e3Date || t.exitDate || t.date || '' },
+      { id: 'e4', price: parseFloat(t.e4Price) || 0, qty: parseFloat(t.e4Qty) || 0, date: t.e4Date || t.exitDate || t.date || '' },
+    ].filter(l => l.qty > 0 && l.price > 0);
 
     if (exitLots.length > 0 && entryLots.length > 0) {
       const { matches } = matchLots(entryLots, exitLots, costBasisMethod, side);
@@ -212,22 +238,31 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
       // Group matched realized P/L by exit month
       const matchesByMonth = {};
       const tradeTaxes = Number(t.taxes || t.charges?.total || t.brokerage || 0);
-      const tradeGrossPl = Number.isFinite(Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl)) ? Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl) : null;
       const totalMatches = matches.length || 1;
 
       matches.forEach(m => {
-        const d = parseMonthAndYear(m.exitDate || t.date);
+        let d = parseMonthAndYear(m.exitDate);
+        if (!d || d.year !== numYear) {
+          const entryD = parseMonthAndYear(t.date || t.entryDate);
+          if (entryD && entryD.year === numYear) {
+            d = entryD; // Attributing by entry date if exit date had an inverted year typo
+          }
+        }
+
         if (d && d.year === numYear) {
           if (!matchesByMonth[d.month]) {
-            matchesByMonth[d.month] = { netPl: 0, grossPl: 0, taxes: 0, count: 0, gains: [], lossVals: [] };
+            matchesByMonth[d.month] = { netPl: 0, grossPl: 0, taxes: 0, count: 0, gains: [], lossVals: [], grossPlPaise: 0, taxesPaise: 0, netPlPaise: 0 };
           }
           const chunkTax = tradeTaxes > 0 ? (tradeTaxes / totalMatches) : 0;
           const chunkGross = m.pl;
           const chunkNet = chunkGross - chunkTax;
 
-          matchesByMonth[d.month].grossPl += chunkGross;
-          matchesByMonth[d.month].taxes += chunkTax;
-          matchesByMonth[d.month].netPl += chunkNet;
+          matchesByMonth[d.month].grossPlPaise += toPaise(chunkGross);
+          matchesByMonth[d.month].taxesPaise += toPaise(chunkTax);
+          matchesByMonth[d.month].netPlPaise += toPaise(chunkNet);
+          matchesByMonth[d.month].grossPl = fromPaise(matchesByMonth[d.month].grossPlPaise);
+          matchesByMonth[d.month].taxes = fromPaise(matchesByMonth[d.month].taxesPaise);
+          matchesByMonth[d.month].netPl = fromPaise(matchesByMonth[d.month].netPlPaise);
           matchesByMonth[d.month].count += 1;
         }
       });
@@ -356,10 +391,45 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     const avgRR = stats.rrList.length > 0 ? stats.rrList.reduce((a, b) => a + b, 0) / stats.rrList.length : 0;
     const avgDays = stats.holdingDays.length > 0 ? (stats.holdingDays.reduce((a, b) => a + b, 0) / stats.holdingDays.length) : 0;
 
+    // Flow basis: opening capital + deposits - withdrawals. Never includes P&L.
+    flowBasis += added - withdrawn;
+    const capitalIsReal = flowBasis > 0;
+
+    if (!capitalIsReal) {
+      // Do NOT roll P&L into runningCapital; there is no capital to roll it into
+      runningCapital = 0;
+      return {
+        month,
+        monthIdx: idx,
+        added,
+        addedNotes,
+        withdrawn,
+        withdrawnNotes,
+        capitalIsReal: false,
+        startingCapital: null,
+        finalCapital: null,
+        pctPl: null,
+        preTaxPctPl: null,
+        cagr: null,
+        netPl,
+        grossPl,
+        taxes,
+        trades: tradeCount,
+        winPct,
+        avgGainPct,
+        avgLossPct,
+        avgRR,
+        avgDays,
+        cumulativeMultiplier,
+        preTaxCumulativeMultiplier,
+        prevYearDecCapital: idx === 0 ? prevYearDecCapital : 0,
+      };
+    }
+
     // Capital Rollover & Compounding:
     let startingCapital = runningCapital;
     if (idx === 0) {
-      startingCapital = prevYearDecCapital + added - withdrawn;
+      startingCapital = (prevYearDecCapital > 0 ? prevYearDecCapital : baseCapital) + added - withdrawn;
       runningCapital = startingCapital;
     } else {
       startingCapital = runningCapital + added - withdrawn;
@@ -400,6 +470,7 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
       addedNotes,
       withdrawn,
       withdrawnNotes,
+      capitalIsReal: true,
       startingCapital,
       netPl,
       grossPl,
@@ -427,14 +498,14 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
 export function getActivePortfolioCapital(trades = [], capitalChanges = {}, selectedYear = '2026', targetMonthIdx = 7) {
   const monthlyData = calculateMonthlyPerformance(trades, capitalChanges, selectedYear);
   
-  // Current active month starting capital (August 2026)
+  // Current active month starting capital
   const currentMonthData = monthlyData[targetMonthIdx] || monthlyData[monthlyData.length - 1];
-  if (currentMonthData && currentMonthData.startingCapital > 0) {
+  if (currentMonthData && currentMonthData.capitalIsReal && currentMonthData.startingCapital > 0) {
     return currentMonthData.startingCapital;
   }
 
   for (let i = targetMonthIdx; i >= 0; i--) {
-    if (monthlyData[i]?.finalCapital > 0) return monthlyData[i].finalCapital;
+    if (monthlyData[i]?.capitalIsReal && monthlyData[i]?.finalCapital > 0) return monthlyData[i].finalCapital;
   }
 
   return 0;
@@ -452,6 +523,32 @@ export function calculateYearlyFundSummary(trades = [], capitalChanges = {}, sel
   const netCapitalChange = totalAdded - totalWithdrawn;
   const totalNetPl = months.reduce((acc, m) => acc + m.netPl, 0);
   const totalTrades = months.reduce((acc, m) => acc + m.trades, 0);
+
+  const anyRealCapital = months.some(m => m.capitalIsReal);
+  if (!anyRealCapital) {
+    return {
+      year: String(selectedYear),
+      capitalIsReal: false,
+      startingCapital: null,
+      totalAdded: Math.round(totalAdded * 100) / 100,
+      totalWithdrawn: Math.round(totalWithdrawn * 100) / 100,
+      netCapitalChange: Math.round(netCapitalChange * 100) / 100,
+      totalNetPl: Math.round(totalNetPl * 100) / 100,
+      endingCapital: null,
+      peakCapital: null,
+      totalTrades,
+      annualizedCagr: null,
+      totalCompounded: null,
+      monthlyAvgReturn: null,
+      cumulativeMultiplier: 1.0,
+      preTaxAnnualizedCagr: null,
+      preTaxTotalCompounded: null,
+      preTaxMonthlyAvgReturn: null,
+      preTaxCumulativeMultiplier: 1.0,
+      months,
+      activeMonths
+    };
+  }
   
   let startingCapital = 0;
   const firstActiveMonth = activeMonths[0] || months[0];
@@ -604,5 +701,161 @@ export function formatFundManagementForFoxy(fundSummary) {
   }
 
   return out;
+}
+
+/**
+ * Institutional Dynamic Portfolio Capital Resolver for FoxTrade.
+ *
+ * Formula:
+ * Capital = Base Capital + Deposits - Withdrawals + Realized P&L (up to today)
+ *
+ * - Deposits and withdrawals come from the Fund Management ledger (capitalChanges).
+ * - Realized P&L includes the current month and live closed/partial trades up to today.
+ * - Guards against Capital <= 0 by returning 0 (never NaN or Infinity).
+ * - Fallback when no ledger entries exist: Base Capital + Realized P&L.
+ *
+ * @param {Object|Array} optionsOrTrades Options object or trades array
+ * @param {number} [maybeBaseCapital=0] Base capital if positional args used
+ * @param {Object} [maybeCapitalChanges=null] Capital changes if positional args used
+ * @returns {number} Active dynamic capital (rounded to 2 decimal places, or 0 if <= 0)
+ */
+export function getCapital(optionsOrTrades = {}, maybeBaseCapital = 0, maybeCapitalChanges = null) {
+  let trades = [];
+  let baseCapital = 0;
+  let capitalChanges = null;
+  let explicitRealizedPnl = null;
+  let portfolioId = 'portfolio-default';
+  let year = '2026';
+
+  if (optionsOrTrades && typeof optionsOrTrades === 'object' && !Array.isArray(optionsOrTrades)) {
+    trades = optionsOrTrades.trades || [];
+    baseCapital = Number(optionsOrTrades.baseCapital || 0);
+    capitalChanges = optionsOrTrades.capitalChanges ?? optionsOrTrades.ledger ?? null;
+    explicitRealizedPnl = optionsOrTrades.realizedPnl !== undefined && optionsOrTrades.realizedPnl !== null
+      ? Number(optionsOrTrades.realizedPnl)
+      : null;
+    portfolioId = optionsOrTrades.portfolioId || 'portfolio-default';
+    year = optionsOrTrades.year || '2026';
+  } else {
+    trades = Array.isArray(optionsOrTrades) ? optionsOrTrades : [];
+    baseCapital = Number(maybeBaseCapital || 0);
+    capitalChanges = maybeCapitalChanges;
+  }
+
+  // 1. Resolve Base Capital fallback if baseCapital is not provided / <= 0
+  if (!(baseCapital > 0)) {
+    try {
+      const activePfId = (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || portfolioId;
+      const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
+      if (rawPortfolios) {
+        const pfs = JSON.parse(rawPortfolios);
+        const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
+        if (match && Number(match.baseCapital) > 0) {
+          baseCapital = Number(match.baseCapital);
+        }
+      }
+      if (!(baseCapital > 0) && typeof localStorage !== 'undefined') {
+        const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
+        if (saved > 0) baseCapital = saved;
+      }
+    } catch (_) {}
+  }
+
+  // Fallback default if still not determined
+  if (!(baseCapital > 0)) {
+    baseCapital = 0;
+  }
+
+  // 2. Resolve Deposits and Withdrawals from Fund Management ledger
+  let deposits = 0;
+  let withdrawals = 0;
+
+  let ledgerData = capitalChanges;
+  if (!ledgerData && typeof localStorage !== 'undefined') {
+    try {
+      ledgerData = getStoredCapitalChanges(portfolioId, String(year));
+    } catch (_) {}
+  }
+
+  if (ledgerData && typeof ledgerData === 'object') {
+    const entries = Array.isArray(ledgerData) ? ledgerData : Object.values(ledgerData);
+    entries.forEach(entry => {
+      if (!entry || typeof entry !== 'object') return;
+      const add = Number(entry.added || entry.deposit || 0);
+      const w = Number(entry.withdrawn || entry.withdrawal || 0);
+      if (add > 0) deposits += add;
+      if (w > 0) withdrawals += w;
+    });
+  }
+
+  // 3. Resolve Realized P&L (up to today, including current month)
+  let totalRealizedPnl = 0;
+  if (explicitRealizedPnl !== null && !isNaN(explicitRealizedPnl)) {
+    totalRealizedPnl = explicitRealizedPnl;
+  } else if (Array.isArray(trades) && trades.length > 0) {
+    const realizedPaise = trades.reduce((sum, t) => {
+      if (!t) return sum;
+      const st = String(t.status || t.positionStatus || '').toLowerCase();
+      const exitedQty = Number(t.exitedQty || 0);
+      const rawPl = t.grossRealizedPL ?? t.grossPnl ?? t.realisedAmount ?? t.pl ?? t.pnl;
+      if (st === 'closed' || st === 'partial' || exitedQty > 0 || (rawPl !== undefined && rawPl !== null && Number(rawPl) !== 0)) {
+        return sum + toPaise(rawPl || 0);
+      }
+      return sum;
+    }, 0);
+    totalRealizedPnl = fromPaise(realizedPaise);
+  }
+
+  // 4. Compute Capital
+  // Formula: Capital = Base Capital + Deposits - Withdrawals + Realized P&L
+  // Fallback if no ledger entries exist: Deposits=0, Withdrawals=0 -> Base Capital + Realized P&L
+  const computedCapital = baseCapital + deposits - withdrawals + totalRealizedPnl;
+
+  // 5. Zero-capital & negative guard: return 0, never NaN or Infinity
+  if (!isFinite(computedCapital) || computedCapital <= 0) {
+    return 0;
+  }
+
+  return Math.round(computedCapital * 100) / 100;
+}
+
+/**
+ * Calculates % Invested using shared getCapital denominator
+ * % Invested = sum(Qopen_i x Pentry_i) / Capital x 100
+ * Guard Capital <= 0: return 0
+ *
+ * @param {Array} openTrades Array of open / partial trades
+ * @param {number} capital Active capital denominator
+ * @returns {number} Percentage invested (e.g. 40.0)
+ */
+export function calculatePercentInvested(openTrades = [], capital = 0) {
+  const cap = Number(capital || 0);
+  if (!isFinite(cap) || cap <= 0) return 0;
+
+  const totalOpenCost = (openTrades || []).reduce((sum, t) => {
+    if (!t) return sum;
+    const openQty = Number(t.openQty || (String(t.status || t.positionStatus).toLowerCase() === 'open' ? t.qty : 0) || 0);
+    const entryPrice = Number(t.avgEntry || t.entry || 0);
+    return sum + (openQty * entryPrice);
+  }, 0);
+
+  return Math.round(((totalOpenCost / cap) * 100) * 100) / 100;
+}
+
+/**
+ * Calculates Portfolio Impact % using shared getCapital denominator
+ * Portfolio Impact = Realized P&L / Capital x 100
+ * Guard Capital <= 0: return 0
+ *
+ * @param {number} realizedPnl Realized P&L in Rupees
+ * @param {number} capital Active capital denominator
+ * @returns {number} Portfolio Impact % (e.g. 1.5)
+ */
+export function calculatePortfolioImpact(realizedPnl = 0, capital = 0) {
+  const cap = Number(capital || 0);
+  if (!isFinite(cap) || cap <= 0) return 0;
+  const pnl = Number(realizedPnl || 0);
+  if (pnl === 0) return 0;
+  return Math.round(((pnl / cap) * 100) * 100) / 100;
 }
 
