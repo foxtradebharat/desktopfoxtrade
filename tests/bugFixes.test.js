@@ -194,4 +194,158 @@ describe('Fix 4: Cross-Page Metric Parity Fix', () => {
   });
 });
 
+import {
+  computeSharpe,
+  generateTradingCalendarDays,
+  getRealizedExitDate,
+  toLocalDayKey,
+  RISK_FREE_ANNUAL,
+  isClosedTrade,
+  isPartialTrade
+} from '../src/utils/tradeMetricsShared.js';
+
+describe('Fix 5: Sharpe Ratio & Trading Calendar Days Fix', () => {
+  it('returns available: false with reason no_capital when capital is missing or non-positive', () => {
+    const days = Array.from({ length: 25 }, (_, i) => `2026-01-${String(i + 1).padStart(2, '0')}`);
+    const events = [{ dayKey: '2026-01-05', pnl: 5000 }];
+
+    expect(computeSharpe(events, null, days)).toEqual({ available: false, reason: 'no_capital' });
+    expect(computeSharpe(events, 0, days)).toEqual({ available: false, reason: 'no_capital' });
+    expect(computeSharpe(events, -100000, days)).toEqual({ available: false, reason: 'no_capital' });
+  });
+
+  it('returns available: false with reason insufficient_days when trading calendar days < 20', () => {
+    const days = ['2026-01-01', '2026-01-02', '2026-01-05'];
+    const events = [{ dayKey: '2026-01-02', pnl: 5000 }];
+    const res = computeSharpe(events, 1000000, days);
+    expect(res.available).toBe(false);
+    expect(res.reason).toBe('insufficient_days');
+    expect(res.days).toBe(3);
+  });
+
+  it('aggregates same-day trades in rupees rather than summing percentages', () => {
+    // Generate 25 days
+    const days = Array.from({ length: 25 }, (_, i) => `2026-01-${String(i + 1).padStart(2, '0')}`);
+    // On 2026-01-05, trade A wins 3000, trade B loses 1000 -> net +2000
+    const events = [
+      { dayKey: '2026-01-05', pnl: 3000 },
+      { dayKey: '2026-01-05', pnl: -1000 },
+      { dayKey: '2026-01-10', pnl: 1500 },
+    ];
+    // With 22 zero-days and two active days (+2000 and +1500)
+    const res = computeSharpe(events, 1000000, days, 0);
+    expect(res.available).toBe(true);
+    expect(res.days).toBe(25);
+    // Mean daily return = (2000/1000000 + 1500/1002000) / 25
+    const expectedPnlSum = 2000 / 1000000 + 1500 / 1002000;
+    expect(res.meanDailyReturn).toBeCloseTo(expectedPnlSum / 25, 6);
+  });
+
+  it('adding zero-return calendar days lowers Sharpe ratio', () => {
+    // Series A: 25 consecutive winning trading days
+    const daysA = Array.from({ length: 25 }, (_, i) => `2026-01-${String(i + 1).padStart(2, '0')}`);
+    const eventsA = daysA.map(d => ({ dayKey: d, pnl: 2000 }));
+    const resA = computeSharpe(eventsA, 1000000, daysA, 0);
+
+    // Series B: same 25 winning events but spread across 50 calendar days (25 zero days)
+    const daysB = Array.from({ length: 50 }, (_, i) => `2026-01-${String(i + 1).padStart(2, '0')}`);
+    const resB = computeSharpe(eventsA, 1000000, daysB, 0);
+
+    expect(resA.available).toBe(true);
+    expect(resB.available).toBe(true);
+    expect(resB.sharpe).toBeLessThan(resA.sharpe);
+  });
+
+  it('strictly excludes open trades from exit dates and realized events', () => {
+    // Open trades must return null
+    expect(getRealizedExitDate({ status: 'Open', date: '2026-01-05', entry: 100, qty: 10 })).toBeNull();
+    expect(getRealizedExitDate({ status: 'open', date: '2026-01-05', pnl: 2000 })).toBeNull();
+    expect(getRealizedExitDate({ status: 'Partial', exitedQty: 0, date: '2026-01-05' })).toBeNull();
+
+    // Closed trades return exitDate or exit leg
+    const closedWithExit = getRealizedExitDate({ status: 'Closed', exitDate: '2026-01-15' });
+    expect(toLocalDayKey(closedWithExit)).toBe('2026-01-15');
+
+    const closedWithLegs = getRealizedExitDate({
+      status: 'Closed',
+      e1Date: '2026-01-10',
+      e1Qty: 50,
+      e2Date: '2026-01-20',
+      e2Qty: 50
+    });
+    expect(toLocalDayKey(closedWithLegs)).toBe('2026-01-20');
+
+    // Partial trade with exit leg returns the exit leg
+    const partialWithExit = getRealizedExitDate({
+      status: 'Partial',
+      exitedQty: 25,
+      e1Date: '2026-02-12',
+      e1Qty: 25
+    });
+    expect(toLocalDayKey(partialWithExit)).toBe('2026-02-12');
+  });
+
+  it('calendar generator skips weekends and specified holidays', () => {
+    // 2026-01-02 (Fri) to 2026-01-06 (Tue)
+    // Sat = Jan 3, Sun = Jan 4. Holiday = Jan 5 (e.g. test holiday)
+    const start = new Date(2026, 0, 2);
+    const end = new Date(2026, 0, 6);
+    const days = generateTradingCalendarDays(start, end, ['2026-01-05']);
+
+    expect(days).toEqual(['2026-01-02', '2026-01-06']);
+  });
+
+  it('verifies 50-trade golden benchmark Sharpe ratio is below 8.27 (~5.37 at rf=0%, ~3.32 at rf=6.5%)', () => {
+    const csvContent = fs.readFileSync(path.resolve(__dirname, '../nexus-50-golden-trades.csv'), 'utf8');
+    const lines = csvContent.trim().split('\n');
+    const headers = lines[0].split(',');
+    const trades = lines.slice(1).map(line => {
+      const vals = line.split(',');
+      const obj = {};
+      headers.forEach((h, i) => obj[h.trim()] = vals[i]?.trim());
+      return obj;
+    });
+
+    // 50 total trades in benchmark
+    expect(trades.length).toBe(50);
+
+    const realizedTrades = trades.filter(t => isClosedTrade(t) || (isPartialTrade(t) && Number(t.exitedQty) > 0));
+    expect(realizedTrades.length).toBe(45); // 40 closed + 5 partial
+
+    const events = [];
+    const exitDayKeysSet = new Set();
+    realizedTrades.forEach(t => {
+      const pl = Number(t.pnl || t.pl || 0);
+      const exitD = getRealizedExitDate(t);
+      if (exitD) {
+        const dayKey = toLocalDayKey(exitD);
+        events.push({ dayKey, pnl: pl, date: exitD });
+        exitDayKeysSet.add(dayKey);
+      }
+    });
+
+    // 5 Open trades add 0 exit days; exactly 41 active exit days
+    expect(exitDayKeysSet.size).toBe(41);
+
+    events.sort((a, b) => a.date.getTime() - b.date.getTime());
+    const firstDate = events[0].date;
+    const lastDate = events[events.length - 1].date;
+
+    const calendarDays = generateTradingCalendarDays(firstDate, lastDate);
+    expect(calendarDays.length).toBeGreaterThan(100);
+
+    const resRf0 = computeSharpe(events, 1000000, calendarDays, 0);
+    expect(resRf0.available).toBe(true);
+    // Sharpe is clearly below 8.27 (around 5.37)
+    expect(resRf0.sharpe).toBeLessThan(6.0);
+    expect(resRf0.sharpe).toBeGreaterThan(5.0);
+    expect(Number(resRf0.sharpe.toFixed(2))).toBe(5.37);
+
+    const resRf65 = computeSharpe(events, 1000000, calendarDays, RISK_FREE_ANNUAL);
+    expect(resRf65.available).toBe(true);
+    expect(Number(resRf65.sharpe.toFixed(2))).toBe(3.32);
+  });
+});
+
+
 

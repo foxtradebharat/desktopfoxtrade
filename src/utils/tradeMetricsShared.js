@@ -35,6 +35,139 @@ export function getR(t) {
   return null;
 }
 
+export function parseTradeDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  const s = String(val).trim();
+  if (!s) return null;
+
+  // DD-MM-YYYY or DD/MM/YYYY
+  const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/.exec(s);
+  if (dmy) {
+    const d = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // YYYY-MM-DD or YYYY/MM/DD
+  const ymd = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(s);
+  if (ymd) {
+    const d = new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Returns latest exit date for a realized trade, or trade date if not exited yet.
+ */
+export function getEffectiveTradeDate(t) {
+  if (!t) return null;
+  const exits = [
+    { d: t.e5Date, q: Number(t.e5Qty || 0) },
+    { d: t.e4Date, q: Number(t.e4Qty || 0) },
+    { d: t.e3Date, q: Number(t.e3Qty || 0) },
+    { d: t.e2Date, q: Number(t.e2Qty || 0) },
+    { d: t.e1Date, q: Number(t.e1Qty || 0) },
+  ].filter(e => e.d && e.q > 0);
+
+  if (exits.length > 0) {
+    exits.sort((a, b) => {
+      const da = parseTradeDate(a.d)?.getTime() || 0;
+      const db = parseTradeDate(b.d)?.getTime() || 0;
+      return db - da; // latest exit leg
+    });
+    return parseTradeDate(exits[0].d);
+  }
+  if (t.exitDate && (Number(t.exitedQty) > 0 || isClosedTrade(t))) {
+    return parseTradeDate(t.exitDate);
+  }
+  return parseTradeDate(t.date || t.entryDate);
+}
+
+/**
+ * Returns latest exit date for trades with realized exits.
+ * Unlike getEffectiveTradeDate, does NOT fall back to entry date for open trades.
+ * Returns null if trade has no exit legs / no exited quantity.
+ */
+export function getRealizedExitDate(t) {
+  if (!t) return null;
+  // Strictly realized trades only: Open trades never return an exit date
+  if (!isClosedTrade(t) && !(isPartialTrade(t) && Number(t.exitedQty) > 0)) {
+    return null;
+  }
+  const exits = [
+    { d: t.e4Date, q: Number(t.e4Qty || 0) },
+    { d: t.e3Date, q: Number(t.e3Qty || 0) },
+    { d: t.e2Date, q: Number(t.e2Qty || 0) },
+    { d: t.e1Date, q: Number(t.e1Qty || 0) },
+  ].filter(e => e.d && e.q > 0);
+
+  if (exits.length > 0) {
+    exits.sort((a, b) => {
+      const da = parseTradeDate(a.d)?.getTime() || 0;
+      const db = parseTradeDate(b.d)?.getTime() || 0;
+      return db - da;
+    });
+    return parseTradeDate(exits[0].d);
+  }
+  if (t.exitDate) {
+    return parseTradeDate(t.exitDate);
+  }
+  if (isClosedTrade(t) && t.date) {
+    return parseTradeDate(t.date);
+  }
+  return null;
+}
+
+export function toLocalDayKey(d) {
+  if (!d || !(d instanceof Date) || isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Generates trading days between startDate and endDate (inclusive).
+ * Excludes weekends (Sat, Sun) and NSE trading holidays if provided.
+ *
+ * @param {Date} startDate
+ * @param {Date} endDate
+ * @param {Set<string>|Array<string>} [holidays] Optional holiday date strings ('YYYY-MM-DD')
+ * @returns {string[]} sorted dayKeys ('YYYY-MM-DD')
+ */
+export function generateTradingCalendarDays(startDate, endDate, holidays = null) {
+  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    return [];
+  }
+  const holidaySet = holidays instanceof Set ? holidays : new Set(Array.isArray(holidays) ? holidays : []);
+  const days = [];
+  const cur = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+  while (cur <= end) {
+    const dayOfWeek = cur.getDay(); // 0 = Sun, 6 = Sat
+    const key = toLocalDayKey(cur);
+    if (dayOfWeek !== 0 && dayOfWeek !== 6 && !holidaySet.has(key)) {
+      days.push(key);
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+// D5: sort by effective exit date, tie-break tradeNo
+export function sortTradesByEffectiveExitDate(trades = []) {
+  return [...trades].sort((a, b) => {
+    const da = getEffectiveTradeDate(a)?.getTime() || 0;
+    const db = getEffectiveTradeDate(b)?.getTime() || 0;
+    if (da !== db) return da - db;
+    return (Number(a.tradeNo) || 0) - (Number(b.tradeNo) || 0);
+  });
+}
+
 /**
  * Single source of truth for closed trades performance metrics.
  * Fix 4.1: Harmonized across Analytics and Deep Analytics pages.

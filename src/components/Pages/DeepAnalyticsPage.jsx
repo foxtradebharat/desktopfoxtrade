@@ -19,7 +19,19 @@ import {
 import SymbolLogo from '../SymbolLogo';
 import { getStockClassification } from '../../services/stockClassificationService';
 import { computeDrawdown } from '../../utils/drawdown';
-import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate, computeClosedMetrics } from '../../utils/tradeMetricsShared';
+import {
+  getTradePnl,
+  isClosedTrade,
+  isPartialTrade,
+  sortTradesByEffectiveExitDate,
+  computeClosedMetrics,
+  computeSharpe,
+  generateTradingCalendarDays,
+  getRealizedExitDate,
+  toLocalDayKey,
+  RISK_FREE_ANNUAL
+} from '../../utils/tradeMetricsShared';
+import { INDIAN_HOLIDAYS } from '../../services/marketTimingService';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 
@@ -4669,71 +4681,46 @@ export default function DeepAnalyticsPage({
     const avgWH  = wins.length   > 0 ? wins.reduce((a, t) => a + (t.holdingDays ?? 0), 0) / wins.length   : 0;
     const avgLH  = losses.length > 0 ? losses.reduce((a, t) => a + (t.holdingDays ?? 0), 0) / losses.length : 0;
 
-    // Avg. PnL/Day & Sharpe Ratio: grouped by calendar exit day
-    // All trades with realized PnL (closed + partial exits) are included
+    // Fix 5: Avg. PnL/Day & Sharpe Ratio: grouped by calendar exit day
+    // Only trades with realized PnL (closed + partial exits with qty > 0) are included.
+    // Open trades never create an exit day or event.
+    const realizedTrades = trades.filter(t => isClosedTrade(t) || (isPartialTrade(t) && Number(t.exitedQty) > 0));
     let totalRealizedPnl = 0;
-    const exitDaysSet = new Set();
-    const exitDayReturns = new Map();
+    const events = [];
+    const exitDayKeysSet = new Set();
 
-    // Helper to get effective date for trade (latest valid exit leg date if exits exist, else trade date)
-    const getEffectiveTradeDate = (t) => {
-      const exits = [
-        { d: t.e4Date, q: Number(t.e4Qty || 0) },
-        { d: t.e3Date, q: Number(t.e3Qty || 0) },
-        { d: t.e2Date, q: Number(t.e2Qty || 0) },
-        { d: t.e1Date, q: Number(t.e1Qty || 0) },
-      ].filter(e => e.d && e.q > 0);
-
-      if (exits.length > 0) {
-        exits.sort((a, b) => {
-          const da = parseDate(a.d)?.getTime() || 0;
-          const db = parseDate(b.d)?.getTime() || 0;
-          return db - da;
-        });
-        return parseDate(exits[0].d);
-      }
-      if (t.exitDate && (Number(t.exitedQty) > 0 || t.status === 'Closed')) {
-        return parseDate(t.exitDate);
-      }
-      return parseDate(t.date || t.entryDate);
-    };
-
-    trades.forEach(t => {
-      const pl = Number(t.pnl !== undefined ? t.pnl : (t.pl !== undefined ? t.pl : 0)) || 0;
-      const st = (t.status || t.positionStatus || '').toLowerCase();
-      const hasRealized = st === 'closed' || st === 'partial' || Number(t.exitedQty) > 0;
-      if (hasRealized) {
-        totalRealizedPnl += pl;
-      }
-
-      const effD = getEffectiveTradeDate(t);
-      if (effD) {
-        const dayTimestamp = Math.floor(effD.getTime() / 864e5);
-        exitDaysSet.add(dayTimestamp);
-
-        // Return percentage for Sharpe Ratio
-        const cost = (Number(t.entry || t.avgEntry || 0) * Number(t.initialQty || t.qty || 0)) +
-                     (Number(t.p1Price || 0) * Number(t.p1Qty || 0)) +
-                     (Number(t.p2Price || 0) * Number(t.p2Qty || 0));
-        const retPct = cost > 0 ? (pl / cost) * 100 : (Number(t.stockMove) || 0);
-        exitDayReturns.set(dayTimestamp, (exitDayReturns.get(dayTimestamp) || 0) + retPct);
+    realizedTrades.forEach(t => {
+      const pl = getTradePnl(t);
+      totalRealizedPnl += pl;
+      const exitD = getRealizedExitDate(t);
+      if (exitD) {
+        const dayKey = toLocalDayKey(exitD);
+        if (dayKey) {
+          events.push({ dayKey, pnl: pl, date: exitD });
+          exitDayKeysSet.add(dayKey);
+        }
       }
     });
 
-    const dayCount = exitDaysSet.size || 1;
-    const avgPpD = dayCount > 0 ? totalRealizedPnl / dayCount : 0;
-
-    // Sharpe Ratio using daily returns with Bessel's correction (N - 1)
-    const returnVals = Array.from(exitDayReturns.values());
-    let sharpe = 0;
-    if (returnVals.length > 1) {
-      const mean = returnVals.reduce((a, b) => a + b, 0) / returnVals.length;
-      const sampleVar = returnVals.reduce((a, b) => a + (b - mean) ** 2, 0) / (returnVals.length - 1);
-      const sampleStd = Math.sqrt(sampleVar);
-      if (sampleStd > 0) {
-        sharpe = (mean / sampleStd) * Math.sqrt(252);
-      }
+    // Calendar: every trading day from first to last realized event date
+    let sharpeResult = { available: false, reason: 'insufficient_days' };
+    if (events.length > 0) {
+      events.sort((a, b) => a.date.getTime() - b.date.getTime());
+      const firstDate = events[0].date;
+      const lastDate = events[events.length - 1].date;
+      const nseHolidays = Array.isArray(INDIAN_HOLIDAYS)
+        ? INDIAN_HOLIDAYS.filter(h => h.type === 'trading' && h.exchanges?.includes('nse'))
+        : [];
+      const calendarDays = generateTradingCalendarDays(firstDate, lastDate, nseHolidays);
+      const cap = Number(startingCapital) > 0 ? Number(startingCapital) : null;
+      sharpeResult = computeSharpe(events, cap, calendarDays, RISK_FREE_ANNUAL);
     }
+
+    const sharpeVal = sharpeResult.available ? sharpeResult.sharpe : null;
+    const sharpeReason = sharpeResult.available ? null : sharpeResult.reason;
+
+    // Avg. P&L per active exit day
+    const avgPpD = exitDayKeysSet.size > 0 ? totalRealizedPnl / exitDayKeysSet.size : 0;
 
     const best   = closedMetrics.highestRTrade || (closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (b.pnl ?? 0) - (a.pnl ?? 0))[0] : null);
     const worst  = closedMetrics.lowestRTrade || (losses.length > 0
@@ -4823,7 +4810,9 @@ export default function DeepAnalyticsPage({
       profitFactor: pf === null ? '∞' : pf.toFixed(2),
       winStreak: maxWS, lossStreak: maxLS,
       currentStreak: curStreak, currentStreakType: curType,
-      expectancy: ex.toFixed(2), sharpe: sharpe.toFixed(2),
+      expectancy: ex.toFixed(2),
+      sharpe: sharpeVal !== null ? sharpeVal.toFixed(2) : null,
+      sharpeReason,
       bestTradeObj: best, worstTradeObj: worst,
       highestR: hR.toFixed(2), lowestR: lR.toFixed(2), avgR: aR.toFixed(2),
       avgWinR, avgLossR, totalR, expectancyR, rPayoff,
@@ -4837,7 +4826,7 @@ export default function DeepAnalyticsPage({
       totalPnl: totalRealizedPnl, totalTrades: closedTrades.length,
       grossProfit: gross, grossLoss: grossL, rMults,
     };
-  }, [closedTrades, trades]);
+  }, [closedTrades, trades, startingCapital]);
 
   const perfScore = useMemo(() => calcScore(metrics), [metrics]);
 
@@ -5694,7 +5683,7 @@ export default function DeepAnalyticsPage({
                     <p className={`text-[17px] font-mono font-bold tracking-tight ${metrics.avgPnlPerDay >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                       <AnimatedNumber value={metrics.avgPnlPerDay} isCurrency />
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">Average daily profit/loss</p>
+                    <p className="text-xs text-muted-foreground mt-1">Average profit/loss per active exit day</p>
                   </div>
                   <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600/70 dark:text-emerald-400/70">
                     <CalendarDays className="size-3.5" strokeWidth={1.75} />
@@ -5731,10 +5720,16 @@ export default function DeepAnalyticsPage({
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-[17px] font-bold tracking-tight text-foreground/80 italic">Sharpe Ratio</p>
-                    <p className={`text-[17px] font-mono font-bold tracking-tight ${parseFloat(metrics.sharpe) >= 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
-                      <AnimatedNumber value={parseFloat(metrics.sharpe)} decimals={2} />
+                    <p className={`text-[17px] font-mono font-bold tracking-tight ${metrics.sharpe !== null && parseFloat(metrics.sharpe) >= 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                      {metrics.sharpe !== null ? (
+                        <AnimatedNumber value={parseFloat(metrics.sharpe)} decimals={2} />
+                      ) : (
+                        <span className="text-xs font-semibold text-amber-500 dark:text-amber-400">
+                          {metrics.sharpeReason === 'no_capital' ? 'Set starting capital' : '— (< 20 trading days)'}
+                        </span>
+                      )}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">Risk-adjusted return</p>
+                    <p className="text-xs text-muted-foreground mt-1">Risk-adjusted return (portfolio basis)</p>
                   </div>
                   <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600/70 dark:text-emerald-400/70">
                     <Sigma className="size-3.5" strokeWidth={1.75} />
