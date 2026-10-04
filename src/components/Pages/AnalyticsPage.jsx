@@ -25,6 +25,8 @@ import {
   Check
 } from 'lucide-react';
 import SymbolLogo from '../SymbolLogo';
+import { getCapital } from '../../utils/fundManagementCalculations';
+import { computeClosedMetrics, computePartialSummary, getR, isClosedTrade, isPartialTrade, getTradePnl } from '../../utils/tradeMetricsShared';
 
 // ── Indian Benchmark Historical Proxies (FY 2026-2027) ───────────────────────
 const INDIAN_BENCHMARKS = [
@@ -349,8 +351,12 @@ function CustomFoxHeroTooltip({ active, payload, label, metricUnit = 'percent', 
 
 export default function AnalyticsPage({
   trades = [],
+  allTrades = [],
   portfolioCapital = 0,
-  onOpenStockChart
+  onOpenStockChart,
+  chargesMap = null,
+  dateRange = 'All Time',
+  resolvedDateFilter = null
 }) {
   // ─── States ──────────────────────────────────────────────────
   const [pnlMode, setPnlMode] = useState('gross'); // 'gross' | 'net' (defaults to gross)
@@ -1019,11 +1025,20 @@ function getTradeActualCloseDateStr(t) {
     }
   }, [metricUnit, heroHasTrades, monthlyData]);
 
+  // ─── Shared Active Capital Denominator (Base Capital + Deposits - Withdrawals + Realized P&L) ───
+  const activeCapital = useMemo(() => {
+    return getCapital({
+      baseCapital,
+      trades: enrichedTrades
+    });
+  }, [baseCapital, enrichedTrades]);
+
   // ─── 2. Metric Calculations for Column 1 & 2 ─────────
   const metrics = useMemo(() => {
     const totalTradesCount = enrichedTrades.length;
-    let wins = 0;
-    let losses = 0;
+    const closedMetrics = computeClosedMetrics(enrichedTrades);
+    const partialSummary = computePartialSummary(enrichedTrades);
+
     let sumPosMove = 0;
     let countPosMove = 0;
     let sumNegMove = 0;
@@ -1037,30 +1052,13 @@ function getTradeActualCloseDateStr(t) {
     let planFollowedCount = 0;
     let totalPlanned = 0;
     let openPositionsCount = 0;
-    let totalRealizedPnl = 0;
-    let totalWinPnl = 0;
-    let totalLossPnl = 0;
 
     for (const t of enrichedTrades) {
       const status = String(t.positionStatus || t.status || '').toLowerCase();
-      const isClosed = status === 'closed';
       const isPartial = status === 'partial';
       const isOpen = status === 'open';
 
       if (isOpen || isPartial) openPositionsCount++;
-
-      const pnl = Number(t.activePnl !== undefined ? t.activePnl : (t.pl !== undefined ? t.pl : (t.grossPnl || 0)));
-      if (isClosed || isPartial) {
-        totalRealizedPnl += pnl;
-        if (pnl > 0) totalWinPnl += pnl;
-        else if (pnl < 0) totalLossPnl += Math.abs(pnl);
-      }
-
-      // Win Rate: calculates on decided Closed trades (P/L != 0)
-      if (isClosed) {
-        if (pnl > 0) wins++;
-        else if (pnl < 0) losses++;
-      }
 
       // Average Positive & Negative Stock Moves (across all trades in journal)
       const move = Number(t.stockMove !== undefined ? t.stockMove : (t.stockMovePct || 0));
@@ -1091,8 +1089,8 @@ function getTradeActualCloseDateStr(t) {
       }
 
       // Average R:R across all trades in journal
-      const rr = typeof t.weightedRR === 'number' ? t.weightedRR : (typeof t.rewardRisk === 'number' ? t.rewardRisk : Number(t.rr || 0));
-      if (typeof rr === 'number' && !isNaN(rr)) {
+      const rr = getR(t);
+      if (rr !== null) {
         sumR += rr;
         countR++;
       }
@@ -1105,8 +1103,9 @@ function getTradeActualCloseDateStr(t) {
       }
     }
 
-    const decidedTradesCount = wins + losses;
-    const winRate = decidedTradesCount > 0 ? (wins / decidedTradesCount) * 100 : 0;
+    const wins = closedMetrics.winCount;
+    const losses = closedMetrics.lossCount;
+    const winRate = closedMetrics.winRate;
     const avgWinMove = countPosMove > 0 ? sumPosMove / countPosMove : 0;
     const avgLossMove = countNegMove > 0 ? sumNegMove / countNegMove : 0;
     const avgPositionSize = countAlloc > 0 ? sumAlloc / countAlloc : 0;
@@ -1114,16 +1113,14 @@ function getTradeActualCloseDateStr(t) {
     const avgRR = countR > 0 ? sumR / countR : 0;
     const planFollowedPct = totalPlanned > 0 ? (planFollowedCount / totalPlanned) * 100 : 100;
 
-    // Profit Factor & Expectancy
-    const profitFactor = totalLossPnl > 0 ? totalWinPnl / totalLossPnl : (totalWinPnl > 0 ? 99.9 : 0);
-    const avgWinPnl = wins > 0 ? totalWinPnl / wins : 0;
-    const avgLossPnl = losses > 0 ? totalLossPnl / losses : 0;
-    const expectancy = (wins + losses) > 0
-      ? ((winRate / 100) * avgWinPnl) - (((100 - winRate) / 100) * avgLossPnl)
-      : 0;
+    // Profit Factor & Expectancy from shared closedMetrics (Fix 4)
+    const profitFactor = closedMetrics.profitFactor;
+    const avgWinPnl = closedMetrics.avgWin;
+    const avgLossPnl = closedMetrics.avgLoss;
+    const expectancy = closedMetrics.expectancy;
+    const totalRealizedPnl = (closedMetrics.grossWin - closedMetrics.grossLoss) + partialSummary.realizedPnl;
 
-    // Cash %: 100% minus total open invested capital as % of active capital
-    const activeCapital = (baseCapital > 0 ? baseCapital : 100000) + totalRealizedPnl;
+    // Cash %: 100% minus total open invested capital as % of active capital (using shared activeCapital)
     const openTrades = enrichedTrades.filter(t => {
       const s = String(t.positionStatus || t.status || '').toLowerCase();
       return s === 'open' || s === 'partial';
@@ -1148,20 +1145,26 @@ function getTradeActualCloseDateStr(t) {
       avgR: avgRR.toFixed(2),
       openPositions: openPositionsCount,
       cash: cashPct.toFixed(2) + '%',
-      profitFactor: (wins + losses) === 0 ? '0.00×' : (profitFactor >= 99.9 ? '∞' : profitFactor.toFixed(2) + '×'),
+      profitFactor: profitFactor === null ? '∞' : (profitFactor > 0 ? profitFactor.toFixed(2) + '×' : '0.00×'),
       expectancy: formatINR(expectancy),
+      rawExpectancy: expectancy,
       avgGain: avgWinMove.toFixed(2) + '%',
-      avgLoss: avgLossMove.toFixed(2) + '%'
+      avgLoss: avgLossMove.toFixed(2) + '%',
+      avgWinPnl,
+      avgLossPnl,
+      totalRealizedPnl,
+      partialRealizedPnl: partialSummary.realizedPnl,
+      partialTradesCount: partialSummary.count,
+      partialRealizedPnlFormatted: formatINR(partialSummary.realizedPnl),
+      highestR: closedMetrics.highestR,
+      lowestR: closedMetrics.lowestR
     };
-  }, [enrichedTrades, baseCapital]);
+  }, [enrichedTrades, activeCapital, baseCapital]);
 
   // ─── 3. Top Performers (Highest & Lowest Extreme Cards) ────────────────────
   const { highestTrade, lowestTrade } = useMemo(() => {
-    // Filters out purely open positions: e.positionStatus !== 'Open'
-    const eligible = enrichedTrades.filter(t => {
-      const s = String(t.positionStatus || t.status || '').toLowerCase();
-      return s === 'closed' || s === 'partial';
-    });
+    // Restricted strictly to Closed trades for statistical integrity (Fix 4.2)
+    const eligible = enrichedTrades.filter(isClosedTrade);
     if (!eligible.length) return { highestTrade: null, lowestTrade: null, highVal: 0, lowVal: 0 };
 
     const getVal = (t, metric) => {
@@ -1172,12 +1175,12 @@ function getTradeActualCloseDateStr(t) {
         case 'Portfolio Impact':
           return (typeof t.pfImpact === 'number' && t.pfImpact !== 0)
             ? t.pfImpact
-            : (baseCapital > 0 ? (Number(t.activePnl !== undefined ? t.activePnl : (t.grossPnl !== undefined ? t.grossPnl : (t.pl || 0))) / baseCapital) * 100 : 0);
+            : (activeCapital > 0 ? (getTradePnl(t) / activeCapital) * 100 : 0);
         case 'R:R':
-          return typeof t.weightedRR === 'number' ? t.weightedRR : (typeof t.rewardRisk === 'number' ? t.rewardRisk : Number(t.rr || 0));
+          return getR(t) ?? 0;
         case 'P/L (₹)':
         default:
-          return Number(t.activePnl !== undefined ? t.activePnl : (t.grossPnl !== undefined ? t.grossPnl : t.pl || 0));
+          return getTradePnl(t);
       }
     };
 
@@ -1200,7 +1203,7 @@ function getTradeActualCloseDateStr(t) {
     }
 
     return { highestTrade: high, lowestTrade: low, highVal, lowVal };
-  }, [enrichedTrades, performerMetric, baseCapital]);
+  }, [enrichedTrades, performerMetric, activeCapital]);
 
   // ─── 4. Stock Move % Distribution Series ─────────
   const { stockMoveSeries, stockMoveHasTrades } = useMemo(() => {
@@ -1291,24 +1294,28 @@ function getTradeActualCloseDateStr(t) {
       let key = '';
       let dateMs = 0;
       let displayDate = '';
+      let fullDate = '';
 
       if (stockMoveInterval === 'Daily') {
         key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const dayDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         dateMs = dayDate.getTime();
-        displayDate = dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        fullDate = dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        displayDate = dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       } else if (stockMoveInterval === 'Weekly') {
         const startOfWeek = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday start
         key = `W-${startOfWeek.getFullYear()}-${String(startOfWeek.getMonth() + 1).padStart(2, '0')}-${String(startOfWeek.getDate()).padStart(2, '0')}`;
         dateMs = startOfWeek.getTime();
-        displayDate = `Week of ${startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        fullDate = `Week of ${startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        displayDate = startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       } else {
         // Monthly
         key = `M-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
         dateMs = monthStart.getTime();
-        displayDate = `${d.getMonth() + 1}/${d.getFullYear()}`;
+        fullDate = monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        displayDate = monthStart.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
       }
 
       if (!groups[key]) {
@@ -1316,6 +1323,7 @@ function getTradeActualCloseDateStr(t) {
           date: key,
           dateMs,
           displayDate,
+          fullDate,
           trades: []
         };
       }
@@ -1359,6 +1367,7 @@ function getTradeActualCloseDateStr(t) {
         date: grp.date,
         dateMs: grp.dateMs,
         displayDate: grp.displayDate,
+        fullDate: grp.fullDate,
         avgStockMove,
         avgRMultiple,
         avgRating,
@@ -2313,7 +2322,13 @@ function getTradeActualCloseDateStr(t) {
                 { label: 'Avg R:R', value: metrics.avgR, desc: 'Average reward-to-risk ratio.' },
                 { label: 'Profit Factor', value: metrics.profitFactor, desc: 'Gross profits divided by gross losses.' },
                 { label: 'Expectancy', value: metrics.expectancy, desc: 'Expected return per trade.', color: '#10b981' },
-              ].map((row, idx) => (
+                ...(metrics.partialTradesCount > 0 ? [{
+                  label: 'Realized from partial exits',
+                  value: metrics.partialRealizedPnlFormatted,
+                  desc: 'Total realized P&L from partially exited positions.',
+                  color: metrics.partialRealizedPnl >= 0 ? '#10b981' : '#ef4444'
+                }] : []),
+              ].map((row, idx, arr) => (
                 <div
                   key={idx}
                   style={{
@@ -2321,11 +2336,11 @@ function getTradeActualCloseDateStr(t) {
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     padding: '14px 18px',
-                    borderBottom: idx < 7 ? '1px solid var(--border-color, #f4f4f5)' : 'none',
+                    borderBottom: idx < arr.length - 1 ? '1px solid var(--border-color, #f4f4f5)' : 'none',
                     borderTopLeftRadius: idx === 0 ? '16px' : 0,
                     borderTopRightRadius: idx === 0 ? '16px' : 0,
-                    borderBottomLeftRadius: idx === 7 ? '16px' : 0,
-                    borderBottomRightRadius: idx === 7 ? '16px' : 0,
+                    borderBottomLeftRadius: idx === arr.length - 1 ? '16px' : 0,
+                    borderBottomRightRadius: idx === arr.length - 1 ? '16px' : 0,
                     transition: 'background-color 0.15s ease'
                   }}
                 >
@@ -2454,7 +2469,7 @@ function getTradeActualCloseDateStr(t) {
                           ? (() => {
                               const v = (typeof highestTrade.pfImpact === 'number' && highestTrade.pfImpact !== 0)
                                 ? highestTrade.pfImpact
-                                : (baseCapital > 0 ? (Number(highestTrade.activePnl !== undefined ? highestTrade.activePnl : (highestTrade.grossPnl !== undefined ? highestTrade.grossPnl : (highestTrade.pl || 0))) / baseCapital) * 100 : 0);
+                                : (activeCapital > 0 ? (Number(highestTrade.activePnl !== undefined ? highestTrade.activePnl : (highestTrade.grossPnl !== undefined ? highestTrade.grossPnl : (highestTrade.pl || 0))) / activeCapital) * 100 : 0);
                               return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
                             })()
                           : (highestTrade.activePnl >= 0
@@ -2501,7 +2516,7 @@ function getTradeActualCloseDateStr(t) {
                           ? (() => {
                               const v = (typeof lowestTrade.pfImpact === 'number' && lowestTrade.pfImpact !== 0)
                                 ? lowestTrade.pfImpact
-                                : (baseCapital > 0 ? (Number(lowestTrade.activePnl !== undefined ? lowestTrade.activePnl : (lowestTrade.grossPnl !== undefined ? lowestTrade.grossPnl : (lowestTrade.pl || 0))) / baseCapital) * 100 : 0);
+                                : (activeCapital > 0 ? (Number(lowestTrade.activePnl !== undefined ? lowestTrade.activePnl : (lowestTrade.grossPnl !== undefined ? lowestTrade.grossPnl : (lowestTrade.pl || 0))) / activeCapital) * 100 : 0);
                               return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
                             })()
                           : (lowestTrade.activePnl >= 0
@@ -2687,8 +2702,9 @@ function getTradeActualCloseDateStr(t) {
                         dataKey="displayDate"
                         axisLine={{ stroke: '#e5e7eb', strokeWidth: 1 }}
                         tickLine={{ stroke: '#e5e7eb' }}
-                        interval={0}
-                        dy={10}
+                        interval="preserveStartEnd"
+                        minTickGap={28}
+                        dy={8}
                         tick={{ fontSize: 11, fill: '#71717a' }}
                       />
                       <YAxis
@@ -2965,7 +2981,7 @@ function CustomStockMoveTooltip({ active, payload, label, metricMode = 'stockMov
         fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
       }}>
         <div style={{ fontWeight: 600, color: 'var(--text-primary, #18181b)', fontSize: '13px', marginBottom: '8px' }}>
-          {label || data.displayDate}
+          {data.fullDate || data.displayDate || label}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>

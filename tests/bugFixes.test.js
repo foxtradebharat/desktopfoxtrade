@@ -152,3 +152,46 @@ describe('Fix 1: Drawdown Calculation Fix', () => {
   });
 });
 
+import { computeClosedMetrics, computePartialSummary } from '../src/utils/tradeMetricsShared.js';
+
+describe('Fix 4: Cross-Page Metric Parity Fix', () => {
+  it('computeClosedMetrics returns identical results for Analytics and Deep Analytics inputs', () => {
+    // 20 wins, 20 losses, 5 partials, 5 opens
+    const sampleTrades = [];
+    for (let i = 1; i <= 20; i++) {
+      sampleTrades.push({ tradeNo: i, status: 'Closed', pnl: 4356, rewardRisk: (i === 1 ? 3.86 : 1.5) });
+    }
+    for (let i = 21; i <= 40; i++) {
+      sampleTrades.push({ tradeNo: i, status: 'Closed', pnl: -1306.25, rewardRisk: -1.0 });
+    }
+    // 5 partial trades with high R (e.g. 5.87) that must NOT leak into closed metrics
+    for (let i = 41; i <= 45; i++) {
+      sampleTrades.push({ tradeNo: i, status: 'Partial', pnl: 1980, rewardRisk: 5.87 });
+    }
+    // 5 open trades
+    for (let i = 46; i <= 50; i++) {
+      sampleTrades.push({ tradeNo: i, status: 'Open', pnl: 0, rewardRisk: 0 });
+    }
+
+    const m = computeClosedMetrics(sampleTrades);
+    expect(m.closedCount).toBe(40);
+    expect(m.winCount).toBe(20);
+    expect(m.lossCount).toBe(20);
+    expect(m.grossWin).toBe(87120);
+    expect(m.grossLoss).toBe(26125);
+    expect(m.avgWin).toBe(4356);
+    expect(m.avgLoss).toBe(1306.25);
+    expect(Number(m.profitFactor.toFixed(2))).toBe(3.33);
+    expect(Number(m.expectancy.toFixed(2))).toBe(1524.88);
+    // Highest R MUST be 3.86 from closed trades, NOT 5.87 from partial
+    expect(m.highestR).toBe(3.86);
+    expect(m.highestRTrade.tradeNo).toBe(1);
+
+    // Partial trades are isolated in computePartialSummary
+    const p = computePartialSummary(sampleTrades);
+    expect(p.count).toBe(5);
+    expect(p.realizedPnl).toBe(5 * 1980);
+  });
+});
+
+

@@ -4649,26 +4649,18 @@ export default function DeepAnalyticsPage({
 
   // ── Core metrics ─────────────────────────
   const metrics = useMemo(() => {
+    const closedMetrics = computeClosedMetrics(closedTrades);
+    const partialSummary = computePartialSummary(trades);
+
     const wins   = closedTrades.filter(t => (t.pnl || 0) > 0);
     const losses = closedTrades.filter(t => (t.pnl || 0) < 0);
-    const gross  = wins.reduce((a, t) => a + (t.pnl || 0), 0);
-    const grossL = Math.abs(losses.reduce((a, t) => a + (t.pnl || 0), 0));
-    const pf     = grossL > 0 ? gross / grossL : gross > 0 ? 9.99 : 0;
-    const avgW   = wins.length   > 0 ? gross / wins.length   : 0;
-    const avgL   = losses.length > 0 ? grossL / losses.length : 0;
-
-    // Win Rate displayed on Card (closed trades with win/loss outcome)
-    const outcomeTradesCount = wins.length + losses.length;
-    const wr = outcomeTradesCount > 0 ? (wins.length / outcomeTradesCount) * 100 : 0;
-
-    // Expectancy (Nexus §3.3 #7): use closed-only denominator so open positions
-    // do not inflate the loss fraction. winRate + lossRate are computed independently
-    // so breakeven trades (pnl === 0) are excluded from both sides.
-    // Mathematically equivalent to: totalNetPL / closedTrades.length
-    const totalClosed = closedTrades.length;
-    const winRate_ex  = totalClosed > 0 ? wins.length   / totalClosed : 0;
-    const lossRate_ex = totalClosed > 0 ? losses.length / totalClosed : 0;
-    const ex = (winRate_ex * avgW) - (lossRate_ex * avgL);
+    const gross  = closedMetrics.grossWin;
+    const grossL = closedMetrics.grossLoss;
+    const pf     = closedMetrics.profitFactor;
+    const avgW   = closedMetrics.avgWin;
+    const avgL   = closedMetrics.avgLoss;
+    const wr     = closedMetrics.winRate;
+    const ex     = closedMetrics.expectancy;
 
     const payoff = avgL > 0 ? avgW / avgL : avgW > 0 ? 9.99 : 0;
     const wlRat  = losses.length > 0 ? wins.length / losses.length : wins.length;
@@ -4743,15 +4735,15 @@ export default function DeepAnalyticsPage({
       }
     }
 
-    const best   = closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (b.pnl ?? 0) - (a.pnl ?? 0))[0] : null;
-    const worst  = losses.length > 0
+    const best   = closedMetrics.highestRTrade || (closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (b.pnl ?? 0) - (a.pnl ?? 0))[0] : null);
+    const worst  = closedMetrics.lowestRTrade || (losses.length > 0
       ? [...losses].sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))[0]
-      : (closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))[0] : null);
+      : (closedTrades.length > 0 ? [...closedTrades].sort((a, b) => (a.pnl ?? 0) - (b.pnl ?? 0))[0] : null));
 
-    const rMults = closedTrades.map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r !== 0);
-    const hR     = rMults.length > 0 ? Math.max(...rMults) : 0;
-    const lR     = rMults.length > 0 ? Math.min(...rMults) : 0;
-    const aR     = rMults.length > 0 ? rMults.reduce((a, b) => a + b, 0) / rMults.length : 0;
+    const rMults = closedTrades.map(getR).filter(r => r !== null);
+    const hR     = closedMetrics.highestR;
+    const lR     = closedMetrics.lowestR;
+    const aR     = closedMetrics.avgR;
 
     let maxWS = 0, maxLS = 0, curW = 0, curL = 0;
     closedTrades.forEach(t => {
@@ -4814,8 +4806,8 @@ export default function DeepAnalyticsPage({
     const avgRisk = riskCount > 0 ? totalRiskRs / riskCount : 0;
     const avgPfRisk = riskCount > 0 ? totalRiskPct / riskCount : 0;
 
-    const winRList = closedTrades.filter(t => (t.pnl || 0) > 0).map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r > 0);
-    const lossRList = closedTrades.filter(t => (t.pnl || 0) < 0).map(t => parseFloat(t.rewardRisk)).filter(r => !isNaN(r) && r < 0);
+    const winRList = closedTrades.filter(t => (t.pnl || 0) > 0).map(getR).filter(r => r !== null && r > 0);
+    const lossRList = closedTrades.filter(t => (t.pnl || 0) < 0).map(getR).filter(r => r !== null && r < 0);
     const avgWinR = winRList.length > 0 ? (winRList.reduce((a, b) => a + b, 0) / winRList.length).toFixed(2) : '0.00';
     const avgLossR = lossRList.length > 0 ? (lossRList.reduce((a, b) => a + b, 0) / lossRList.length).toFixed(2) : '-1.00';
     const totalR = rMults.reduce((a, b) => a + b, 0).toFixed(2);
@@ -4828,10 +4820,10 @@ export default function DeepAnalyticsPage({
     const rPayoff = Math.abs(parseFloat(avgLossR)) > 0 ? (parseFloat(avgWinR) / Math.abs(parseFloat(avgLossR))).toFixed(2) : '—';
 
     return {
-      profitFactor: pf.toFixed(2),
+      profitFactor: pf === null ? '∞' : pf.toFixed(2),
       winStreak: maxWS, lossStreak: maxLS,
       currentStreak: curStreak, currentStreakType: curType,
-      expectancy: ex.toFixed(0), sharpe: sharpe.toFixed(2),
+      expectancy: ex.toFixed(2), sharpe: sharpe.toFixed(2),
       bestTradeObj: best, worstTradeObj: worst,
       highestR: hR.toFixed(2), lowestR: lR.toFixed(2), avgR: aR.toFixed(2),
       avgWinR, avgLossR, totalR, expectancyR, rPayoff,
