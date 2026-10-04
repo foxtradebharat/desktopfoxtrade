@@ -12,7 +12,7 @@ import {
   formatIndianNumber, 
   formatFullIndianRupee 
 } from '../utils/indianCurrencyFormatter';
-import { calculateMonthlyPerformance, getStoredCapitalChanges } from '../utils/fundManagementCalculations';
+import { calculateMonthlyPerformance, getStoredCapitalChanges, getCapital } from '../utils/fundManagementCalculations';
 
 const ICON_COMPONENTS = {
   list: ListChecks,
@@ -245,7 +245,7 @@ function WinRateGauge({ winRate = 0, plMethod = 'PL', hideValues = false }) {
   return <SemiGauge value={winRate} maxValue={100} color={color} hideValues={hideValues} suffix="%" gradId="wr-grad" filterId="wr-glow" />;
 }
 
-export default function StatCards({ metrics, hideValues, trades = [], settings = {} }) {
+export default function StatCards({ metrics, hideValues, trades = [], settings = {}, onUpdateSetting }) {
 
   const [activePopover, setActivePopover] = useState(null); // 'totalTrades' | 'openPositions' | 'plMethod' | 'grossImpact' | 'unrealized' | 'risk' | 'invested' | 'monthlyMatrix'
   const [plMethod, setPlMethod] = useState('PL'); // 'PL' | 'RR'
@@ -427,21 +427,24 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
   }, [openTradesList]);
 
   const openPositionsBreakdown = useMemo(() => {
-    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || 212880.89;
+    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades });
     return openTradesList.map(t => ({
       id: t.id,
       symbol: t.symbol,
+      openQty: t.openQty,
+      avgEntry: t.avgEntry,
+      cmp: t.cmp,
       amount: t.unrealizedAmt,
       percent: pfCapital > 0 ? (t.unrealizedAmt / pfCapital) * 100 : 0
     }));
-  }, [openTradesList, metrics?.currentPfCapital, metrics?.portfolioCapital]);
+  }, [openTradesList, metrics?.currentPfCapital, metrics?.portfolioCapital, trades]);
 
   // Available Cash
   const availableCashValue = useMemo(() => {
-    const baseCap = metrics?.portfolioCapital || 212880.89;
+    const baseCap = metrics?.portfolioCapital || getCapital({ trades });
     const invested = (metrics?.totalInvested !== undefined) ? metrics.totalInvested : (totalInvestedInOpen || 0);
     return Math.max(0, baseCap - invested);
-  }, [metrics?.portfolioCapital, metrics?.totalInvested, totalInvestedInOpen]);
+  }, [metrics?.portfolioCapital, metrics?.totalInvested, totalInvestedInOpen, trades]);
 
   // Active open trade displayed in % INVESTED card header
   const activeInvestedTrade = useMemo(() => {
@@ -451,9 +454,9 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
 
   const activeTradeAllocationPct = useMemo(() => {
     if (!activeInvestedTrade) return '0.00';
-    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || 212880.89;
+    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades });
     return pfCapital > 0 ? ((activeInvestedTrade.invested / pfCapital) * 100).toFixed(2) : '0.00';
-  }, [activeInvestedTrade, metrics?.currentPfCapital, metrics?.portfolioCapital]);
+  }, [activeInvestedTrade, metrics?.currentPfCapital, metrics?.portfolioCapital, trades]);
 
   // Available years from trades history
   const availableYears = useMemo(() => {
@@ -473,7 +476,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
 
   // Dynamic Month-by-Month PF Impact Breakdown Calculation
   const monthlyBreakdownData = useMemo(() => {
-    const baseCap = metrics?.portfolioCapital || metrics?.currentPfCapital || 200000;
+    const baseCap = metrics?.portfolioCapital || metrics?.currentPfCapital || getCapital({ trades });
     const capitalChanges = selectedPfYear !== 'ALL TIME' ? getStoredCapitalChanges('portfolio-default', selectedPfYear) : {};
     const perfChain = selectedPfYear !== 'ALL TIME' ? calculateMonthlyPerformance(trades || [], capitalChanges, selectedPfYear) : null;
 
@@ -1227,9 +1230,38 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
             zIndex: activePopover === 'unrealized' ? 150 : 1
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                UNREALIZED P/L
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                  UNREALIZED P/L
+                </span>
+                {settings?.liveCmpEnabled !== false ? (
+                  <span
+                    title="Live Market Quotes Active"
+                    style={{
+                      display: 'inline-block',
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      backgroundColor: '#10b981',
+                      animation: 'statLivePing 1.8s ease-in-out infinite',
+                      cursor: 'help'
+                    }}
+                  />
+                ) : (
+                  <span
+                    title="File Snapshot Quotes (Live CMP Disabled)"
+                    style={{
+                      display: 'inline-block',
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--text-muted, #9ca3af)',
+                      opacity: 0.5,
+                      cursor: 'help'
+                    }}
+                  />
+                )}
+              </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{
@@ -1261,12 +1293,12 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                         position: 'absolute',
                         top: 'calc(100% + 4px)',
                         right: '0px',
-                        width: openPositionsBreakdown.length === 0 ? '160px' : '230px',
+                        width: openPositionsBreakdown.length === 0 ? '180px' : '260px',
                         backgroundColor: 'var(--bg-surface, #ffffff)',
                         border: '1px solid var(--border-color, #e5e7eb)',
                         borderRadius: '12px',
                         boxShadow: '0 12px 30px -4px rgba(0,0,0,0.16)',
-                        padding: '8px 12px',
+                        padding: '10px 12px',
                         zIndex: 100,
                         fontSize: '11px',
                         color: 'var(--text-primary)',
@@ -1279,12 +1311,43 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                       <div style={{ position: 'absolute', bottom: '100%', right: '4px', borderWidth: '4px', borderStyle: 'solid', borderColor: 'transparent transparent #e5e7eb transparent', zIndex: 1 }} />
                       <div style={{ position: 'absolute', bottom: 'calc(100% - 1px)', right: '4px', borderWidth: '4px', borderStyle: 'solid', borderColor: 'transparent transparent #ffffff transparent', zIndex: 2 }} />
 
-                      <div style={{ fontSize: '9.5px', color: 'var(--text-muted, #71717a)', marginBottom: '6px', lineHeight: '1.2' }}>
-                        Running impact on portfolio capital.
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <div style={{ fontSize: '9.5px', color: 'var(--text-muted, #71717a)', lineHeight: '1.2' }}>
+                          Running impact on portfolio capital
+                        </div>
+                        {onUpdateSetting && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpdateSetting('liveCmpEnabled', settings?.liveCmpEnabled === false ? true : false);
+                            }}
+                            title="Toggle between Live Market Quotes (Nexus default) and Imported File Snapshot Quotes"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '9.5px',
+                              fontWeight: 600,
+                              padding: '2px 7px',
+                              borderRadius: '5px',
+                              border: '1px solid var(--border-color, #e5e7eb)',
+                              backgroundColor: 'var(--bg-card, #f9fafb)',
+                              color: 'var(--text-primary)',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.15s ease'
+                            }}
+                            onMouseDown={(e) => { e.currentTarget.style.backgroundColor = '#9ca3af'; }}
+                            onMouseUp={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-card, #f9fafb)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-card, #f9fafb)'; }}
+                          >
+                            <Activity size={10} color={settings?.liveCmpEnabled !== false ? '#10b981' : 'var(--text-muted)'} />
+                            {settings?.liveCmpEnabled !== false ? 'Live (Nexus)' : 'File CSV'}
+                          </button>
+                        )}
                       </div>
                       <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f3f4f6)', marginBottom: '6px' }} />
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '110px', overflowY: 'auto' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '130px', overflowY: 'auto' }}>
                         {openPositionsBreakdown.length === 0 ? (
                           <div style={{ color: 'var(--text-muted)', fontSize: '10.5px', textAlign: 'center', padding: '6px 0' }}>
                             No unrealized P/L
@@ -1299,7 +1362,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'space-between',
-                                  padding: '3px 4px',
+                                  padding: '4px 6px',
                                   borderRadius: '6px',
                                   transition: 'background-color 0.15s ease'
                                 }}
@@ -1308,9 +1371,14 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                                   <SymbolLogo symbol={item.symbol} size={20} />
-                                  <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-primary, #111827)' }}>
-                                    {item.symbol}
-                                  </span>
+                                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-primary, #111827)' }}>
+                                      {item.symbol}
+                                    </span>
+                                    <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+                                      {item.openQty} @ {formatRupee(item.avgEntry)} • CMP {formatRupee(item.cmp)}
+                                    </span>
+                                  </div>
                                 </div>
 
                                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -2204,16 +2272,29 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
             </div>
 
             <div style={{ marginTop: '8px' }}>
-              <div style={{ fontSize: '22px', fontWeight: 700, color: parseFloat(metrics?.currentDrawdown ?? '0') === 0 ? 'var(--color-green, #10b981)' : '#ef4444', letterSpacing: '-0.02em', lineHeight: '1.1' }}>
-                {formatValue(metrics?.currentDrawdown ?? '0.00', '', '%')}
-              </div>
-              {(trades || []).length > 0 && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
-                <div 
-                  title={formatFullTooltip(metrics.currentDrawdownAmount)}
-                  style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450, marginTop: '3px', lineHeight: '1.5' }}
-                >
-                  ({formatRupee(metrics.currentDrawdownAmount)})
-                </div>
+              {metrics?.currentDrawdown === null ? (
+                <>
+                  <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '-0.02em', lineHeight: '1.1' }}>
+                    —
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450, marginTop: '3px', lineHeight: '1.5' }}>
+                    (Set starting capital)
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: '22px', fontWeight: 700, color: parseFloat(metrics?.currentDrawdown ?? '0') === 0 ? 'var(--color-green, #10b981)' : '#ef4444', letterSpacing: '-0.02em', lineHeight: '1.1' }}>
+                    {formatValue(metrics?.currentDrawdown ?? '0.00', '', '%')}
+                  </div>
+                  {(trades || []).length > 0 && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
+                    <div 
+                      title={formatFullTooltip(metrics.currentDrawdownAmount)}
+                      style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450, marginTop: '3px', lineHeight: '1.5' }}
+                    >
+                      ({formatRupee(metrics.currentDrawdownAmount)})
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import SymbolLogo from '../SymbolLogo';
 import { getStockClassification } from '../../services/stockClassificationService';
+import { computeDrawdown } from '../../utils/drawdown';
+import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate, computeClosedMetrics } from '../../utils/tradeMetricsShared';
 
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 
@@ -4375,7 +4377,15 @@ export function VisualAnalyticsSection({ trades = [] }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
-export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCol }) {
+export default function DeepAnalyticsPage({ 
+  trades = [], 
+  allTrades = [],
+  visibleCols, 
+  onToggleCol,
+  dateRange = 'All Time',
+  resolvedDateFilter = null,
+  startingCapital = null
+}) {
   const [subTab, setSubTab] = useState('POSITION');
   const [moveThreshold, setMoveThreshold] = useState(5);
   const [matrixView, setMatrixView] = useState('monthly'); // monthly | cumulative
@@ -4651,11 +4661,14 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
     const outcomeTradesCount = wins.length + losses.length;
     const wr = outcomeTradesCount > 0 ? (wins.length / outcomeTradesCount) * 100 : 0;
 
-    // Expectancy: j = wins / totalTrades, fe = 1 - j, ex = (j * avgW) - (fe * avgL)
-    const totalTradesCount = trades.length || closedTrades.length;
-    const j = totalTradesCount > 0 ? wins.length / totalTradesCount : 0;
-    const fe = 1 - j;
-    const ex = (j * avgW) - (fe * avgL);
+    // Expectancy (Nexus §3.3 #7): use closed-only denominator so open positions
+    // do not inflate the loss fraction. winRate + lossRate are computed independently
+    // so breakeven trades (pnl === 0) are excluded from both sides.
+    // Mathematically equivalent to: totalNetPL / closedTrades.length
+    const totalClosed = closedTrades.length;
+    const winRate_ex  = totalClosed > 0 ? wins.length   / totalClosed : 0;
+    const lossRate_ex = totalClosed > 0 ? losses.length / totalClosed : 0;
+    const ex = (winRate_ex * avgW) - (lossRate_ex * avgL);
 
     const payoff = avgL > 0 ? avgW / avgL : avgW > 0 ? 9.99 : 0;
     const wlRat  = losses.length > 0 ? wins.length / losses.length : wins.length;
@@ -5100,14 +5113,21 @@ export default function DeepAnalyticsPage({ trades = [], visibleCols, onToggleCo
 
   // ── Equity Curve ──────────────────────────────────────────────────────
   const equityCurve = useMemo(() => {
-    let running = 0, peak = 0;
-    return closedTrades.map((t, i) => {
-      running += t.pnl || 0;
-      if (running > peak) peak = running;
-      const dd = peak > 0 ? ((running - peak) / peak * 100) : 0;
-      return { i: i + 1, equity: running, drawdown: dd, name: t.name || t.symbol };
+    const sorted = sortTradesByEffectiveExitDate(closedTrades);
+    const pnls = sorted.map(getTradePnl);
+    const cap = Number(startingCapital) > 0 ? Number(startingCapital) : null;
+    const ddResult = computeDrawdown(pnls, cap);
+
+    return sorted.map((t, i) => {
+      const step = ddResult.available ? ddResult.series[i] : null;
+      return {
+        i: i + 1,
+        equity: step ? step.equity : pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
+        drawdown: step ? step.pct : 0,
+        name: t.name || t.symbol
+      };
     });
-  }, [closedTrades]);
+  }, [closedTrades, startingCapital]);
 
   // ── Monthly P&L ───────────────────────────────────────────────────────
   const monthlyPnl = useMemo(() => {

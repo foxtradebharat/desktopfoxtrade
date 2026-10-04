@@ -3,50 +3,72 @@ import { X, LineChart, Table } from 'lucide-react';
 import DrawdownChart from './charts/DrawdownChart';
 import { Button } from '@/components/ui/button';
 import { formatFullIndianRupee } from '../utils/indianCurrencyFormatter';
+import { computeDrawdown } from '../utils/drawdown';
+import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate } from '../utils/tradeMetricsShared';
 
 export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues = false, metrics = {} }) {
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'visualizer'
 
   // Dynamic Drawdown calculations matching journal sequence & formulas
   const ddData = useMemo(() => {
-    // Tracks equity curve and portfolio impact strictly in Journal sequence (tradeNo)
-    const closed = (trades || [])
-      .filter(t => t.status === 'Closed' || (t.status === 'Partial' && (parseFloat(t.pnl) || parseFloat(t.pl) || 0) !== 0))
-      .sort((a, b) => (Number(a.tradeNo) || 0) - (Number(b.tradeNo) || 0));
+    // Tracks equity curve and portfolio impact strictly in effective exit date sequence (D5)
+    const closed = sortTradesByEffectiveExitDate(
+      (trades || []).filter(t => isClosedTrade(t) || (isPartialTrade(t) && getTradePnl(t) !== 0))
+    );
 
-    if (closed.length === 0) {
+    const startingCapital = Number(metrics?.startingCapitalBasis ?? metrics?.startingCapital) > 0
+      ? Number(metrics.startingCapitalBasis ?? metrics.startingCapital)
+      : null;
+
+    const pnls = closed.map(getTradePnl);
+    const ddResult = computeDrawdown(pnls, startingCapital);
+
+    if (closed.length === 0 || !ddResult.available) {
       return {
-        rows: [],
+        available: ddResult.available,
+        rows: closed.map((t, idx) => ({
+          tradeNo: t.tradeNo || idx + 1,
+          date: t.date || t.e1Date || `T#${idx + 1}`,
+          symbol: t.name || t.symbol || '—',
+          stockPfImpact: null,
+          cummPfImpact: null,
+          ddPct: null,
+          drawdownPct: null,
+          ddAmount: null,
+          amount: null,
+          equity: null,
+          peak: null,
+          pnl: getTradePnl(t),
+          runningNet: null,
+          peakNet: null,
+          commentary: 'Set starting capital'
+        })),
         chartData: [],
-        currentDD: 0,
-        currentDDAmount: 0,
-        maxDD: 0,
-        maxDDAmount: 0,
-        ulcerIndex: 0,
-        ulcerLabel: 'Smooth',
-        historicalPeakPct: 0,
-        historicalPeakAmount: 0,
-        portfolioHealth: 'Peak Achievement',
-        healthSub: 'All-time high equity',
-        healthColor: 'var(--color-green, #10b981)'
+        currentDD: null,
+        currentDDAmount: null,
+        maxDD: null,
+        maxDDAmount: null,
+        ulcerIndex: null,
+        ulcerLabel: 'Unavailable',
+        historicalPeakPct: null,
+        historicalPeakAmount: null,
+        portfolioHealth: 'Unavailable',
+        healthSub: 'Set starting capital',
+        healthColor: 'var(--text-muted)'
       };
     }
 
-    let runningNet = 0;
-    let peakNet = 0;
     let cummPfImpact = 0;
     let peakCummPfImpact = 0;
-    let maxDdPct = 0;
-    let maxDdAmount = 0;
     let sumSqDd = 0;
 
     const rows = closed.map((t, idx) => {
-      const net = Number(t.pnl ?? t.pl ?? t.netPnl ?? 0);
+      const net = getTradePnl(t);
+      const step = ddResult.series[idx];
+
       const pfImpact = t.pfImpact !== undefined && t.pfImpact !== null
         ? Number(t.pfImpact)
-        : Number(((net / 200000) * 100).toFixed(2));
-
-      runningNet += net;
+        : Number(((net / startingCapital) * 100).toFixed(2));
 
       // Cumulative portfolio impact is either stored directly or accumulated
       if (t.cummPf !== undefined && t.cummPf !== null && t.cummPf !== 0) {
@@ -55,17 +77,10 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
         cummPfImpact = Number((cummPfImpact + pfImpact).toFixed(2));
       }
 
-      if (runningNet > peakNet) peakNet = runningNet;
       if (cummPfImpact > peakCummPfImpact) peakCummPfImpact = cummPfImpact;
 
-      const ddAmount = runningNet < peakNet ? runningNet - peakNet : 0;
-      const cap = Number(metrics?.portfolioCapital) || 200000;
-      const ddPct = peakNet > 0
-        ? (ddAmount / peakNet) * 100
-        : (runningNet < 0 ? (runningNet / cap) * 100 : 0);
-
-      if (ddPct < maxDdPct) maxDdPct = ddPct;
-      if (ddAmount < maxDdAmount) maxDdAmount = ddAmount;
+      const ddPct = step ? step.pct : 0;
+      const ddAmount = step ? step.amt : 0;
 
       sumSqDd += Math.pow(Math.abs(ddPct), 2);
 
@@ -81,23 +96,22 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
         date: t.date || t.e1Date || `T#${idx + 1}`,
         symbol: t.name || t.symbol || '—',
         stockPfImpact: pfImpact,
-        cummPfImpact: cummPfImpact,
+        cummPfImpact,
         ddPct: Math.min(0, Math.round(ddPct * 100) / 100),
         drawdownPct: Math.min(0, Math.round(ddPct * 100) / 100),
-        ddAmount: ddAmount,
+        ddAmount,
         amount: ddAmount,
-        equity: runningNet,
-        peak: peakNet,
+        equity: step.equity,
+        peak: step.peak,
         pnl: net,
-        runningNet,
-        peakNet,
+        runningNet: step.equity - startingCapital,
+        peakNet: step.peak - startingCapital,
         commentary
       };
     });
 
-    const lastRow = rows[rows.length - 1];
-    const currentDD = lastRow ? lastRow.ddPct : 0;
-    const currentDDAmount = lastRow ? lastRow.ddAmount : 0;
+    const currentDD = ddResult.currentPct;
+    const currentDDAmount = Math.abs(ddResult.currentAmount);
 
     const ulcerIndex = Math.sqrt(sumSqDd / Math.max(1, rows.length));
     let ulcerLabel = 'Smooth';
@@ -127,16 +141,17 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
       : (metrics?.grossPFImpact ? Number(metrics.grossPFImpact) : 0);
 
     return {
+      available: true,
       rows,
       chartData: rows,
       currentDD,
       currentDDAmount,
-      maxDD: maxDdPct,
-      maxDDAmount: maxDdAmount,
+      maxDD: ddResult.maxPct,
+      maxDDAmount: Math.abs(ddResult.maxAmount),
       ulcerIndex,
       ulcerLabel,
       historicalPeakPct: peakPfDisplay,
-      historicalPeakAmount: peakNet,
+      historicalPeakAmount: ddResult.peakEquity,
       portfolioHealth,
       healthSub,
       healthColor
@@ -232,19 +247,19 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
             },
             {
               label: 'Ulcer Index',
-              val: hideValues ? '•••' : ddData.ulcerIndex.toFixed(2),
-              sub: hideValues ? '••••' : `Max ${Math.abs(ddData.maxDD).toFixed(2)}% | ${ddData.ulcerLabel}`
+              val: hideValues ? '•••' : (ddData.ulcerIndex !== null ? ddData.ulcerIndex.toFixed(2) : '—'),
+              sub: hideValues ? '••••' : (ddData.maxDD !== null ? `Max ${Math.abs(ddData.maxDD).toFixed(2)}% | ${ddData.ulcerLabel}` : 'Set starting capital')
             },
             {
               label: 'Historical Peak (Pre-Tax)',
-              val: hideValues ? '•••' : `${ddData.historicalPeakPct > 0 ? '+' : ''}${ddData.historicalPeakPct.toFixed(2)}%`,
-              sub: hideValues ? '••••' : `Peak ${formatFullIndianRupee(ddData.historicalPeakAmount)}`
+              val: hideValues ? '•••' : (ddData.historicalPeakPct !== null ? `${ddData.historicalPeakPct > 0 ? '+' : ''}${ddData.historicalPeakPct.toFixed(2)}%` : '—'),
+              sub: hideValues ? '••••' : (ddData.historicalPeakAmount !== null ? `Peak ${formatFullIndianRupee(ddData.historicalPeakAmount)}` : 'Set starting capital')
             },
             {
               label: 'Current Drawdown',
-              val: hideValues ? '•••' : `${ddData.currentDD.toFixed(2)}%`,
-              sub: hideValues ? '••••' : (ddData.currentDD === 0 ? '0.00% from peak' : `${formatFullIndianRupee(ddData.currentDDAmount)} from peak`),
-              valColor: ddData.currentDD === 0 ? 'var(--color-green, #10b981)' : '#ef4444'
+              val: hideValues ? '•••' : (ddData.currentDD !== null ? `${ddData.currentDD.toFixed(2)}%` : '—'),
+              sub: hideValues ? '••••' : (ddData.currentDD !== null ? (ddData.currentDD === 0 ? '0.00% from peak' : `${formatFullIndianRupee(ddData.currentDDAmount)} from peak`) : 'Set starting capital'),
+              valColor: ddData.currentDD === 0 ? 'var(--color-green, #10b981)' : (ddData.currentDD === null ? 'var(--text-muted)' : '#ef4444')
             },
           ].map((item, idx) => (
             <div
@@ -274,6 +289,23 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
             </div>
           ))}
         </div>
+
+        {!ddData.available && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 14px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(234, 179, 8, 0.1)',
+            border: '1px solid rgba(234, 179, 8, 0.3)',
+            color: '#eab308',
+            fontSize: '12px'
+          }}>
+            <span>Set your starting capital (portfolio base capital or a ledger deposit) to see drawdown analysis.</span>
+          </div>
+        )}
 
         {/* Main View: Table vs Visualizer Chart */}
         {viewMode === 'table' ? (
@@ -336,33 +368,33 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
                           padding: '13px 16px',
                           textAlign: 'right',
                           fontWeight: 450,
-                          color: row.stockPfImpact >= 0 ? 'var(--color-green, #10b981)' : '#ef4444'
+                          color: row.stockPfImpact === null ? 'var(--text-muted)' : (row.stockPfImpact >= 0 ? 'var(--color-green, #10b981)' : '#ef4444')
                         }}>
-                          {hideValues ? '•••' : `${row.stockPfImpact >= 0 ? '+' : ''}${row.stockPfImpact.toFixed(2)}%`}
+                          {hideValues ? '•••' : (row.stockPfImpact !== null ? `${row.stockPfImpact >= 0 ? '+' : ''}${row.stockPfImpact.toFixed(2)}%` : '—')}
                         </td>
                         <td style={{
                           padding: '13px 16px',
                           textAlign: 'right',
                           fontWeight: 450,
-                          color: row.cummPfImpact >= 0 ? 'var(--color-green, #10b981)' : '#ef4444'
+                          color: row.cummPfImpact === null ? 'var(--text-muted)' : (row.cummPfImpact >= 0 ? 'var(--color-green, #10b981)' : '#ef4444')
                         }}>
-                          {hideValues ? '•••' : `${row.cummPfImpact >= 0 ? '+' : ''}${row.cummPfImpact.toFixed(2)}%`}
+                          {hideValues ? '•••' : (row.cummPfImpact !== null ? `${row.cummPfImpact >= 0 ? '+' : ''}${row.cummPfImpact.toFixed(2)}%` : '—')}
                         </td>
                         <td style={{
                           padding: '13px 16px',
                           textAlign: 'right',
                           fontWeight: 500,
-                          color: isAtPeak ? 'var(--color-green, #10b981)' : '#ef4444'
+                          color: row.ddPct === null ? 'var(--text-muted)' : (isAtPeak ? 'var(--color-green, #10b981)' : '#ef4444')
                         }}>
-                          {hideValues ? '•••' : `${row.ddPct.toFixed(2)}%`}
+                          {hideValues ? '•••' : (row.ddPct !== null ? `${row.ddPct.toFixed(2)}%` : '—')}
                         </td>
                         <td style={{
                           padding: '13px 16px',
                           textAlign: 'right',
-                          color: isAtPeak ? 'var(--text-muted)' : '#ef4444',
+                          color: row.ddAmount === null ? 'var(--text-muted)' : (isAtPeak ? 'var(--text-muted)' : '#ef4444'),
                           fontWeight: 400
                         }}>
-                          {hideValues ? '••••' : (isAtPeak ? '₹0.00' : formatFullIndianRupee(row.ddAmount))}
+                          {hideValues ? '••••' : (row.ddAmount === null ? '—' : (isAtPeak ? '₹0.00' : formatFullIndianRupee(row.ddAmount)))}
                         </td>
                         <td style={{ padding: '13px 16px', textAlign: 'center' }}>
                           <span style={{

@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { db } from './services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { saveUserTrades, subscribeToUserTrades, setDriveContext, clearAllLocalTrades } from './services/dbService';
+import { saveUserTrades, getUserTrades, subscribeToUserTrades, setDriveContext, clearAllLocalTrades } from './services/dbService';
 import { fetchStockPrice } from './services/yahooService';
 import { fetchLiveCMPForSymbol, getCachedCMP } from './services/strikePriceService';
 import { liveMarketFeed } from './services/liveMarketFeed';
 import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups } from './services/googleDrive';
+import { subscribeToTokenUpdate, getValidAccessToken } from './db/index';
 import TopBar from './components/TopBar';
 import Toolbar from './components/Toolbar';
 import StatCards from './components/StatCards';
@@ -21,10 +22,12 @@ import BrokerConnectivityModal from './components/BrokerConnectivityModal';
 import QuickLogModal from './components/QuickLogModal';
 import ElectricityBillModal from './components/ElectricityBillModal';
 import ChartGalleryModal from './components/ChartGalleryModal';
+import ReviewFlaggedModal from './components/ReviewFlaggedModal';
 import PortfolioDNAView from './components/PortfolioDNAView';
 import TradeGridMatrixView from './components/TradeGridMatrixView';
 import JournalNotesInlineView from './components/JournalNotesInlineView';
 import CorporateNewsFeedView from './components/CorporateNewsFeedView';
+import { AlertTriangle } from 'lucide-react';
 
 // Tab Pages
 import AnalyticsPage from './components/Pages/AnalyticsPage';
@@ -52,7 +55,8 @@ import PortfolioManagerModal, { getStoredPortfolios, getStoredActivePortfolioId 
 import {
   calculateMonthlyPerformance,
   getStoredCapitalChanges,
-  getActivePortfolioCapital
+  getActivePortfolioCapital,
+  getCapital
 } from './utils/fundManagementCalculations';
 import {
   enrichTradeWithFoxFormulas,
@@ -62,6 +66,9 @@ import { parseTradesFromFile } from './utils/tradeImportEngine';
 import { deduplicateAndMergeTrades } from './utils/tradeDeduplicationEngine';
 import { loadBrokerCharges, calculateCharges, detectSegment } from './utils/brokerChargesService';
 import { getCanonicalSymbol, getCorporateActionDetails } from './utils/securityMaster.js';
+import { toPaise, fromPaise } from './utils/pnlEngine.js';
+import { computeDrawdown } from './utils/drawdown.js';
+import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate } from './utils/tradeMetricsShared.js';
 /**
  * Robust date parser supporting Indian DD-MM-YYYY / DD/MM/YYYY and ISO YYYY-MM-DD
  */
@@ -99,6 +106,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [portfolioModalTab, setPortfolioModalTab] = useState('list');
   const [isClearDataModalOpen, setIsClearDataModalOpen] = useState(false);
+  const [isReviewFlaggedOpen, setIsReviewFlaggedOpen] = useState(false);
+  const [isReviewPressed, setIsReviewPressed] = useState(false);
   const [capitalChanges, setCapitalChanges] = useState(() =>
     getStoredCapitalChanges(activePortfolioId, '2026')
   );
@@ -124,9 +133,21 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // Activate Google Drive auto-backup context when user is authenticated
   useEffect(() => {
-    if (accessToken && user?.uid && !user.uid.startsWith('demo-')) {
-      setDriveContext(accessToken, activePortfolioId);
+    if (user?.uid && !user.uid.startsWith('demo-')) {
+      if (accessToken) {
+        setDriveContext(accessToken, activePortfolioId);
+      } else {
+        getValidAccessToken().then(tok => {
+          if (tok) setDriveContext(tok, activePortfolioId);
+        }).catch(() => {});
+      }
     }
+    const unsub = subscribeToTokenUpdate((newTok) => {
+      if (newTok && user?.uid && !user.uid.startsWith('demo-')) {
+        setDriveContext(newTok, activePortfolioId);
+      }
+    });
+    return unsub;
   }, [accessToken, user?.uid, activePortfolioId]);
 
   useEffect(() => {
@@ -552,9 +573,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       }
 
       // 3. Clear Google Drive backups if connected (purge & overwrite)
-      if (accessToken) {
-        await clearAllDriveBackups(accessToken).catch(err => console.warn('[Drive Clear Error]:', err));
-        await uploadBackupToDrive(accessToken, [], activePortfolioId, true).catch(err => console.warn('[Drive Clear Error]:', err));
+      const validDriveToken = accessToken || (await getValidAccessToken().catch(() => null));
+      if (validDriveToken && validDriveToken !== 'demo-token') {
+        await clearAllDriveBackups(validDriveToken).catch(err => console.warn('[Drive Clear Error]:', err));
+        await uploadBackupToDrive(validDriveToken, [], activePortfolioId, true).catch(err => console.warn('[Drive Clear Error]:', err));
       }
 
       // 4. Clear IndexedDB local trade store
@@ -640,18 +662,16 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   useEffect(() => {
     if (!user?.uid) return;
     const userTradesKey = `tradeontip_trades_v5_${user.uid}`;
-    const cached = localStorage.getItem(userTradesKey);
+    const cached = localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
     if (cached !== null) {
       try {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           setTrades(parsed);
           return;
         }
       } catch (_) {}
     }
-    // Brand new account starts clean with 0 trades
-    setTrades([]);
   }, [user?.uid]);
 
   // Persist trades to cache whenever modified, scoped to the current user
@@ -661,12 +681,27 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       localStorage.setItem(userTradesKey, JSON.stringify(trades));
     } catch (_) {}
   }, [trades, user?.uid]);
-  const [loadingTrades, setLoadingTrades] = useState(false);
+
+  const [loadingTrades, setLoadingTrades] = useState(() => {
+    try {
+      const userTradesKey = user?.uid ? `tradeontip_trades_v5_${user.uid}` : 'tradeontip_trades_v5';
+      const cached = localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return false;
+      }
+    } catch (_) {}
+    return true;
+  });
+  const accessTokenRef = useRef(accessToken);
+  useEffect(() => {
+    accessTokenRef.current = accessToken;
+  }, [accessToken]);
   const [liveCMPs, setLiveCMPs] = useState(() => {
     try {
       const savedSettings = localStorage.getItem('tradeontip_settings');
       const parsedSettings = savedSettings ? JSON.parse(savedSettings) : {};
-      if (parsedSettings.liveCmpEnabled !== true) {
+      if (parsedSettings.liveCmpEnabled === false) {
         return {};
       }
       const cached = sessionStorage.getItem('tradeontip_live_cmps');
@@ -738,73 +773,160 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     };
   }, [autoBackup]);
 
-  // Persistence — load trades on mount & subscribe to real-time Firestore updates
+  // Persistence — load trades on mount & subscribe to real-time updates
   useEffect(() => {
     if (!user?.uid) { setLoadingTrades(false); return; }
 
-    if (accessToken) {
-      downloadBackupFromDrive(accessToken)
-        .then(driveTrades => {
-          if (Array.isArray(driveTrades) && driveTrades.length > 0) {
-            setTrades(driveTrades);
-            const userTradesKey = user?.uid ? `tradeontip_trades_v5_${user.uid}` : 'tradeontip_trades_v5';
-            localStorage.setItem(userTradesKey, JSON.stringify(driveTrades));
-            localStorage.setItem('tradeontip_trades_cache', JSON.stringify(driveTrades));
-          }
-        })
-        .catch(err => console.warn('[Google Drive Mount Load Error]:', err))
-        .finally(() => setLoadingTrades(false));
-      return;
+    let isMounted = true;
+    const userTradesKey = `tradeontip_trades_v5_${user.uid}`;
+
+    // 1. Check local cache first for instant UI response (stale-while-revalidate)
+    const cached = localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
+    let hasCachedTrades = false;
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          hasCachedTrades = true;
+          setTrades(prev => (prev && prev.length > 0 ? prev : parsed));
+        }
+      } catch (_) {}
     }
-    
-    // Subscribe to Firestore Database updates in real-time
+
+    // Only set loading to true if we don't already have trades in cache or state
+    if (!hasCachedTrades && (!trades || trades.length === 0)) {
+      setLoadingTrades(true);
+    }
+
+    // 2. Load from IndexedDB (or fallback migration / cloud restore)
+    getUserTrades(user.uid, activePortfolioId)
+      .then(async (dbTrades) => {
+        if (!isMounted) return;
+        if (Array.isArray(dbTrades) && dbTrades.length > 0) {
+          setTrades(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(dbTrades)) {
+              return dbTrades;
+            }
+            return prev;
+          });
+          try {
+            localStorage.setItem(userTradesKey, JSON.stringify(dbTrades));
+            localStorage.setItem('tradeontip_trades_cache', JSON.stringify(dbTrades));
+          } catch (_) {}
+        } else if (accessTokenRef.current) {
+          // If local IDB was empty, check Google Drive backup directly
+          try {
+            const driveTrades = await downloadBackupFromDrive(accessTokenRef.current, activePortfolioId);
+            if (isMounted && Array.isArray(driveTrades) && driveTrades.length > 0) {
+              setTrades(driveTrades);
+              try {
+                localStorage.setItem(userTradesKey, JSON.stringify(driveTrades));
+                localStorage.setItem('tradeontip_trades_cache', JSON.stringify(driveTrades));
+              } catch (_) {}
+              await saveUserTrades(user.uid, driveTrades, activePortfolioId);
+            }
+          } catch (err) {
+            console.warn('[Google Drive Mount Load Error]:', err);
+          }
+        }
+      })
+      .catch(err => console.warn('[Trade Load Error]:', err))
+      .finally(() => {
+        if (isMounted) setLoadingTrades(false);
+      });
+
+    // 3. Subscribe to real-time merge updates
     const unsubscribe = subscribeToUserTrades(user.uid, (remoteTrades) => {
+      if (!isMounted) return;
       setTrades(prevTrades => {
         if (JSON.stringify(remoteTrades) !== JSON.stringify(prevTrades)) {
           return remoteTrades;
         }
         return prevTrades;
       });
-      setLoadingTrades(false);
     });
 
-    setLoadingTrades(false);
-    return () => unsubscribe();
-  }, [user?.uid, accessToken]);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [user?.uid, activePortfolioId]);
 
-  // Save trades to Firestore Database & Local Cache whenever trades change (CSV import, live cell edits, additions, deletions)
+  // Save trades to IndexedDB & Local Cache & Cloud whenever trades change
+  const lastSavedTradesJsonRef = useRef('');
   useEffect(() => {
-    if (!loadingTrades && user?.uid) {
-      // Instant save to Firestore Database and Local Cache
-      saveUserTrades(user.uid, trades);
+    // CRITICAL GUARD: Never save while initial loading is in progress or user not logged in!
+    if (loadingTrades || !user?.uid) return;
 
-      // Auto backup to Google Drive if connected
-      if (autoBackup && accessToken) {
-        uploadBackupToDrive(accessToken, trades)
-          .catch(err => console.warn('[Google Drive Auto-Backup Error]:', err));
-      }
+    const currentJson = JSON.stringify(trades);
+    if (!lastSavedTradesJsonRef.current) {
+      // First mount or initial load finish: latch current state without redundant re-saving
+      lastSavedTradesJsonRef.current = currentJson;
+      return;
     }
-  }, [trades, loadingTrades, user, autoBackup, accessToken]);
+
+    if (currentJson === lastSavedTradesJsonRef.current) {
+      // Data hasn't actually changed — skip redundant writes and Drive sync
+      return;
+    }
+
+    lastSavedTradesJsonRef.current = currentJson;
+    // Instant save to IndexedDB and Local Cache (also automatically triggers debounced Drive auto-sync)
+    saveUserTrades(user.uid, trades, activePortfolioId);
+  }, [trades, loadingTrades, user?.uid, activePortfolioId]);
+
+  // Listen for restored settings from Cloud backup
+  useEffect(() => {
+    const handleSettingsUpdate = (e) => {
+      if (e.detail && typeof e.detail === 'object') {
+        setJournalSettings(prev => ({ ...prev, ...e.detail }));
+      }
+    };
+    window.addEventListener('tradeontip_settings_updated', handleSettingsUpdate);
+    return () => window.removeEventListener('tradeontip_settings_updated', handleSettingsUpdate);
+  }, []);
+
+  // Listen for restored columns & column order from Cloud backup
+  useEffect(() => {
+    const handleColsUpdated = (e) => {
+      if (Array.isArray(e.detail) && e.detail.length > 0) {
+        setVisibleCols(new Set(e.detail));
+      }
+      try {
+        const orderRaw = localStorage.getItem('tradeontip_col_order_v5');
+        if (orderRaw) {
+          const parsed = JSON.parse(orderRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) setColumnOrder(parsed);
+        }
+      } catch {}
+    };
+    window.addEventListener('tradeontip_columns_updated', handleColsUpdated);
+    return () => window.removeEventListener('tradeontip_columns_updated', handleColsUpdated);
+  }, []);
 
   // Auto-resolve missing CMP for open trades that have a symbol but cmp is 0
   const resolvedMissingCmpRef = useRef(new Set());
   useEffect(() => {
-    if (loadingTrades || !trades || trades.length === 0) return;
+    if (!trades || trades.length === 0) return;
     const tradesMissingCmp = trades.filter(t => 
       (t.status === 'Open' || t.status === 'Partial') && 
       (!t.cmp || Number(t.cmp) === 0) && 
-      t.name && 
-      !resolvedMissingCmpRef.current.has(`${t.id}-${t.name}`)
+      (t.name || t.symbol) && 
+      !resolvedMissingCmpRef.current.has(`${t.id || t.tradeNo}-${t.name || t.symbol}`)
     );
     if (tradesMissingCmp.length === 0) return;
 
     tradesMissingCmp.forEach(async (t) => {
-      resolvedMissingCmpRef.current.add(`${t.id}-${t.name}`);
+      const sym = (t.name || t.symbol || '').trim();
+      const key = `${t.id || t.tradeNo}-${sym}`;
+      resolvedMissingCmpRef.current.add(key);
       try {
-        const p = await fetchLiveCMPForSymbol(t.name);
+        const res = await fetchLiveCMPForSymbol(sym);
+        const p = typeof res === 'number' ? res : (res?.cmp || res?.price || 0);
         if (p > 0) {
           setTrades(latest => latest.map(item => {
-            if (item.id === t.id && (!item.cmp || Number(item.cmp) === 0)) {
+            const matches = (t.id && item.id === t.id) || (t.tradeNo && item.tradeNo === t.tradeNo);
+            if (matches && (!item.cmp || Number(item.cmp) === 0)) {
               return enrichTradeWithLegs({ ...item, cmp: p });
             }
             return item;
@@ -812,22 +934,35 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         }
       } catch (_) {}
     });
-  }, [trades, loadingTrades]);
+  }, [trades]);
 
-  // Memoize unique symbols in the trade log to prevent interval thrashing
-  const uniqueSymbolsStr = useMemo(() => {
-    return Array.from(new Set(trades.map(t => (t.name || t.symbol || '').trim()).filter(Boolean))).sort().join(',');
+  // Memoize symbols to stream live quotes (prioritize open/partial positions to avoid rate limits)
+  const watchedSymbolsStr = useMemo(() => {
+    const openSet = new Set();
+    (trades || []).forEach(t => {
+      if (t.status === 'Open' || (t.status === 'Partial' && Number(t.openQty) > 0)) {
+        const sym = (t.name || t.symbol || '').trim();
+        if (sym) openSet.add(sym);
+      }
+    });
+    if (openSet.size === 0) {
+      (trades || []).slice(0, 15).forEach(t => {
+        const sym = (t.name || t.symbol || '').trim();
+        if (sym) openSet.add(sym);
+      });
+    }
+    return Array.from(openSet).sort().join(',');
   }, [trades]);
 
   // Real-time Live Market Data Feed & WebSocket Engine for NSE
   useEffect(() => {
-    const isLiveCmp = journalSettings.liveCmpEnabled === true;
-    if (loadingTrades || !uniqueSymbolsStr || !isLiveCmp) {
+    const isLiveCmp = journalSettings.liveCmpEnabled !== false;
+    if (!watchedSymbolsStr || !isLiveCmp) {
       liveMarketFeed.stop();
       return;
     }
 
-    const symbols = uniqueSymbolsStr.split(',').filter(Boolean);
+    const symbols = watchedSymbolsStr.split(',').filter(Boolean);
     liveMarketFeed.setWatchedSymbols(symbols);
     liveMarketFeed.start();
 
@@ -856,7 +991,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       unsubscribe();
       liveMarketFeed.stop();
     };
-  }, [uniqueSymbolsStr, loadingTrades, journalSettings.liveCmpEnabled]);
+  }, [watchedSymbolsStr, journalSettings.liveCmpEnabled]);
 
   // File Ref for CSV Import
   const fileInputRef = useRef(null);
@@ -879,20 +1014,14 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? initialFundCapital 
       : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : (tradeAlloc > 0 ? tradeAlloc : 200000));
 
-    const isLiveCmp = journalSettings.liveCmpEnabled === true;
+    const isLiveCmp = journalSettings.liveCmpEnabled !== false;
 
-    const getMonthCapital = () => {
-      if (!t?.date || !monthlyPerf) return BASE_CAPITAL;
-      const parts = String(t.date).split(/[-/]/);
-      if (parts.length === 3) {
-        const mIdx = parseInt(parts[1], 10) - 1;
-        if (mIdx >= 0 && mIdx < 12 && monthlyPerf[mIdx]?.startingCapital > 0) {
-          return monthlyPerf[mIdx].startingCapital;
-        }
-      }
-      return BASE_CAPITAL;
-    };
-    const tradeCapital = getMonthCapital();
+    const tradeCapital = getCapital({
+      baseCapital: BASE_CAPITAL,
+      trades: portfolioTrades,
+      capitalChanges,
+      portfolioId: activePortfolioId
+    });
 
     return enrichTradeWithFoxFormulas(t, tradeCapital, {
       liveCMPs: isLiveCmp ? liveCMPs : {},
@@ -1163,13 +1292,29 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
     const { from, to } = resolvedDateFilter;
     return afterSearchStatus.filter(t => {
-      const raw = t.e1Date || t.exitDate || t.date || t.entryDate;
-      if (!raw) return true;
-      const d = parseDateToLocalDate(raw);
-      if (!d) return true;
-      return d >= from && d <= to;
+      const isDraftEmptyRow = !(t.name || t.symbol || '').trim() && !t.entry && !t.qty;
+      if (isDraftEmptyRow) return true;
+
+      const dateCandidates = [
+        t.exitDate, t.e4Date, t.e3Date, t.e2Date, t.e1Date,
+        t.exit4Date, t.exit3Date, t.exit2Date, t.exit1Date,
+        t.date, t.entryDate,
+        t.p1Date, t.p2Date, t.p3Date, t.p4Date,
+        t.pyramid1Date, t.pyramid2Date, t.pyramid3Date, t.pyramid4Date
+      ].filter(Boolean);
+
+      if (dateCandidates.length === 0) return true;
+
+      return dateCandidates.some(cand => {
+        const d = parseDateToLocalDate(cand);
+        return d && d >= from && d <= to;
+      });
     });
   }, [portfolioTrades, searchTerm, statusFilter, instrumentFilter, outcomeFilter, tradeTypeFilter, liveCMPs, resolvedDateFilter, journalSettings.liveCmpEnabled]);
+
+  const validFilteredTrades = useMemo(() => {
+    return filteredTrades.filter(t => (t.name || t.symbol || '').trim() || t.entry || t.qty);
+  }, [filteredTrades]);
 
   const tradesWithCumm = useMemo(() => {
     let cumm = 0;
@@ -1181,8 +1326,40 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     });
   }, [filteredTrades]);
 
+  const flaggedDateTrades = useMemo(() => {
+    return (tradesWithCumm || []).filter(t =>
+      t.flags && t.flags.some(f => f === 'EXIT_BEFORE_ENTRY' || f === 'FUTURE_DATE')
+    );
+  }, [tradesWithCumm]);
+
+  const flaggedDateTradesNetPaise = useMemo(() => {
+    return flaggedDateTrades.reduce((sum, t) => sum + (t.netPaise ?? t.grossPaise ?? 0), 0);
+  }, [flaggedDateTrades]);
+
+  useEffect(() => {
+    const handleOpenReview = () => setIsReviewFlaggedOpen(true);
+    window.addEventListener('foxtrade_open_review_flagged', handleOpenReview);
+    return () => window.removeEventListener('foxtrade_open_review_flagged', handleOpenReview);
+  }, []);
+
+  useEffect(() => {
+    if (flaggedDateTrades.length > 0) {
+      const alreadyNotified = sessionStorage.getItem('foxtrade_notified_date_flags_count');
+      if (alreadyNotified !== String(flaggedDateTrades.length)) {
+        sessionStorage.setItem('foxtrade_notified_date_flags_count', String(flaggedDateTrades.length));
+        notificationManager.dispatch({
+          id: 'date-issues-alert',
+          title: `${flaggedDateTrades.length} Trades Require Date Review`,
+          message: `Inverted or future dates detected. Realized P&L is 100% computed from execution prices. Click to review.`,
+          type: 'alert',
+          action: 'review_flagged'
+        });
+      }
+    }
+  }, [flaggedDateTrades.length]);
+
   const metrics = useMemo(() => {
-    const enriched = filteredTrades;
+    const enriched = validFilteredTrades;
     const totalTrades   = enriched.length;
     const openTrades    = enriched.filter(t => t.status !== 'Closed' && (t.openQty || 0) > 0);
     const openPositions = openTrades.length;
@@ -1196,16 +1373,18 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? ((wins / decidedTrades.length) * 100).toFixed(2)
       : '0.00';
 
-    // ── Gross Realized P/L: sum of closed and partial trades ──────────────────
-    const grossRealizedPL = enriched.reduce((acc, t) => {
+    // ── Gross Realized P/L: sum of closed and partial trades via integer paise ──
+    const grossRealizedPaise = enriched.reduce((acc, t) => {
       if (t.status === 'Closed' || t.status === 'Partial') {
-        return acc + (parseFloat(t.pnl || t.pl || 0) || 0);
+        return acc + toPaise(t.pnl ?? t.pl);
       }
       return acc;
     }, 0);
+    const grossRealizedPL = fromPaise(grossRealizedPaise);
 
-    // ── Unrealized P/L: sum of open/partial trade unrealized ──────────────────
-    const unrealizedPL = openTrades.reduce((acc, t) => acc + (t.unrealized || 0), 0);
+    // ── Unrealized P/L: sum of open/partial trade unrealized via integer paise ──
+    const unrealizedPaise = openTrades.reduce((acc, t) => acc + toPaise(t.unrealized), 0);
+    const unrealizedPL = fromPaise(unrealizedPaise);
 
     // ── Total Invested (₹): sum of (avgEntry * openQty) for open positions ─────
     const totalInvested = openTrades.reduce(
@@ -1231,17 +1410,14 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       return 200000;
     })();
 
-    // Current portfolio capital = the latest final capital from the monthly performance chain.
-    // monthlyPerf already computes: startingCapital + additions - withdrawals + realizedPL for each month.
-    // Find the last month that has actual capital (finalCapital > 0).
-    const currentPfCapital = (() => {
-      if (monthlyPerf && monthlyPerf.length > 0) {
-        for (let i = monthlyPerf.length - 1; i >= 0; i--) {
-          if (monthlyPerf[i].finalCapital > 0) return monthlyPerf[i].finalCapital;
-        }
-      }
-      return baseFundCapital > 0 ? (baseFundCapital + grossRealizedPL) : (grossRealizedPL > 0 ? (200000 + grossRealizedPL) : 200000);
-    })();
+    // Current portfolio capital using shared getCapital formula:
+    // Capital = Base Capital + Deposits - Withdrawals + Realized P&L (up to today)
+    const currentPfCapital = getCapital({
+      baseCapital: baseFundCapital,
+      trades: portfolioTrades,
+      capitalChanges,
+      portfolioId: activePortfolioId
+    });
 
     // ── Unrealized P/L % of portfolio ─────────────────────────────────────────
     const unrealizedPLPct = currentPfCapital > 0
@@ -1284,8 +1460,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       return acc;
     }, 0);
 
-    const capitalAtRiskPct = baseFundCapital > 0
-      ? ((totalRisk / baseFundCapital) * 100).toFixed(2)
+    const riskDenominator = currentPfCapital > 0 ? currentPfCapital : (baseFundCapital > 0 ? baseFundCapital : 0);
+    const capitalAtRiskPct = riskDenominator > 0
+      ? ((totalRisk / riskDenominator) * 100).toFixed(2)
       : '0.00';
 
     // ── Profit Risk %: Unrealized open profit that could be lost if stopped out ──
@@ -1351,25 +1528,19 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? ((grossRealizedPL / baseFundCapital) * 100).toFixed(2)
       : '0.00';
 
-    // ── Current Drawdown (Pre-tax): Dynamic calculation against true high-water-mark ──
+    // ── Current Drawdown (Pre-tax): Dynamic calculation against true peak equity ──
     // Tracks cumulative realized equity curve peak-to-trough drop % and amount.
-    const sortedClosed = [...portfolioTrades]
-      .filter(t => t.status === 'Closed' || (t.status === 'Partial' && (parseFloat(t.pnl) || parseFloat(t.pl) || 0) !== 0))
-      .sort((a, b) => (Number(a.tradeNo) || 0) - (Number(b.tradeNo) || 0));
+    const startingCapitalBasis = monthlyPerf?.find(m => m.capitalIsReal && m.startingCapital > 0)?.startingCapital ?? null;
+    const sortedClosed = sortTradesByEffectiveExitDate(
+      portfolioTrades.filter(t => isClosedTrade(t) || (isPartialTrade(t) && getTradePnl(t) !== 0))
+    );
+    const pnls = sortedClosed.map(getTradePnl);
+    const ddResult = computeDrawdown(pnls, startingCapitalBasis);
 
-    let runningCumPL = 0;
-    let peakCumPL = 0;
-    sortedClosed.forEach(t => {
-      const net = Number(t.netPnl ?? t.pnl ?? t.pl ?? 0);
-      runningCumPL += net;
-      if (runningCumPL > peakCumPL) peakCumPL = runningCumPL;
-    });
-
-    const ddShortfall = peakCumPL > runningCumPL ? (peakCumPL - runningCumPL) : (runningCumPL < 0 ? Math.abs(runningCumPL) : 0);
-    const currentDrawdown = ddShortfall > 0 && peakCumPL > 0
-      ? (-((ddShortfall / peakCumPL) * 100)).toFixed(2)
-      : (ddShortfall > 0 && currentPfCapital > 0 ? (-((ddShortfall / currentPfCapital) * 100)).toFixed(2) : '0.00');
-    const currentDrawdownAmount = ddShortfall.toFixed(2);
+    const currentDrawdown = ddResult.available ? ddResult.currentPct.toFixed(2) : null;
+    const currentDrawdownAmount = ddResult.available ? Math.abs(ddResult.currentAmount).toFixed(2) : null;
+    const maxDrawdown = ddResult.available ? ddResult.maxPct.toFixed(2) : null;
+    const maxDrawdownAmount = ddResult.available ? Math.abs(ddResult.maxAmount).toFixed(2) : null;
 
     return {
       totalTrades,
@@ -1387,8 +1558,11 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       profitProtectedPct,
       grossPFImpact,
       portfolioCapital: currentPfCapital,
+      startingCapitalBasis,
       currentDrawdown,
-      currentDrawdownAmount
+      currentDrawdownAmount,
+      maxDrawdown,
+      maxDrawdownAmount
     };
   }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled]);
 
@@ -1412,10 +1586,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const handleOpenEditModal = (trade) => { setEditingTrade(trade); setIsAddModalOpen(true); };
 
   const handleSaveTrade = (tradeData) => {
+    const now = Date.now();
     const enriched = enrichTradeWithLegs({
-      id: editingTrade ? editingTrade.id : `trade-${Date.now()}`,
+      id: editingTrade ? editingTrade.id : `trade-${now}`,
       tradeNo: editingTrade ? editingTrade.tradeNo : trades.length + 1,
-      ...tradeData
+      ...tradeData,
+      clientUpdatedAt: now,
+      updatedAt: now,
     });
 
     if (editingTrade) {
@@ -1455,9 +1632,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   };
 
   const handleUpdateTrade = (id, field, value) => {
+    const now = Date.now();
     setTrades(prev => prev.map(t => {
       if (t.id === id) {
-        const updated = { ...t, [field]: value };
+        const updated = { ...t, [field]: value, clientUpdatedAt: now, updatedAt: now };
         if (field === 'name') {
           updated.name = value;
           if (!updated.symbol || updated.symbol === t.name) {
@@ -1922,6 +2100,81 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         />
       )}
 
+      {/* Date Issues Notification Banner (Below TopBar/Notification Area, White/Black Theme, Red/Green Numbers, Lucide Icon) */}
+      {flaggedDateTrades.length > 0 && (
+        <div style={{
+          margin: '8px 24px 0 24px',
+          padding: '10px 16px',
+          backgroundColor: 'var(--bg-surface, #ffffff)',
+          border: '1px solid var(--border-color, #e5e7eb)',
+          borderRadius: '10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '13px',
+          color: 'var(--text-primary, #09090b)',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              backgroundColor: 'var(--bg-muted, rgba(0, 0, 0, 0.05))',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <AlertTriangle size={13} color="var(--text-primary, #09090b)" />
+            </div>
+            <span>
+              <strong style={{ fontWeight: 600 }}>{flaggedDateTrades.length} trades have date issues</strong> (e.g. exit date before entry date).{' '}
+              <span style={{ color: 'var(--text-secondary, #71717a)' }}>
+                P&amp;L is 100% computed from execution prices (
+                <span style={{
+                  fontWeight: 700,
+                  color: flaggedDateTradesNetPaise >= 0 ? '#16a34a' : '#dc2626'
+                }}>
+                  {flaggedDateTradesNetPaise >= 0 ? '+' : '-'}₹{Math.abs(flaggedDateTradesNetPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                ); month or FY attribution may be affected.
+              </span>
+            </span>
+          </div>
+          <button
+            onClick={() => setIsReviewFlaggedOpen(true)}
+            className="review-action-btn"
+            style={{
+              backgroundColor: isReviewFlaggedOpen || isReviewPressed ? '#6b7280' : 'var(--text-primary, #09090b)',
+              color: 'var(--bg-primary, #ffffff)',
+              border: `1px solid ${isReviewFlaggedOpen || isReviewPressed ? '#6b7280' : 'var(--text-primary, #09090b)'}`,
+              borderRadius: '6px',
+              padding: '5px 14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: '12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              transition: 'background-color 0.15s ease, border-color 0.15s ease, transform 0.08s ease',
+              flexShrink: 0
+            }}
+            onMouseDown={() => setIsReviewPressed(true)}
+            onMouseUp={() => setIsReviewPressed(false)}
+            onMouseEnter={(e) => {
+              if (!isReviewFlaggedOpen && !isReviewPressed) e.currentTarget.style.backgroundColor = '#27272a';
+            }}
+            onMouseLeave={(e) => {
+              setIsReviewPressed(false);
+              if (!isReviewFlaggedOpen) e.currentTarget.style.backgroundColor = 'var(--text-primary, #09090b)';
+            }}
+          >
+            Review ({flaggedDateTrades.length})
+          </button>
+        </div>
+      )}
+
       {activeTab === 'journal' && (
         <Toolbar
           searchTerm={searchTerm} setSearchTerm={setSearchTerm}
@@ -1959,8 +2212,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         {activeTab === 'journal' && (
           journalViewMode === 'stats' ? (
             <>
-              <StatCards metrics={metrics} hideValues={hideValues} trades={tradesWithCumm} settings={journalSettings} />
-              {loadingTrades ? (
+              <StatCards metrics={metrics} hideValues={hideValues} trades={tradesWithCumm} settings={journalSettings} onUpdateSetting={handleUpdateSetting} />
+              {loadingTrades && (!tradesWithCumm || tradesWithCumm.length === 0) ? (
                 <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading trades...</div>
               ) : (
                 <JournalTable
@@ -2042,17 +2295,21 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {activeTab === 'analytics'       && (
           <AnalyticsPage 
-            trades={enrichedTrades} 
+            trades={validFilteredTrades} 
+            allTrades={enrichedTrades}
             portfolioCapital={portfolioCapital || (metrics?.portfolioCapital || 0)} 
             onOpenStockChart={handleOpenStockChart}
             chargesMap={chargesMap}
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
           />
         )}
-        {activeTab === 'expiry-tracker'  && <ExpiryTrackerPage trades={portfolioTrades} />}
-        {activeTab === 'milestones'      && <MilestonesPage trades={portfolioTrades} />}
+        {activeTab === 'expiry-tracker'  && <ExpiryTrackerPage trades={validFilteredTrades} allTrades={portfolioTrades} />}
+        {activeTab === 'milestones'      && <MilestonesPage trades={validFilteredTrades} allTrades={portfolioTrades} />}
         {activeTab === 'playbook' && (
           <PlaybookEngine
-            trades={portfolioTrades}
+            trades={validFilteredTrades}
+            allTrades={portfolioTrades}
             user={user}
             initialPlaybookId={selectedPlaybookId}
             onSelectPlaybookId={setSelectedPlaybookId}
@@ -2062,18 +2319,22 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {activeTab === 'stock-charts'    && (
           <StockChartsPage 
-            trades={enrichedTrades} 
+            trades={validFilteredTrades} 
+            allTrades={enrichedTrades}
             selectedSymbol={selectedChartSymbol}
             onSelectSymbol={setSelectedChartSymbol}
             onOpenAddTrade={() => setIsAddModalOpen(true)}
             onOpenQuickLog={() => setIsQuickLogOpen(true)}
             onOpenImport={() => setIsBrokerImportOpen(true)}
             onNavigateToJournal={() => setActiveTab('journal')}
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
           />
         )}
         {activeTab === 'symbol-deep-dive' && (
           <SymbolDeepDivePage
-            trades={portfolioTrades}
+            trades={validFilteredTrades}
+            allTrades={portfolioTrades}
             symbol={deepDiveConfig?.symbol || selectedChartSymbol || 'WAAREEENER'}
             tradeNo={deepDiveConfig?.tradeNo || null}
             tradeId={deepDiveConfig?.tradeId || null}
@@ -2088,7 +2349,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {(activeTab === 'foxy-ai' || activeTab === 'ai-coach' || activeTab === 'foxy') && (
           <FoxyAiPage 
-            trades={filteredTrades} 
+            trades={validFilteredTrades} 
             allTrades={portfolioTrades} 
             metrics={metrics} 
             user={user} 
@@ -2101,9 +2362,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {(activeTab === 'fund-management' || activeTab === 'fundManagement') && (
           <FundManagementPage 
-            trades={filteredTrades} 
+            trades={validFilteredTrades} 
+            allTrades={portfolioTrades}
             user={user} 
             activePortfolioId={activePortfolioId}
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
             onUpdateCapitalBase={(val) => {
               setPortfolioCapital(val);
               localStorage.setItem('tradeontip_base_capital', String(val));
@@ -2112,19 +2376,35 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         )}
         {(activeTab === 'tax-analytics' || activeTab === 'tax') && (
           <TaxAnalyticsPage
-            trades={filteredTrades}
+            trades={validFilteredTrades}
+            allTrades={portfolioTrades}
             user={user}
             portfolioValue={portfolioCapital}
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
           />
         )}
         {activeTab === 'deep-analytics'  && (
           <DeepAnalyticsPage 
-            trades={enrichedTrades}
+            trades={validFilteredTrades}
+            allTrades={enrichedTrades}
             visibleCols={visibleCols}
             onToggleCol={handleToggleCol}
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
+            startingCapital={metrics?.startingCapitalBasis ?? portfolioCapital}
           />
         )}
-        {activeTab === 'notes'           && <NotesPage trades={portfolioTrades} user={user} onOpenPlaybook={() => setActiveTab('playbook')} />}
+        {activeTab === 'notes'           && (
+          <NotesPage 
+            trades={validFilteredTrades} 
+            allTrades={portfolioTrades} 
+            user={user} 
+            dateRange={dateRange}
+            resolvedDateFilter={resolvedDateFilter}
+            onOpenPlaybook={() => setActiveTab('playbook')} 
+          />
+        )}
       </main>
 
       <QuickLogModal
@@ -2252,6 +2532,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         onUpdatePortfolios={handleUpdatePortfolios}
         onShowToast={setToastNotification}
         trades={trades}
+      />
+
+      <ReviewFlaggedModal
+        isOpen={isReviewFlaggedOpen}
+        onClose={() => setIsReviewFlaggedOpen(false)}
+        flaggedTrades={flaggedDateTrades}
+        onUpdateTrade={handleUpdateTrade}
       />
 
       {/* Global Toast Notification (FoxTrade Modern Toast style) */}

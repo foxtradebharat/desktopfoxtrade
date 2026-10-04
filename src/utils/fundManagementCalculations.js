@@ -859,3 +859,20 @@ export function calculatePortfolioImpact(realizedPnl = 0, capital = 0) {
   return Math.round(((pnl / cap) * 100) * 100) / 100;
 }
 
+/**
+ * Resolves the starting capital basis for equity curve / drawdown calculations.
+ * Reflects real money contributions (opening balance + deposits - withdrawals), excluding accumulated P&L.
+ *
+ * @param {Array} trades
+ * @param {Object} capitalChanges
+ * @param {string} selectedYear
+ * @param {Object} options
+ * @returns {number|null} starting capital basis > 0, or null if unconfigured
+ */
+export function getStartingCapitalBasis(trades = [], capitalChanges = {}, selectedYear = '2026', options = {}) {
+  const months = calculateMonthlyPerformance(trades, capitalChanges, selectedYear, options);
+  const firstReal = months.find(m => m.capitalIsReal && m.startingCapital > 0);
+  return firstReal ? firstReal.startingCapital : null;
+}
+
+

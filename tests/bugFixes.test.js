@@ -110,3 +110,45 @@ describe('Fix 2: Zero-Capital Compounding & Fund Management Fix', () => {
     expect(months[5].finalCapital).toBe(1070895);
   });
 });
+
+import { computeDrawdown } from '../src/utils/drawdown.js';
+import { getStartingCapitalBasis } from '../src/utils/fundManagementCalculations.js';
+
+describe('Fix 1: Drawdown Calculation Fix', () => {
+  it('calculates exact drawdown against peak equity on ₹10L base capital (+1000, -500 gives -0.05%)', () => {
+    const res = computeDrawdown([1000, -500], 1000000);
+    expect(res.available).toBe(true);
+    expect(res.peakEquity).toBe(1001000);
+    expect(res.equity).toBe(1000500);
+    expect(res.currentAmount).toBe(-500);
+    expect(res.currentPct.toFixed(2)).toBe('-0.05');
+    expect(res.maxPct.toFixed(2)).toBe('-0.05');
+  });
+
+  it('calculates exact drawdown against peak equity on ₹10L base capital (+1000, -1000 gives -0.10%)', () => {
+    const res = computeDrawdown([1000, -1000], 1000000);
+    expect(res.available).toBe(true);
+    expect(res.peakEquity).toBe(1001000);
+    expect(res.equity).toBe(1000000);
+    expect(res.currentAmount).toBe(-1000);
+    expect(res.currentPct.toFixed(2)).toBe('-0.10');
+    expect(res.maxPct.toFixed(2)).toBe('-0.10');
+  });
+
+  it('returns available: false when starting capital is null, 0, or negative', () => {
+    expect(computeDrawdown([1000, -500], null).available).toBe(false);
+    expect(computeDrawdown([1000, -500], 0).available).toBe(false);
+    expect(computeDrawdown([1000, -500], -50000).available).toBe(false);
+  });
+
+  it('getStartingCapitalBasis returns null when no base capital and no deposits', () => {
+    const basis = getStartingCapitalBasis([], {}, '2026', { baseCapital: 0, skipPrevYearLookup: true });
+    expect(basis).toBe(null);
+  });
+
+  it('getStartingCapitalBasis returns ₹10L when base capital is provided', () => {
+    const basis = getStartingCapitalBasis([], {}, '2026', { baseCapital: 1000000, skipPrevYearLookup: true });
+    expect(basis).toBe(1000000);
+  });
+});
+
