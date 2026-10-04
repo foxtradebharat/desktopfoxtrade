@@ -20,41 +20,16 @@ export const BROKER_LOGOS = {
   prostocks: '/prostocks-logo.svg',
 };
 
-// Normalized broker alias lookup
-const BROKER_ALIASES = {
-  angel: 'angelone',
-  angelone: 'angelone',
-  'angel one': 'angelone',
-  dhan: 'dhan',
-  fyers: 'fyers',
-  groww: 'groww',
-  ibkr: 'ibkr',
-  interactivebrokers: 'ibkr',
-  'interactive brokers': 'ibkr',
-  mstock: 'mstock',
-  upstox: 'upstox',
-  zerodha: 'zerodha',
-  kite: 'zerodha',
-  kotak: 'kotak',
-  kotakneo: 'kotak',
-  'kotak neo': 'kotak',
-  motilal: 'motilal',
-  motilaloswal: 'motilal',
-  'motilal oswal': 'motilal',
-  icici: 'icici',
-  icicidirect: 'icici',
-  'icici direct': 'icici',
-  sharekhan: 'sharekhan',
-  prostocks: 'prostocks',
-};
+import { BROKER_ALIASES, normalizeBrokerId } from '../utils/brokerIds.js';
+export { BROKER_ALIASES };
 
 /**
  * Normalizes broker name/key and returns official logo URL or null.
  */
 export function getBrokerLogo(brokerKey) {
   if (!brokerKey) return null;
-  const raw = String(brokerKey).toLowerCase().replace(/[\s_-]+/g, '');
-  const mappedKey = BROKER_ALIASES[raw] || raw;
+  const canonical = normalizeBrokerId(brokerKey);
+  const mappedKey = (canonical && canonical !== 'not_defined') ? canonical : String(brokerKey).toLowerCase().replace(/[\s_-]+/g, '');
   return BROKER_LOGOS[mappedKey] || null;
 }
 

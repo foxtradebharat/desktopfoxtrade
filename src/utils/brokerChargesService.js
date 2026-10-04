@@ -14,11 +14,12 @@
  * Segment auto-detection:
  *   holdingDays === 0  → 'intraday'
  *   holdingDays >= 1   → 'delivery'
- *   (Futures/Options: passed explicitly)
  */
 
+import { normalizeBrokerId } from './brokerIds.js';
+
 // ── Parse raw CSV text into a keyed lookup map ───────────────────────────────
-function parseChargesCSV(csvText) {
+export function parseChargesCSV(csvText) {
   const lines = csvText
     .split('\n')
     .map(l => l.trim())
@@ -112,11 +113,13 @@ export function detectSegment(holdingDays, explicitSegment) {
 export function calculateCharges(broker, segment, entryTurnover, exitTurnover, exitedQty, chargesMap) {
   const empty = { brokerage: 0, stt: 0, exchangeFee: 0, gst: 0, sebi: 0, stampDuty: 0, total: 0, hasCharges: false };
 
-  if (!broker || broker === 'not_defined' || !chargesMap) return empty;
+  const brokerId = normalizeBrokerId(broker);
+  if (!chargesMap || brokerId === 'not_defined') return empty;
+  if (brokerId === null) return { ...empty, reason: 'unknown_broker' };
 
-  const key = `${broker.toLowerCase()}:${segment.toLowerCase()}`;
+  const key = `${brokerId}:${String(segment || '').toLowerCase()}`;
   const c = chargesMap[key];
-  if (!c) return empty;
+  if (!c) return { ...empty, reason: 'no_rate_card' };
 
   const buyTurnover  = Math.max(0, entryTurnover  || 0);
   const sellTurnover = Math.max(0, exitTurnover   || 0);

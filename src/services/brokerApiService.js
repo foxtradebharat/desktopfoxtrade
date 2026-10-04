@@ -11,6 +11,9 @@
  * Local encrypted multi-account token management and token health monitors.
  */
 
+import { pairBrokerTransactionsFIFO, toPaise, fromPaise, parseDateExplicit } from '../utils/pnlEngine.js';
+import { normalizeBrokerId } from '../utils/brokerIds.js';
+
 export const BROKER_ACCOUNTS_STORAGE_KEY = 'foxtrade_connected_broker_accounts';
 
 // Expiry cutoffs in Indian Standard Time (UTC + 5:30)
@@ -221,7 +224,7 @@ export function normalizeZerodhaTrades(rawTrades = []) {
       avgEntry: Number(t.average_price || t.price || 0),
       avgExit: Number(t.average_price || t.price || 0),
       pnl: 0,
-      broker: 'Zerodha',
+      broker: 'zerodha',
       source: 'Direct API Sync',
       setup: 'Broker Auto-Sync',
       tradeNo: idx + 1
@@ -315,7 +318,7 @@ export function normalizeDhanTrades(rawTrades = []) {
       avgEntry: Number(t.tradedPrice || 0),
       avgExit: Number(t.tradedPrice || 0),
       pnl: 0,
-      broker: 'Dhan',
+      broker: 'dhan',
       source: 'Direct API Sync',
       setup: 'Broker Auto-Sync',
       tradeNo: idx + 1
@@ -375,7 +378,7 @@ export function normalizeUpstoxTrades(rawTrades = []) {
       avgEntry: Number(t.average_price || t.price || 0),
       avgExit: Number(t.average_price || t.price || 0),
       pnl: 0,
-      broker: 'Upstox',
+      broker: 'upstox',
       source: 'Direct API Sync',
       setup: 'Broker Auto-Sync',
       tradeNo: idx + 1
@@ -435,7 +438,7 @@ export function normalizeFyersTrades(rawTrades = []) {
       avgEntry: Number(t.tradePrice || 0),
       avgExit: Number(t.tradePrice || 0),
       pnl: 0,
-      broker: 'Fyers',
+      broker: 'fyers',
       source: 'Direct API Sync',
       setup: 'Broker Auto-Sync',
       tradeNo: idx + 1
@@ -501,7 +504,7 @@ export function normalizeAngelOneTrades(rawTrades = []) {
       avgEntry: Number(t.fillprice || 0),
       avgExit: Number(t.fillprice || 0),
       pnl: 0,
-      broker: 'Angel One',
+      broker: 'angelone',
       source: 'Direct API Sync',
       setup: 'Broker Auto-Sync',
       tradeNo: idx + 1
@@ -599,13 +602,20 @@ export function pairExecutionFills(fills = []) {
   });
 
   const completedTrades = [];
+  const unmatchedBucket = [];
 
   Object.entries(bySymbol).forEach(([symbol, symbolFills]) => {
-    // Sort fills chronologically
+    // Sort fills chronologically: parsed date ms -> time -> order ID / trade ID
     const sortedFills = [...symbolFills].sort((a, b) => {
-      const dateA = a.date || '';
-      const dateB = b.date || '';
-      return dateA.localeCompare(dateB);
+      const dateA = parseDateExplicit(a.date)?.ms || 0;
+      const dateB = parseDateExplicit(b.date)?.ms || 0;
+      if (dateA !== dateB) return dateA - dateB;
+      const timeA = String(a.time || a.entryTime || a.executionTime || '09:15');
+      const timeB = String(b.time || b.entryTime || b.executionTime || '09:15');
+      if (timeA !== timeB) return timeA.localeCompare(timeB);
+      const idA = String(a.orderId || a.tradeId || '');
+      const idB = String(b.orderId || b.tradeId || '');
+      return idA.localeCompare(idB);
     });
 
     const buys = sortedFills.filter(f => (f.type || '').toUpperCase().includes('BUY'));
@@ -613,21 +623,22 @@ export function pairExecutionFills(fills = []) {
 
     // If both buys and sells exist, pair them
     if (buys.length > 0 && sells.length > 0) {
-      const totalBuyQty = buys.reduce((acc, b) => acc + (b.qty || 0), 0);
-      const totalSellQty = sells.reduce((acc, s) => acc + (s.qty || 0), 0);
+      const totalBuyQty = buys.reduce((acc, b) => acc + (parseInt(b.qty, 10) || 0), 0);
+      const totalSellQty = sells.reduce((acc, s) => acc + (parseInt(s.qty, 10) || 0), 0);
 
-      const totalBuyValue = buys.reduce((acc, b) => acc + ((b.qty || 0) * (b.price || b.avgEntry || 0)), 0);
-      const totalSellValue = sells.reduce((acc, s) => acc + ((s.qty || 0) * (s.price || b.avgExit || 0)), 0);
+      const totalBuyValuePaise = buys.reduce((acc, b) => acc + ((parseInt(b.qty, 10) || 0) * toPaise(b.price || b.avgEntry || 0)), 0);
+      const totalSellValuePaise = sells.reduce((acc, s) => acc + ((parseInt(s.qty, 10) || 0) * toPaise(s.price || s.avgExit || 0)), 0);
 
-      const avgBuyPrice = totalBuyQty > 0 ? totalBuyValue / totalBuyQty : 0;
-      const avgSellPrice = totalSellQty > 0 ? totalSellValue / totalSellQty : 0;
+      const avgBuyPrice = totalBuyQty > 0 ? fromPaise(Math.round(totalBuyValuePaise / totalBuyQty)) : 0;
+      const avgSellPrice = totalSellQty > 0 ? fromPaise(Math.round(totalSellValuePaise / totalSellQty)) : 0;
 
       const firstBuy = buys[0];
       const lastSell = sells[sells.length - 1];
       const isClosed = totalBuyQty <= totalSellQty;
       const matchedQty = Math.min(totalBuyQty, totalSellQty);
       const openQty = Math.max(0, totalBuyQty - totalSellQty);
-      const pnl = (avgSellPrice - avgBuyPrice) * matchedQty;
+      const pnlPaise = (toPaise(avgSellPrice) - toPaise(avgBuyPrice)) * matchedQty;
+      const pnl = fromPaise(pnlPaise);
 
       // Collect all exchange trade IDs
       const fillTradeIds = sortedFills.flatMap(f => {
@@ -692,7 +703,7 @@ export function pairExecutionFills(fills = []) {
         pnl: Math.round(pnl * 100) / 100,
         pnlPct: avgBuyPrice > 0 ? Math.round(((avgSellPrice - avgBuyPrice) / avgBuyPrice) * 1000) / 10 : 0,
         setup: 'Breakout',
-        broker: initialBuy?.broker || initialBuy?.source || 'Broker Import'
+        broker: normalizeBrokerId(initialBuy?.broker) || initialBuy?.broker || initialBuy?.source || 'not_defined'
       });
     } else {
       // Only buys or only sells: each fill represents a leg / open position
@@ -722,11 +733,25 @@ export function pairExecutionFills(fills = []) {
           pnl: 0,
           pnlPct: 0,
           setup: 'Breakout',
-          broker: f.broker || f.source || 'Broker Import'
+          broker: normalizeBrokerId(f.broker) || f.broker || f.source || 'not_defined'
         });
+
+        if (!isBuy) {
+          unmatchedBucket.push({
+            symbol,
+            type: 'SELL',
+            qty: f.qty || 1,
+            price: f.price || 0,
+            date: f.date,
+            orderId: f.orderId,
+            tradeId: f.tradeId,
+            reason: 'UNMATCHED_SELL_NO_PRIOR_BUY'
+          });
+        }
       });
     }
   });
 
+  completedTrades.unmatchedBucket = unmatchedBucket;
   return completedTrades;
 }

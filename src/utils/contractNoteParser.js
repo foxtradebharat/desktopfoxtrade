@@ -3,6 +3,8 @@
  * Parses raw text, broker clipboard pastes, and contract note summaries for Indian markets (NSE/BSE).
  */
 
+import { normalizeBrokerId } from './brokerIds.js';
+
 function cleanNumber(val, fallback = 0) {
   if (val === undefined || val === null || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
@@ -210,7 +212,7 @@ export function formatExtractedTradesForJournal(parsedTrades = [], portfolioId =
       date: pt.date || normalizeDateString(new Date()),
       type: pt.side || 'Buy',
       setup: 'Discretionary',
-      broker: sanitizeImportField(pt.broker || 'Zerodha', 30),
+      broker: normalizeBrokerId(pt.broker) || 'zerodha',
       entry: entry,
       avgEntry: entry,
       avgExitPrice: exit,

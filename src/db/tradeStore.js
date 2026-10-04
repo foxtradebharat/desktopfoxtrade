@@ -17,6 +17,7 @@
 import { getDB, STORES, idbGet, idbPut, idbDelete, idbGetByIndex, idbBulkPut } from './foxtradeDB.js';
 import { enqueue } from './operationsQueue.js';
 import { getDeviceId } from './configStore.js';
+import { normalizeBrokerId } from '../utils/brokerIds.js';
 
 // ── Internal: build IDB-ready trade record ────────────────────────────────────
 
@@ -53,8 +54,8 @@ function decorateTrade(trade, portfolioId, deviceId, existing = null) {
  */
 function _computeStatus(trade) {
   if (trade.status) return trade.status;
-  const exitedQty = (trade.e1Qty || 0) + (trade.e2Qty || 0) + (trade.e3Qty || 0) + (trade.e4Qty || 0);
-  const totalQty  = (trade.qty || 0) + (trade.p1Qty || 0) + (trade.p2Qty || 0) + (trade.p3Qty || 0) + (trade.p4Qty || 0);
+  const exitedQty = (Number(trade.e1Qty) || 0) + (Number(trade.e2Qty) || 0) + (Number(trade.e3Qty) || 0) + (Number(trade.e4Qty) || 0) + (Number(trade.e5Qty) || 0);
+  const totalQty  = (Number(trade.qty) || 0) + (Number(trade.p1Qty) || 0) + (Number(trade.p2Qty) || 0) + (Number(trade.p3Qty) || 0) + (Number(trade.p4Qty) || 0);
   if (exitedQty === 0)            return 'Open';
   if (exitedQty >= totalQty)      return 'Closed';
   return 'Partial';
@@ -280,3 +281,74 @@ export async function resequenceTradeNumbers(portfolioId) {
 
   await idbBulkPut(STORES.TRADES, resequenced);
 }
+
+/**
+ * One-time migration to rewrite trade.broker to canonical broker IDs.
+ * Flag key: tradeontip_migr_broker_ids_v1
+ */
+export async function migrateBrokerIds() {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  if (localStorage.getItem('tradeontip_migr_broker_ids_v1')) return;
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('tradeontip_trades_')) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              let changed = false;
+              parsed.forEach(t => {
+                if (t && t.broker) {
+                  const canonical = normalizeBrokerId(t.broker);
+                  if (canonical && canonical !== 'not_defined' && canonical !== t.broker) {
+                    t.broker = canonical;
+                    changed = true;
+                  }
+                }
+              });
+              if (changed) {
+                localStorage.setItem(key, JSON.stringify(parsed));
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    try {
+      const db = await getDB();
+      const tx = db.transaction(STORES.TRADES, 'readwrite');
+      const store = tx.objectStore(STORES.TRADES);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const records = req.result;
+        if (Array.isArray(records)) {
+          records.forEach(t => {
+            if (t && t.broker) {
+              const canonical = normalizeBrokerId(t.broker);
+              if (canonical && canonical !== 'not_defined' && canonical !== t.broker) {
+                t.broker = canonical;
+                store.put(t);
+              }
+            }
+          });
+        }
+      };
+    } catch (_) {}
+
+    localStorage.setItem('tradeontip_migr_broker_ids_v1', 'true');
+    console.log('[TradeStore] Broker ID normalization migration v1 completed.');
+  } catch (err) {
+    console.error('[TradeStore] Migration error:', err);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    migrateBrokerIds();
+  }, 100);
+}
+

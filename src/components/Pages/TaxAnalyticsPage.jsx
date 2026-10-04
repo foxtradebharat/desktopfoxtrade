@@ -96,8 +96,10 @@ function getTradeCharges(t) {
   if (t.broker && chargesMap && Object.keys(chargesMap).length > 0) {
     const buyTurnover = Number(t.entry || t.avgEntry || 0) * Number(t.qty || t.initialQty || 0);
     const sellTurnover = Number(t.avgExitPrice || t.cmp || 0) * Number(t.exitedQty || t.qty || 0);
-    const calc = calculateCharges(t.broker, t.segment || 'delivery', buyTurnover, sellTurnover, Number(t.exitedQty || t.qty || 0), chargesMap);
+    const segment = t.segment || (Number(t.holdingDays || 0) <= 0 ? 'intraday' : 'delivery');
+    const calc = calculateCharges(t.broker, segment, buyTurnover, sellTurnover, Number(t.exitedQty || t.qty || 0), chargesMap);
     if (calc && calc.hasCharges) return calc;
+    if (calc && calc.reason) return calc;
   }
   return {
     brokerage: Number(t.brokerage || 0),
@@ -107,6 +109,7 @@ function getTradeCharges(t) {
     sebi: Number(t.sebi || t.sebiCharges || 0),
     stampDuty: Number(t.stampDuty || 0),
     total: Number(t.totalCharges || 0),
+    reason: t.chargesUnavailableReason || (!t.broker || t.broker === 'not_defined' ? 'broker_not_defined' : null)
   };
 }
 
@@ -186,10 +189,49 @@ function getTradeExitMatches(t, costBasisMethod = 'fifo') {
   }];
 }
 
-export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0 }) {
-  const [selectedYear, setSelectedYear] = useState('2026');
-  const [periodMode, setPeriodMode] = useState('calendar'); // 'calendar' (Jan-Dec) | 'fy' (Apr-Mar)
+export default function TaxAnalyticsPage({ 
+  trades = [], 
+  allTrades = [], 
+  user, 
+  portfolioValue = 0,
+  dateRange = 'All Time',
+  resolvedDateFilter = null
+}) {
+  const [selectedYear, setSelectedYear] = useState(() => {
+    if (resolvedDateFilter?.from) {
+      return String(resolvedDateFilter.from.getFullYear());
+    }
+    return '2026';
+  });
+  const [periodMode, setPeriodMode] = useState(() => {
+    if (dateRange === 'Pick This FY' || dateRange === 'This FY') return 'fy';
+    return 'calendar';
+  }); // 'calendar' (Jan-Dec) | 'fy' (Apr-Mar)
   const [dateAttribution, setDateAttribution] = useState('exit'); // 'exit' (Accounting / Cash Basis style) | 'entry' (Trade Entry style)
+
+  // Auto-sync selectedYear and periodMode with global dateRange
+  useEffect(() => {
+    if (!dateRange || dateRange === 'All Time') {
+      // Keep or allow full flexibility
+    } else if (dateRange === 'Pick This FY' || dateRange === 'This FY') {
+      setPeriodMode('fy');
+      const today = new Date();
+      const fyStartYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+      setSelectedYear(String(fyStartYear));
+    } else if (dateRange === 'This CY') {
+      setPeriodMode('calendar');
+      setSelectedYear(String(new Date().getFullYear()));
+    } else if (resolvedDateFilter?.from) {
+      const fromYr = resolvedDateFilter.from.getFullYear();
+      const toYr = resolvedDateFilter.to ? resolvedDateFilter.to.getFullYear() : fromYr;
+      if (fromYr === toYr) {
+        setSelectedYear(String(fromYr));
+      } else {
+        setSelectedYear('All');
+      }
+    }
+  }, [dateRange, resolvedDateFilter]);
+
   const [isAutoChargesEnabled, setIsAutoChargesEnabled] = useState(() => {
     try {
       return localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
@@ -214,6 +256,25 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
   const infoTimeoutRef = useRef(null);
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const downloadDropdownRef = useRef(null);
+
+  const unavailableChargesInfo = useMemo(() => {
+    let count = 0;
+    const reasons = new Set();
+    (trades || []).forEach(t => {
+      const isRealized = (t.status === 'Closed' || Number(t.exitedQty) > 0);
+      if (isRealized) {
+        const c = getTradeCharges(t);
+        if (!c.hasCharges && c.reason) {
+          count++;
+          reasons.add(c.reason);
+        }
+      }
+    });
+    return {
+      count,
+      reasons: Array.from(reasons).join(', ')
+    };
+  }, [trades]);
 
   const handleInfoMouseEnter = () => {
     if (infoTimeoutRef.current) clearTimeout(infoTimeoutRef.current);
@@ -274,6 +335,20 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
       })
       .catch((err) => console.warn('Taxes fetch error:', err));
   }, [user, selectedYear]);
+
+  // Listen for restored tax data from backup
+  useEffect(() => {
+    const handleTaxesUpdated = () => {
+      try {
+        const cached = localStorage.getItem(`foxtrade_monthly_taxes_${selectedYear}`);
+        if (cached) setTaxesData(JSON.parse(cached));
+        const cachedDetailed = localStorage.getItem(`foxtrade_monthly_taxes_detailed_${selectedYear}`);
+        if (cachedDetailed) setDetailedTaxesData(JSON.parse(cachedDetailed));
+      } catch {}
+    };
+    window.addEventListener('tradeontip_taxes_updated', handleTaxesUpdated);
+    return () => window.removeEventListener('tradeontip_taxes_updated', handleTaxesUpdated);
+  }, [selectedYear]);
 
   // 2. Save detailed taxes from TaxInputDialog
   const handleSaveDetailedTax = (data) => {
@@ -349,8 +424,23 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
   }, [activePortfolioId, selectedYear]);
 
   const prevYearEndingCapital = useMemo(() => {
-    return getPreviousYearEndingCapital(trades, selectedYear, activePortfolioId);
-  }, [trades, selectedYear, activePortfolioId]);
+    const sourceTrades = (allTrades && allTrades.length > 0) ? allTrades : trades;
+    return getPreviousYearEndingCapital(sourceTrades, selectedYear, activePortfolioId);
+  }, [allTrades, trades, selectedYear, activePortfolioId]);
+
+  const availableYearOptions = useMemo(() => {
+    const currentYr = new Date().getFullYear();
+    const yearsSet = new Set([String(currentYr), String(currentYr - 1), '2026', '2025', '2024', '2023']);
+    const sourceTrades = (allTrades && allTrades.length > 0) ? allTrades : trades;
+    if (Array.isArray(sourceTrades)) {
+      sourceTrades.forEach(t => {
+        const parsed = parseDateParts(t.date || t.entryDate || t.exitDate || t.e1Date);
+        if (parsed?.year) yearsSet.add(String(parsed.year));
+      });
+    }
+    const sorted = Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
+    return [...sorted.map(y => ({ value: y, label: y })), { value: 'All', label: 'All Years' }];
+  }, [allTrades, trades]);
 
   // 3. Compute Monthly Breakdown & Running Trajectory
   const { monthlyBreakdown, chartData } = useMemo(() => {
@@ -1189,6 +1279,30 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
           )}
         </div>
       </div>
+
+      {/* ── Charges Unavailable Banner ── */}
+      {unavailableChargesInfo.count > 0 && (
+        <div
+          style={{
+            marginBottom: '20px',
+            padding: '12px 18px',
+            borderRadius: '10px',
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            color: '#ef4444',
+            fontSize: '13px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ fontSize: '16px' }}>⚠️</span>
+          <span>
+            Charges unavailable for {unavailableChargesInfo.count} {unavailableChargesInfo.count === 1 ? 'trade' : 'trades'} ({unavailableChargesInfo.reasons}). Statutory charges and taxes cannot be computed accurately for these trades until a supported broker and rate card are specified.
+          </span>
+        </div>
+      )}
 
       {/* ── Top Section: Combo Chart (Left) + Tax Metrics Sidebar (Right) ── */}
       <div
@@ -2193,13 +2307,7 @@ export default function TaxAnalyticsPage({ trades = [], user, portfolioValue = 0
             {/* Year Selector Dropdown */}
             <ModernDropdown
               value={selectedYear}
-              options={[
-                { value: '2026', label: '2026' },
-                { value: '2025', label: '2025' },
-                { value: '2024', label: '2024' },
-                { value: '2023', label: '2023' },
-                { value: 'All', label: 'All Years' },
-              ]}
+              options={availableYearOptions}
               variant="table"
               width="105px"
               onChange={(val) => setSelectedYear(val)}

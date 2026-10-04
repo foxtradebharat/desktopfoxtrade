@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:foxy": "node scripts/foxyGoldenTest.js",
+    "test:unit": "vitest run",
     "test": "node scripts/foxyGoldenTest.js"
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^7.0.2",
-    "vite": "^5.1.6"
+    "vite": "^5.1.6",
+    "vitest": "^1.6.1"
   }
 }

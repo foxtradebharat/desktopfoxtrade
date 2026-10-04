@@ -13,6 +13,8 @@
  * - Portfolio Impact % and Cumulative PF Impact
  */
 
+import { toPaise, fromPaise, calculateLegGrossPaise, validateTradeRecord, PNL_FLAGS } from './pnlEngine.js';
+
 /**
  * Robust date parser supporting YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, DD MMM YYYY
  */
@@ -78,14 +80,16 @@ export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 
   // 1. Prepare and order Buy/Entry lots
   const entries = [];
   (entryLots || []).forEach((e, idx) => {
-    const qty = Math.max(0, Number(e.qty) || 0);
+    const qty = Math.max(0, parseInt(e.qty, 10) || 0);
     const price = Number(e.price) || 0;
-    if (qty > 0 && price > 0) {
+    const pricePaise = toPaise(price);
+    if (qty > 0 && pricePaise > 0) {
       const ms = parseDateToMs(e.date, e.time || '00:00:00') || (now + idx);
       entries.push({
         id: e.id || `entry_${idx}`,
         label: e.label || (idx === 0 ? 'Initial Entry' : `Pyramid ${idx}`),
         price,
+        pricePaise,
         qty,
         date: e.date || '',
         time: e.time || '00:00:00',
@@ -99,14 +103,16 @@ export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 
   // 2. Prepare and order Exit lots
   const exits = [];
   (exitLots || []).forEach((x, idx) => {
-    const qty = Math.max(0, Number(x.qty) || 0);
+    const qty = Math.max(0, parseInt(x.qty, 10) || 0);
     const price = Number(x.price) || 0;
+    const pricePaise = toPaise(price);
     if (qty > 0) {
       const ms = parseDateToMs(x.date, x.time || '15:00:00') || (now + 1000 + idx);
       exits.push({
         id: x.id || `exit_${idx}`,
         label: x.label || `Exit ${idx + 1}`,
         price,
+        pricePaise,
         qty,
         date: x.date || '',
         time: x.time || '15:00:00',
@@ -116,10 +122,10 @@ export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 
     }
   });
 
-  // 3. Match exits against entries
+  // 3. Match exits against entries (Lot-by-lot FIFO/LIFO, zero date dependency)
   const remainingLots = entries.map(e => ({ ...e }));
   const matches = [];
-  let totalRealizedPL = 0;
+  let totalRealizedPLPaise = 0;
 
   for (const exitLot of exits) {
     let unallocatedExitQty = exitLot.qty;
@@ -130,17 +136,22 @@ export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 
       const targetEntry = remainingLots[entryIdx];
       const matchedQty = Math.min(targetEntry.qty, unallocatedExitQty);
 
-      const lotPL = isBuy
-        ? matchedQty * (exitLot.price - targetEntry.price)
-        : matchedQty * (targetEntry.price - exitLot.price);
+      const lotPLPaise = calculateLegGrossPaise(
+        targetEntry.pricePaise,
+        exitLot.pricePaise,
+        matchedQty,
+        !isBuy
+      );
 
-      totalRealizedPL += lotPL;
+      totalRealizedPLPaise += lotPLPaise;
+      const lotPL = fromPaise(lotPLPaise);
 
       matches.push({
         entry: { ...targetEntry },
         exit: { ...exitLot },
         matchedQty,
         pl: lotPL,
+        plPaise: lotPLPaise,
         entryPrice: targetEntry.price,
         exitPrice: exitLot.price,
         entryDate: targetEntry.date,
@@ -158,8 +169,11 @@ export function matchLots(entryLots, exitLots, costBasisMethod = 'fifo', side = 
     }
   }
 
+  const realizedPL = fromPaise(totalRealizedPLPaise);
+
   return {
-    realizedPL: Math.round(totalRealizedPL * 100) / 100,
+    realizedPL,
+    realizedPLPaise: totalRealizedPLPaise,
     remainingLots,
     matches
   };
@@ -327,15 +341,19 @@ export function calculateStockMove(avgEntry, avgExitPrice, cmp, openQty, exitedQ
 }
 
 /**
- * Helper to safely parse numbers from various formats (strings with commas, currency symbols, etc.)
+ * Helper to safely parse numbers from various formats (strings with commas, currency symbols, UTF-8 rupee artifacts, etc.)
  */
 function parseCleanNum(val, fallback = 0) {
   if (val === undefined || val === null || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
-  const cleaned = String(val).replace(/[₹$,\s]/g, '').trim();
-  if (cleaned === '') return fallback;
+  const str = String(val).trim();
+  if (str === '' || str === '-' || str === 'N/A' || str === 'null') return fallback;
+  const isNegative = /^\(.*\)$/.test(str) || (str.startsWith('-') && !str.includes('+'));
+  const cleaned = str.replace(/[^0-9.]/g, '');
+  if (cleaned === '' || cleaned === '.') return fallback;
   const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? fallback : parsed;
+  if (isNaN(parsed)) return fallback;
+  return isNegative ? -Math.abs(parsed) : parsed;
 }
 
 /**
@@ -371,7 +389,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     ? Number(livePrice)
     : parseCleanNum(t.cmp ?? t.ltp ?? t.currentPrice, 0);
 
-  // 1. Build Entry Legs List (Initial + P1..P4)
+  // 1. Build Entry Legs List (Initial + P1..P5)
   const entryLegs = [];
   if (qty > 0 && entry > 0) {
     entryLegs.push({
@@ -385,7 +403,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     });
   }
 
-  for (let i = 1; i <= 4; i++) {
+  for (let i = 1; i <= 5; i++) {
     const pPrice = parseCleanNum(t[`p${i}Price`] ?? t[`p${i}price`]);
     const pQty = parseCleanNum(t[`p${i}Qty`] ?? t[`p${i}qty`]);
     const pDate = t[`p${i}Date`] || t[`p${i}date`] || t.date || '';
@@ -405,9 +423,9 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     }
   }
 
-  // 2. Build Exit Legs List (E1..E4)
+  // 2. Build Exit Legs List (E1..E5)
   const exitLegs = [];
-  for (let j = 1; j <= 4; j++) {
+  for (let j = 1; j <= 5; j++) {
     const ePrice = parseCleanNum(t[`e${j}Price`] ?? t[`e${j}price`]);
     const eQty = parseCleanNum(t[`e${j}Qty`] ?? t[`e${j}qty`]);
     const eDate = t[`e${j}Date`] || t[`e${j}date`] || '';
@@ -424,7 +442,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     }
   }
 
-  // Fallback ONLY for historical trades imported without granular E1..E4 legs
+  // Fallback ONLY for historical trades imported without granular E1..E5 legs
   if (exitLegs.length === 0) {
     const directExitedQty = parseCleanNum(t.exitedQty);
     const avgExitVal = parseCleanNum(t.avgExitPrice ?? t.avgExit);
@@ -449,6 +467,18 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
         date: t.exitDate || t.date || '',
         time: '15:00:00'
       });
+    } else if (isExplicitlyClosed && totalQtyEnteredTemp > 0 && t.pnl !== undefined && t.pnl !== null && !isNaN(Number(t.pnl))) {
+      const impliedExit = isBuy ? (entry + Number(t.pnl) / totalQtyEnteredTemp) : (entry - Number(t.pnl) / totalQtyEnteredTemp);
+      if (impliedExit > 0) {
+        exitLegs.push({
+          id: 'e1',
+          label: 'Exit 1',
+          price: Math.round(impliedExit * 100) / 100,
+          qty: totalQtyEnteredTemp,
+          date: t.exitDate || t.date || '',
+          time: '15:00:00'
+        });
+      }
     }
   }
 
@@ -496,7 +526,8 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
   }
 
   const grossRealizedPL = (status === 'Closed' || status === 'Partial') ? realizedPL : 0;
-  const netTotalPnl = Math.round((grossRealizedPL + unrealized) * 100) / 100;
+  const grossRealizedPaise = toPaise(grossRealizedPL);
+  const netTotalPnl = fromPaise(grossRealizedPaise + toPaise(unrealized));
 
   // 8. Stop Loss %
   const slPct = (sl !== null && sl > 0 && entry > 0)
@@ -545,6 +576,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
   const segment = (Number(holdingDays) <= 1) ? 'intraday' : 'delivery';
 
   let charges = null;
+  let chargesUnavailableReason = null;
   let netPnl = grossRealizedPL; // default: gross = net when no broker
 
   if (
@@ -555,18 +587,30 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
   ) {
     const entryTurnover = totalCostBasis;                        // buy-side ₹ value
     const exitTurnover  = Math.round(avgExitPrice * totalQtyExited * 100) / 100; // sell-side ₹ value
-    charges = options.getCharges(broker, segment, entryTurnover, exitTurnover, totalQtyExited);
-    if (charges && charges.hasCharges) {
-      netPnl = Math.round((grossRealizedPL - charges.total) * 100) / 100;
+    const rawCharges = options.getCharges(broker, segment, entryTurnover, exitTurnover, totalQtyExited);
+    if (rawCharges && rawCharges.hasCharges) {
+      charges = rawCharges;
+      const chargesPaise = toPaise(charges.total);
+      netPnl = fromPaise(grossRealizedPaise - chargesPaise);
+    } else if (rawCharges && rawCharges.reason) {
+      chargesUnavailableReason = rawCharges.reason;
+      charges = null;
     }
+  } else if (broker === 'not_defined' && status === 'Closed' && totalQtyExited > 0) {
+    chargesUnavailableReason = 'broker_not_defined';
   }
 
-  // 15. Trade Quality & Excursion Metrics (MAE, MFE, MFE+, Alpha, Heat, Move-to-Cost)
-  // FoxTrade Trade Quality implementation:
-  // - MAE: Maximum Adverse Excursion (% move against position while held)
-  // - MFE: Maximum Favourable Excursion (% peak move in favor while held)
-  // - MFE+: Post-exit excursion (move in trade direction within post-exit window)
-  // - Alpha: Return relative to benchmark (NIFTY 50) over holding period
+  // 15. Validation Flags & Verification
+  const validation = validateTradeRecord({
+    ...t,
+    entry,
+    qty,
+    status,
+    date: t.date || (entryLegs[0]?.date),
+    e1Date: exitLegs[0]?.date || t.e1Date || t.exitDate
+  });
+
+  // 16. Trade Quality & Excursion Metrics (MAE, MFE, MFE+, Alpha, Heat, Move-to-Cost)
   let mae = (t.mae !== undefined && t.mae !== null && t.mae !== '') ? Number(t.mae) : null;
   let mfe = (t.mfe !== undefined && t.mfe !== null && t.mfe !== '') ? Number(t.mfe) : null;
   let mfePlus = (t.mfePlus !== undefined && t.mfePlus !== null && t.mfePlus !== '') ? Number(t.mfePlus) : null;
@@ -582,11 +626,9 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
 
     if (mae === null || isNaN(mae)) {
       if (isWin) {
-        // Winning trades experience a shallow initial dip before continuation
         const dip = Math.min(effectiveSlPct * 0.38, 2.2);
         mae = -parseFloat(dip.toFixed(1));
       } else if (isLoss) {
-        // Losing trades drop to stop loss or full realized move
         const drop = Math.max(effectiveSlPct, absMove || 3.5);
         mae = -parseFloat(drop.toFixed(1));
       } else {
@@ -596,11 +638,9 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
 
     if (mfe === null || isNaN(mfe)) {
       if (isWin) {
-        // Peak excursion for winners usually exceeds final exit price
         const peak = Math.max(absMove * 1.15, absMove + 0.5);
         mfe = parseFloat(peak.toFixed(1));
       } else if (isLoss) {
-        // Losers often have a small early bounce before rolling over
         const bounce = Math.min(effectiveSlPct * 0.32, 1.4);
         mfe = parseFloat(bounce.toFixed(1));
       } else {
@@ -610,7 +650,6 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
 
     if (mfePlus === null || isNaN(mfePlus)) {
       if (isWin) {
-        // Runners continue higher post-exit by 1-3%
         mfePlus = parseFloat((Math.min(absMove * 0.25 + 0.8, 4.5)).toFixed(1));
       } else if (isLoss) {
         mfePlus = -parseFloat((Math.min(absMove * 0.2, 1.5)).toFixed(1));
@@ -620,7 +659,6 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     }
 
     if (alpha === null || isNaN(alpha)) {
-      // Benchmark drift: ~0.05% per calendar day
       const benchmarkDrift = (holdingDays || 1) * 0.05;
       alpha = parseFloat((stockMove - benchmarkDrift).toFixed(1));
     }
@@ -658,11 +696,14 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     realisedAmount: Math.round(realisedAmount * 100) / 100,
     pl: grossRealizedPL,
     pnl: grossRealizedPL,
+    grossPaise: grossRealizedPaise,
+    netPaise: toPaise(netPnl),
     unrealized,
     grossPnl: grossRealizedPL,
     netTotalPnl,
     netPnl,
     charges,
+    chargesUnavailableReason,
     broker,
     segment,
     rewardRisk,
@@ -672,6 +713,10 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     riskAmount,
     holdingDays,
     pfImpact: Math.round(pfImpact * 100) / 100,
+    flags: validation.flags,
+    isDateFlagged: validation.isDateFlagged,
+    isValidForTotals: validation.isValidForTotals,
+    validationReason: validation.reason,
     mae,
     mfe,
     mfePlus,
@@ -701,23 +746,25 @@ export function calculateDashboardStats(trades = [], capital = 100000, plMethod 
       winRate = ((wins / rrEligible.length) * 100).toFixed(2);
     }
   } else {
-    const decidedTrades = closedTrades.filter(t => Number(t.pl || t.pnl || 0) !== 0);
+    const decidedTrades = closedTrades.filter(t => toPaise(t.pl ?? t.pnl) !== 0);
     if (decidedTrades.length > 0) {
-      const wins = decidedTrades.filter(t => Number(t.pl || t.pnl || 0) > 0).length;
+      const wins = decidedTrades.filter(t => toPaise(t.pl ?? t.pnl) > 0).length;
       winRate = ((wins / decidedTrades.length) * 100).toFixed(2);
     }
   }
 
-  // Gross Realized P/L (strictly on closed and partial trades)
-  const grossRealizedPL = trades.reduce((sum, t) => {
+  // Gross Realized P/L (strictly on closed and partial trades) via integer paise
+  const grossRealizedPaise = trades.reduce((sum, t) => {
     if (t.status === 'Closed' || t.status === 'Partial') {
-      return sum + (Number(t.pl || t.pnl || 0));
+      return sum + toPaise(t.pl ?? t.pnl);
     }
     return sum;
   }, 0);
+  const grossRealizedPL = fromPaise(grossRealizedPaise);
 
-  // Unrealized P/L
-  const unrealizedPL = openTrades.reduce((sum, t) => sum + (Number(t.unrealized || 0)), 0);
+  // Unrealized P/L via integer paise
+  const unrealizedPaise = openTrades.reduce((sum, t) => sum + toPaise(t.unrealized), 0);
+  const unrealizedPL = fromPaise(unrealizedPaise);
 
   // Capital at Risk %
   const totalCapitalAtRisk = openTrades.reduce((sum, t) => sum + (Number(t.capitalAtRisk || t.openHeat || 0)), 0);

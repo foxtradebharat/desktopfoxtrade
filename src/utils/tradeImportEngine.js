@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx';
 import { pairExecutionFills } from '../services/brokerApiService.js';
 import { enrichTradeWithFoxFormulas } from './foxCalculationEngine.js';
 import { getCanonicalSymbol } from './securityMaster.js';
+import { toPaise, fromPaise, reconcileTradesEngine, validateTradeRecord, PNL_FLAGS } from './pnlEngine.js';
+import { normalizeBrokerId } from './brokerIds.js';
 
 export const SUPPORTED_BROKERS = [
   { id: 'zerodha', name: 'Zerodha Kite', markers: ['order execution time', 'order_execution_time', 'trade_type'], mandatory: ['trade date', 'trade type'] },
@@ -48,15 +50,12 @@ export function detectBrokerFromHeaders(headers = []) {
 }
 
 /**
- * Normalizes date inputs with explicit format override support (DD-MM-YYYY vs MM-DD-YYYY vs YYYY-MM-DD)
+ * Normalizes date inputs with explicit format override and reference year support.
+ * Returns empty string if value is missing/empty.
  */
-export function normalizeDateString(val, formatOverride = 'auto') {
+export function normalizeDateString(val, formatOverride = 'auto', referenceYear = null) {
   if (val === undefined || val === null || val === '') {
-    return new Date().toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    }).replace(/\//g, '-');
+    return '';
   }
 
   if (val instanceof Date && !isNaN(val.getTime())) {
@@ -66,10 +65,13 @@ export function normalizeDateString(val, formatOverride = 'auto') {
     return `${day}-${month}-${year}`;
   }
 
+  const str = String(val).trim();
+  if (!str) return '';
+
   // Handle number or numeric string (Excel serial date code like 46263)
   const numVal = typeof val === 'number'
     ? val
-    : (typeof val === 'string' && /^\d+(\.\d+)?$/.test(val.trim()) ? parseFloat(val.trim()) : NaN);
+    : (/^\d+(\.\d+)?$/.test(str) ? parseFloat(str) : NaN);
 
   if (!isNaN(numVal) && numVal > 20000 && numVal < 80000) {
     const utcDays = Math.floor(numVal - 25569);
@@ -83,15 +85,13 @@ export function normalizeDateString(val, formatOverride = 'auto') {
     }
   }
 
-  const str = String(val).trim();
-
-  // ISO string e.g. 2026-04-05T00:00:00.000Z
-  if (str.includes('T')) {
+  // True ISO string e.g. 2026-04-05T00:00:00.000Z
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(str)) {
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
-      const day = String(d.getUTCDate()).padStart(2, '0');
-      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const year = d.getUTCFullYear();
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
       return `${day}-${month}-${year}`;
     }
   }
@@ -136,7 +136,35 @@ export function normalizeDateString(val, formatOverride = 'auto') {
     return `${day}-${month}-${year}`;
   }
 
-  // Parse generic date string
+  // Handle Day-Month format (e.g., "17 Apr", "14 August", "9 Sep", "17-Apr")
+  const dmMatch = /^(\d{1,2})[\s/-]+([A-Za-z]{3,9})$/i.exec(str);
+  if (dmMatch) {
+    const day = dmMatch[1].padStart(2, '0');
+    const mPrefix = dmMatch[2].toLowerCase().slice(0, 3);
+    const months = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    const month = months[mPrefix] || '01';
+    const yr = referenceYear || new Date().getFullYear();
+    return `${day}-${month}-${yr}`;
+  }
+
+  // Handle Day-Month-Year with month name (e.g., "17-Apr-26", "17 Apr 2026", "17-Apr-2026")
+  const dmyAlpha = /^(\d{1,2})[\s/-]+([A-Za-z]{3,9})[\s/-]+(\d{2,4})$/i.exec(str);
+  if (dmyAlpha) {
+    const day = dmyAlpha[1].padStart(2, '0');
+    const mPrefix = dmyAlpha[2].toLowerCase().slice(0, 3);
+    const yr = dmyAlpha[3].length === 2 ? `20${dmyAlpha[3]}` : dmyAlpha[3];
+    const months = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    const month = months[mPrefix] || '01';
+    return `${day}-${month}-${yr}`;
+  }
+
+  // Parse generic date string (e.g., "Wed Apr 08 2026 00:00:00 GMT+0530 (India Standard Time)")
   const d = new Date(str);
   if (!isNaN(d.getTime())) {
     const day = String(d.getDate()).padStart(2, '0');
@@ -149,24 +177,32 @@ export function normalizeDateString(val, formatOverride = 'auto') {
 }
 
 /**
- * Clean numeric strings
+ * Clean numeric strings, handling currency symbols, commas, UTF-8 encoding artifacts, and negative formats
  */
 export function cleanNumber(val, fallback = 0) {
   if (val === undefined || val === null || val === '') return fallback;
   if (typeof val === 'number') return isNaN(val) ? fallback : val;
-  const cleaned = String(val).replace(/[₹$,% ]/g, '').trim();
-  if (cleaned === '' || cleaned === '-' || cleaned === 'N/A' || cleaned === 'null') return fallback;
+  const str = String(val).trim();
+  if (str === '' || str === '-' || str === 'N/A' || str === 'null') return fallback;
+  const isNegative = /^\(.*\)$/.test(str) || (str.startsWith('-') && !str.includes('+'));
+  const cleaned = str.replace(/[^0-9.]/g, '');
+  if (cleaned === '' || cleaned === '.') return fallback;
   const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? fallback : parsed;
+  if (isNaN(parsed)) return fallback;
+  return isNegative ? -Math.abs(parsed) : parsed;
 }
 
 export function cleanOptionalNumber(val) {
   if (val === undefined || val === null || val === '') return undefined;
   if (typeof val === 'number') return isNaN(val) ? undefined : val;
-  const cleaned = String(val).replace(/[₹$,% ]/g, '').trim();
-  if (cleaned === '' || cleaned === '-' || cleaned === 'N/A' || cleaned === 'null') return undefined;
+  const str = String(val).trim();
+  if (str === '' || str === '-' || str === 'N/A' || str === 'null') return undefined;
+  const isNegative = /^\(.*\)$/.test(str) || (str.startsWith('-') && !str.includes('+'));
+  const cleaned = str.replace(/[^0-9.]/g, '');
+  if (cleaned === '' || cleaned === '.') return undefined;
   const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? undefined : parsed;
+  if (isNaN(parsed)) return undefined;
+  return isNegative ? -Math.abs(parsed) : parsed;
 }
 
 /**
@@ -327,7 +363,8 @@ export async function previewTradesFromFile(fileInput, options = {}) {
     totalRows: dataRows.length,
     tradesCount: parsedTrades.length,
     trades: parsedTrades,
-    sampleDates
+    sampleDates,
+    reconciliation: parsedTrades._reconciliation
   };
 }
 
@@ -465,7 +502,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
           planFollowed: 'Yes',
           status: p.status || 'Closed',
           pnl: p.pnl || 0,
-          broker: detectedBroker.id !== 'unknown' ? detectedBroker.id : 'Broker Import',
+          broker: normalizeBrokerId(detectedBroker.id) || (detectedBroker.id !== 'unknown' ? detectedBroker.id : 'Broker Import'),
           notes: `Imported from ${detectedBroker.name} tradebook (${p.date})`
         };
 
@@ -502,50 +539,94 @@ export async function parseTradesFromFile(fileInput, options = {}) {
   // ── BRANCH 2: FULL JOURNAL EXPORT (FoxTrade / Custom) ───────────
   else {
     const idxEntryType   = getIndex(['ENTRYTYPE', 'ENTRY TYPE', 'ORDER TYPE']);
-    const idxAvgEntry    = getIndex(['AVGENTRY', 'AVG ENTRY', 'AVERAGE ENTRY', 'BUY AVERAGE'], ['P1', 'P2', 'P3', 'P4', 'E1', 'E2', 'E3', 'E4']);
+    const idxAvgEntry    = getIndex(['AVGENTRY', 'AVG ENTRY', 'AVERAGE ENTRY', 'BUY AVERAGE'], ['P1', 'P2', 'P3', 'P4', 'E1', 'E2', 'E3', 'E4', 'E5']);
     
     const idxP1Qty       = getIndex(['P1QTY', 'P1 QTY', 'P1 QTY/LOT']);
-    const idxP1Date      = getIndex(['P1DATE', 'P1 DATE']);
+    let idxP1Date        = getIndex(['P1DATE', 'P1 DATE']);
+    if (idxP1Date === -1 && idxP1Qty !== -1 && idxP1Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxP1Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxP1Date = idxP1Qty + 1;
+    }
     const idxP1Sl        = getIndex(['P1SL', 'P1 SL', 'P1 SL(₹)']);
 
     const idxP2Price     = getIndex(['P2PRICE', 'P2 PRICE', 'P2 PRICE(₹)']);
     const idxP2Qty       = getIndex(['P2QTY', 'P2 QTY', 'P2 QTY/LOT']);
-    const idxP2Date      = getIndex(['P2DATE', 'P2 DATE']);
+    let idxP2Date        = getIndex(['P2DATE', 'P2 DATE']);
+    if (idxP2Date === -1 && idxP2Qty !== -1 && idxP2Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxP2Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxP2Date = idxP2Qty + 1;
+    }
     const idxP2Sl        = getIndex(['P2SL', 'P2 SL', 'P2 SL(₹)']);
 
     const idxP3Price     = getIndex(['P3PRICE', 'P3 PRICE', 'P3 PRICE(₹)']);
     const idxP3Qty       = getIndex(['P3QTY', 'P3 QTY', 'P3 QTY/LOT']);
-    const idxP3Date      = getIndex(['P3DATE', 'P3 DATE']);
+    let idxP3Date        = getIndex(['P3DATE', 'P3 DATE']);
+    if (idxP3Date === -1 && idxP3Qty !== -1 && idxP3Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxP3Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxP3Date = idxP3Qty + 1;
+    }
     const idxP3Sl        = getIndex(['P3SL', 'P3 SL', 'P3 SL(₹)']);
 
     const idxP4Price     = getIndex(['P4PRICE', 'P4 PRICE', 'P4 PRICE(₹)']);
     const idxP4Qty       = getIndex(['P4QTY', 'P4 QTY', 'P4 QTY/LOT']);
-    const idxP4Date      = getIndex(['P4DATE', 'P4 DATE']);
+    let idxP4Date        = getIndex(['P4DATE', 'P4 DATE']);
+    if (idxP4Date === -1 && idxP4Qty !== -1 && idxP4Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxP4Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxP4Date = idxP4Qty + 1;
+    }
     const idxP4Sl        = getIndex(['P4SL', 'P4 SL', 'P4 SL(₹)']);
 
     const idxTSL         = getIndex(['TSL', 'TSL(₹)', 'TRAILING SL']);
 
     const idxE1Qty       = getIndex(['E1QTY', 'E1 QTY', 'E1 QTY/LOT']);
-    const idxE1Date      = getIndex(['E1DATE', 'E1 DATE']);
+    let idxE1Date        = getIndex(['E1DATE', 'E1 DATE']);
+    if (idxE1Date === -1 && idxE1Qty !== -1 && idxE1Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxE1Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxE1Date = idxE1Qty + 1;
+    }
 
     const idxE2Price     = getIndex(['E2PRICE', 'E2 PRICE', 'E2 PRICE(₹)']);
     const idxE2Qty       = getIndex(['E2QTY', 'E2 QTY', 'E2 QTY/LOT']);
-    const idxE2Date      = getIndex(['E2DATE', 'E2 DATE']);
+    let idxE2Date        = getIndex(['E2DATE', 'E2 DATE']);
+    if (idxE2Date === -1 && idxE2Qty !== -1 && idxE2Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxE2Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxE2Date = idxE2Qty + 1;
+    }
 
     const idxE3Price     = getIndex(['E3PRICE', 'E3 PRICE', 'E3 PRICE(₹)']);
     const idxE3Qty       = getIndex(['E3QTY', 'E3 QTY', 'E3 QTY/LOT']);
-    const idxE3Date      = getIndex(['E3DATE', 'E3 DATE']);
+    let idxE3Date        = getIndex(['E3DATE', 'E3 DATE']);
+    if (idxE3Date === -1 && idxE3Qty !== -1 && idxE3Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxE3Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxE3Date = idxE3Qty + 1;
+    }
 
     const idxE4Price     = getIndex(['E4PRICE', 'E4 PRICE', 'E4 PRICE(₹)']);
     const idxE4Qty       = getIndex(['E4QTY', 'E4 QTY', 'E4 QTY/LOT']);
-    const idxE4Date      = getIndex(['E4DATE', 'E4 DATE']);
+    let idxE4Date        = getIndex(['E4DATE', 'E4 DATE']);
+    if (idxE4Date === -1 && idxE4Qty !== -1 && idxE4Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxE4Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxE4Date = idxE4Qty + 1;
+    }
+
+    const idxE5Price     = getIndex(['E5PRICE', 'E5 PRICE', 'E5 PRICE(₹)', 'E5_PRICE']);
+    const idxE5Qty       = getIndex(['E5QTY', 'E5 QTY', 'E5 QTY/LOT', 'E5_QTY']);
+    let idxE5Date        = getIndex(['E5DATE', 'E5 DATE', 'E5_DATE']);
+    if (idxE5Date === -1 && idxE5Qty !== -1 && idxE5Qty + 1 < headers.length) {
+      const adjClean = String(headers[idxE5Qty + 1]).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (adjClean.includes('DATE')) idxE5Date = idxE5Qty + 1;
+    }
 
     const idxPlanFollowed = getIndex(['PLANFOLLOWED', 'PLAN FOLLOWED']);
     const idxExitTrigger  = getIndex(['EXITTRIGGER', 'EXIT TRIGGER']);
     const idxGrowthAreas  = getIndex(['GROWTHAREAS', 'GROWTH AREAS']);
     const idxBaseDuration = getIndex(['BASEDURATION', 'BASE DURATION']);
-    const idxNotes        = getIndex(['NOTES', 'NOTE', 'QUICK NOTE', 'REMARKS']);
+    const idxNotes        = getIndex(['ANYOTHEROBSERVATIONS', 'OBSERVATIONS', 'NOTES', 'NOTE', 'QUICK NOTE', 'REMARKS']);
     const idxHoldingDays  = getIndex(['HOLDINGDAYS', 'HOLDING DAYS', 'HOLDING']);
+    const idxRewardRisk   = getIndex(['REWARDRISK', 'REWARD:RISK', 'REWARD RISK', 'R:R', 'RR', 'R MULTIPLE', 'RMULTIPLE']);
+    const idxMFE          = getIndex(['MFE', 'MFE (%)', 'MFE%']);
+    const idxMAE          = getIndex(['MAE', 'MAE (%)', 'MAE%']);
+    const idxCloseDate    = getIndex(['CLOSEDATE', 'CLOSE DATE', 'EXIT DATE', 'EXITDATE']);
 
     const idxUnrealized   = getIndex(['UNREALIZEDPL', 'UNREALIZED PL', 'UNREALIZED P/L', 'UNREALIZED', 'OPEN P/L']);
     const idxOpenHeat     = getIndex(['OPENHEAT', 'OPEN HEAT', 'HEAT']);
@@ -555,67 +636,76 @@ export async function parseTradesFromFile(fileInput, options = {}) {
     const idxAvgExit      = getIndex(['AVGEXITPRICE', 'AVG EXIT PRICE', 'AVG EXIT', 'EXIT PRICE']);
     const idxOpenQty      = getIndex(['OPENQTY', 'OPEN QTY']);
     const idxExitedQty    = getIndex(['EXITEDQTY', 'EXITED QTY', 'EXIT QTY']);
-    const idxPnL          = getIndex(['PL', 'REALIZED P/L', 'P/L', 'PNL', 'PROFIT', 'NET REALIZED P/L']);
+    const idxPnL          = getIndex(['PLRS', 'P/L RS', 'PL RS', 'P/L (RS)', 'BOOKED P/L', 'BOOKEDPL', 'REALIZED P/L', 'NET REALIZED P/L', 'PL', 'PNL', 'PROFIT']);
+    const idxBookedPnL    = getIndex(['BOOKED P/L', 'BOOKEDPL', 'BOOKED PNL']);
     const idxCurrentAlloc = getIndex(['CURRENT ALLOCATION (%)', 'CURRENTALLOCATION', 'CURRENT ALLOCATION', 'CURRENTALLOC']);
 
     for (let i = 0; i < dataRows.length; i++) {
       const cols = dataRows[i];
       const rawName = idxSymbol !== -1 ? String(cols[idxSymbol] || '').trim() : '';
+      const entryVal = idxEntry !== -1 ? cleanNumber(cols[idxEntry], 0) : 0;
+      const qtyVal = idxQuantity !== -1 ? cleanNumber(cols[idxQuantity], 0) : 0;
       const tradeNoVal = idxTradeNo !== -1 ? parseInt(cols[idxTradeNo], 10) : (startingTradeNo + i);
       const explicitId = idxId !== -1 && cols[idxId] ? String(cols[idxId]).trim() : '';
 
-      if (!rawName && isNaN(tradeNoVal) && !explicitId) continue;
+      // Skip empty template/placeholder rows (e.g. rows 61..190 in Google Sheets template)
+      if (!rawName && (!entryVal || !qtyVal) && !explicitId) continue;
       const nameVal = rawName ? getCanonicalSymbol(rawName) : '';
 
-      const dateVal = idxDate !== -1 ? normalizeDateString(cols[idxDate], dateFormat) : normalizeDateString(new Date(), dateFormat);
+      const rawTradeDate = idxDate !== -1 && cols[idxDate] ? cols[idxDate] : '';
+      const dateVal = rawTradeDate ? normalizeDateString(rawTradeDate, dateFormat) : normalizeDateString(new Date(), dateFormat);
+      const tradeYear = (dateVal && dateVal.length >= 4) ? parseInt(dateVal.slice(-4), 10) : new Date().getFullYear();
+
       const setupVal = idxSetup !== -1 ? String(cols[idxSetup] || '').trim() : '';
       const typeVal = idxTradeType !== -1
         ? (String(cols[idxTradeType] || '').toUpperCase().includes('SELL') ? 'Sell' : 'Buy')
         : 'Buy';
 
-      const entryVal = idxEntry !== -1 ? cleanNumber(cols[idxEntry], 0) : 0;
       const slVal = idxSL !== -1 ? cleanOptionalNumber(cols[idxSL]) : undefined;
       const cmpVal = idxCMP !== -1 ? cleanNumber(cols[idxCMP], 0) : (liveCMPs[nameVal] || 0);
       const entryTypeVal = idxEntryType !== -1 && cols[idxEntryType] ? String(cols[idxEntryType]).trim() : 'Market';
-      const qtyVal = idxQuantity !== -1 ? cleanNumber(cols[idxQuantity], 0) : 0;
 
       const p1PriceVal = idxP1Price !== -1 ? cleanNumber(cols[idxP1Price], 0) : 0;
       const p1QtyVal = idxP1Qty !== -1 ? cleanNumber(cols[idxP1Qty], 0) : 0;
-      const p1DateVal = idxP1Date !== -1 ? normalizeDateString(cols[idxP1Date], dateFormat) : '';
+      const p1DateVal = idxP1Date !== -1 && cols[idxP1Date] ? normalizeDateString(cols[idxP1Date], dateFormat, tradeYear) : '';
       const p1SlVal = idxP1Sl !== -1 ? cleanOptionalNumber(cols[idxP1Sl]) : undefined;
 
       const p2PriceVal = idxP2Price !== -1 ? cleanNumber(cols[idxP2Price], 0) : 0;
       const p2QtyVal = idxP2Qty !== -1 ? cleanNumber(cols[idxP2Qty], 0) : 0;
-      const p2DateVal = idxP2Date !== -1 ? normalizeDateString(cols[idxP2Date], dateFormat) : '';
+      const p2DateVal = idxP2Date !== -1 && cols[idxP2Date] ? normalizeDateString(cols[idxP2Date], dateFormat, tradeYear) : '';
       const p2SlVal = idxP2Sl !== -1 ? cleanOptionalNumber(cols[idxP2Sl]) : undefined;
 
       const p3PriceVal = idxP3Price !== -1 ? cleanNumber(cols[idxP3Price], 0) : 0;
       const p3QtyVal = idxP3Qty !== -1 ? cleanNumber(cols[idxP3Qty], 0) : 0;
-      const p3DateVal = idxP3Date !== -1 ? normalizeDateString(cols[idxP3Date], dateFormat) : '';
+      const p3DateVal = idxP3Date !== -1 && cols[idxP3Date] ? normalizeDateString(cols[idxP3Date], dateFormat, tradeYear) : '';
       const p3SlVal = idxP3Sl !== -1 ? cleanOptionalNumber(cols[idxP3Sl]) : undefined;
 
       const p4PriceVal = idxP4Price !== -1 ? cleanNumber(cols[idxP4Price], 0) : 0;
       const p4QtyVal = idxP4Qty !== -1 ? cleanNumber(cols[idxP4Qty], 0) : 0;
-      const p4DateVal = idxP4Date !== -1 ? normalizeDateString(cols[idxP4Date], dateFormat) : '';
+      const p4DateVal = idxP4Date !== -1 && cols[idxP4Date] ? normalizeDateString(cols[idxP4Date], dateFormat, tradeYear) : '';
       const p4SlVal = idxP4Sl !== -1 ? cleanOptionalNumber(cols[idxP4Sl]) : undefined;
 
       const tslVal = idxTSL !== -1 ? cleanNumber(cols[idxTSL], 0) : 0;
 
       const e1PriceVal = idxE1Price !== -1 ? cleanNumber(cols[idxE1Price], 0) : 0;
       const e1QtyVal = idxE1Qty !== -1 ? cleanNumber(cols[idxE1Qty], 0) : 0;
-      const e1DateVal = idxE1Date !== -1 ? normalizeDateString(cols[idxE1Date], dateFormat) : '';
+      const e1DateVal = idxE1Date !== -1 && cols[idxE1Date] ? normalizeDateString(cols[idxE1Date], dateFormat, tradeYear) : '';
 
       const e2PriceVal = idxE2Price !== -1 ? cleanNumber(cols[idxE2Price], 0) : 0;
       const e2QtyVal = idxE2Qty !== -1 ? cleanNumber(cols[idxE2Qty], 0) : 0;
-      const e2DateVal = idxE2Date !== -1 ? normalizeDateString(cols[idxE2Date], dateFormat) : '';
+      const e2DateVal = idxE2Date !== -1 && cols[idxE2Date] ? normalizeDateString(cols[idxE2Date], dateFormat, tradeYear) : '';
 
       const e3PriceVal = idxE3Price !== -1 ? cleanNumber(cols[idxE3Price], 0) : 0;
       const e3QtyVal = idxE3Qty !== -1 ? cleanNumber(cols[idxE3Qty], 0) : 0;
-      const e3DateVal = idxE3Date !== -1 ? normalizeDateString(cols[idxE3Date], dateFormat) : '';
+      const e3DateVal = idxE3Date !== -1 && cols[idxE3Date] ? normalizeDateString(cols[idxE3Date], dateFormat, tradeYear) : '';
 
       const e4PriceVal = idxE4Price !== -1 ? cleanNumber(cols[idxE4Price], 0) : 0;
       const e4QtyVal = idxE4Qty !== -1 ? cleanNumber(cols[idxE4Qty], 0) : 0;
-      const e4DateVal = idxE4Date !== -1 ? normalizeDateString(cols[idxE4Date], dateFormat) : '';
+      const e4DateVal = idxE4Date !== -1 && cols[idxE4Date] ? normalizeDateString(cols[idxE4Date], dateFormat, tradeYear) : '';
+
+      const e5PriceVal = idxE5Price !== -1 ? cleanNumber(cols[idxE5Price], 0) : 0;
+      const e5QtyVal = idxE5Qty !== -1 ? cleanNumber(cols[idxE5Qty], 0) : 0;
+      const e5DateVal = idxE5Date !== -1 && cols[idxE5Date] ? normalizeDateString(cols[idxE5Date], dateFormat, tradeYear) : '';
 
       const planFollowedVal = idxPlanFollowed !== -1 && cols[idxPlanFollowed] ? String(cols[idxPlanFollowed]).trim() : 'Yes';
       const exitTriggerVal  = idxExitTrigger !== -1 ? String(cols[idxExitTrigger] || '').trim() : '';
@@ -623,6 +713,10 @@ export async function parseTradesFromFile(fileInput, options = {}) {
       const baseDurationVal = idxBaseDuration !== -1 ? String(cols[idxBaseDuration] || '').trim() : '';
       const notesVal        = idxNotes !== -1 ? String(cols[idxNotes] || '').trim() : '';
       const holdingDaysVal  = idxHoldingDays !== -1 ? parseInt(cols[idxHoldingDays], 10) : 0;
+      const rewardRiskVal   = idxRewardRisk !== -1 ? cleanOptionalNumber(cols[idxRewardRisk]) : undefined;
+      const mfeVal          = idxMFE !== -1 ? cleanOptionalNumber(cols[idxMFE]) : undefined;
+      const maeVal          = idxMAE !== -1 ? cleanOptionalNumber(cols[idxMAE]) : undefined;
+      const closeDateVal    = idxCloseDate !== -1 && cols[idxCloseDate] ? normalizeDateString(cols[idxCloseDate], dateFormat, tradeYear) : '';
 
       const unrealizedVal    = idxUnrealized !== -1 ? cleanOptionalNumber(cols[idxUnrealized]) : undefined;
       const openHeatVal      = idxOpenHeat !== -1 ? cleanOptionalNumber(cols[idxOpenHeat]) : undefined;
@@ -633,7 +727,12 @@ export async function parseTradesFromFile(fileInput, options = {}) {
       const avgExitVal       = idxAvgExit !== -1 ? cleanOptionalNumber(cols[idxAvgExit]) : undefined;
       const openQtyVal       = idxOpenQty !== -1 ? cleanOptionalNumber(cols[idxOpenQty]) : undefined;
       const exitedQtyVal     = idxExitedQty !== -1 ? cleanOptionalNumber(cols[idxExitedQty]) : undefined;
-      const pnlVal           = idxPnL !== -1 ? cleanOptionalNumber(cols[idxPnL]) : undefined;
+      
+      let pnlVal = idxPnL !== -1 ? cleanOptionalNumber(cols[idxPnL]) : undefined;
+      if (pnlVal === undefined && idxBookedPnL !== -1) {
+        pnlVal = cleanOptionalNumber(cols[idxBookedPnL]);
+      }
+
       const currentAllocVal  = idxCurrentAlloc !== -1 ? cleanOptionalNumber(cols[idxCurrentAlloc]) : undefined;
 
       const rawExIds = idxExchangeTradeIds !== -1 && cols[idxExchangeTradeIds] ? String(cols[idxExchangeTradeIds]).trim() : '';
@@ -653,7 +752,8 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         }
       }
 
-      const brokerVal = idxBroker !== -1 && cols[idxBroker] ? String(cols[idxBroker]).trim() : detectedBroker.id;
+      const rawBroker = idxBroker !== -1 && cols[idxBroker] ? String(cols[idxBroker]).trim() : detectedBroker.id;
+      const brokerVal = normalizeBrokerId(rawBroker) || rawBroker;
       const txHistVal = idxTransactionHistory !== -1 && cols[idxTransactionHistory] ? String(cols[idxTransactionHistory]).trim() : undefined;
 
       const cleanId = (explicitId && !['buy', 'sell', 'true', 'false'].includes(explicitId.toLowerCase()) && explicitId.length > 3)
@@ -705,6 +805,9 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         e4Price: e4PriceVal,
         e4Qty: e4QtyVal,
         e4Date: e4DateVal,
+        e5Price: e5PriceVal,
+        e5Qty: e5QtyVal,
+        e5Date: e5DateVal,
         planFollowed: planFollowedVal,
         exitTrigger: exitTriggerVal,
         growthAreas: growthAreasVal,
@@ -712,6 +815,11 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         notes: notesVal,
         quickNote: notesVal,
         holdingDays: isNaN(holdingDaysVal) ? 0 : holdingDaysVal,
+        rewardRisk: rewardRiskVal,
+        mfe: mfeVal,
+        mae: maeVal,
+        closeDate: closeDateVal,
+        exitDate: closeDateVal || e5DateVal || e4DateVal || e3DateVal || e2DateVal || e1DateVal,
         avgEntry: avgEntryVal,
         avgExitPrice: avgExitVal,
         openQty: openQtyVal,
@@ -732,6 +840,12 @@ export async function parseTradesFromFile(fileInput, options = {}) {
   if (resultTrades.length === 0) {
     throw new Error('No valid trades could be extracted from the file.');
   }
+
+  // Run full reconciliation across all imported trades
+  const reconciliation = reconcileTradesEngine(resultTrades, {
+    rowsIn: dataRows.length
+  });
+  resultTrades._reconciliation = reconciliation;
 
   return resultTrades;
 }
