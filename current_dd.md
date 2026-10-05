@@ -2,7 +2,7 @@
 
 ## 1. Overview & Methodology
 
-The Drawdown engine measures portfolio decline from the historical high-water mark (peak equity) across realized trading events.
+The Drawdown engine measures portfolio decline from the historical high-water mark (peak equity) across realized trading events and active open positions.
 
 ### Core Formula
 $$\text{Drawdown \%} = \frac{\text{Equity} - \text{Peak}}{\text{Peak}} \times 100$$
@@ -15,10 +15,10 @@ $$\text{Drawdown Amount}_t = \text{Equity}_{\text{end}, t} \times \left(1 - \fra
 
 ### Trade Scope & Attribution Rules
 - **P&L Basis:** Realized P&L net of broker charges (`getTradePnl(t)`).
-- **Included Trades:** Closed trades and Partial trades where `getTradePnl !== 0`.
-- **Open Trades:** Open positions are excluded from drawdown calculations (unrealized P&L / MTM is not included).
-- **Date Source:** Strict latest exit leg date (`e1` through `e5` where exit qty > 0 and date is valid), falling back to `exitDate`.
-- **Exclusion Audit:** Trades without a valid exit date are strictly preserved, flagged, and reported in `excluded` rather than defaulting to entry date or epoch 0.
+- **Included in Realized DD:** Closed trades and Partial trades where `getTradePnl !== 0`.
+- **Date Source:** Strict latest exit leg date (`e1` through `e5` where exit qty > 0 and date is valid), falling back to parseable `exitDate`.
+- **Exclusion Audit:** Trades without a valid exit date are strictly preserved and flagged in `excluded` rather than defaulting to entry date or epoch 0.
+- **Cash Flows:** Deposits and withdrawals from dated Fund Management ledger entries are applied at the start of the day.
 
 ---
 
@@ -29,34 +29,51 @@ Real output verified against the golden benchmark dataset (`nexus-50-golden-trad
 ### Dataset Summary
 - **Total Trades in File:** 50
 - **Closed Trades:** 40
-- **Partial Trades:** 5
-- **Open Positions:** 5 (excluded; unrealized P&L is not counted)
-- **Trades Included in Drawdown:** 45 (40 Closed + 5 Partial)
+- **Partial Trades:** 5 (Trades #41–#45)
+- **Open Positions:** 5 (Trades #46–#50)
+- **Trades Included in Realized Drawdown:** 45 (40 Closed + 5 Partial)
 - **Trades Excluded for Missing/Invalid Exit Date:** 0
 - **Capital Basis Used:** ₹10,00,000.00 (`openingCapital`)
 - **Total Realized Net P&L:** ₹70,895.00
+- **Realized Ending Equity:** ₹10,70,895.00
+- **Realized Peak Equity:** ₹10,70,895.00
+
+### Realized Drawdown Results
+- **Current DD %:** 0.00%
+- **Current DD Amount:** ₹0.00
 - **Ending Equity:** ₹10,70,895.00
-- **Peak Equity:** ₹10,70,895.00
+- **Series Length:** 41 trading days (2026-01-07 to 2026-06-02)
+- **Max DD %:** -0.17% (-0.1745%)
+- **Max DD Amount:** -₹1,760.00
+- **Max DD Peak Date:** 2026-01-16 (Peak: ₹10,08,520.00)
+- **Max DD Trough Date:** 2026-01-20 (Trough: ₹10,06,760.00)
+- **Max DD Recovery Date:** 2026-01-22 (Recovered: ₹10,11,560.00)
+- **Current Underwater Days:** 0 calendar days
+- **Longest Underwater Days:** 10 calendar days
+- **Skipped Days (Non-Positive Capital):** 0
+- **Exclusions Count:** 0 trades (`excluded: []`)
 
-### Drawdown Results
+### Live Drawdown Results (Including Open Positions)
+- **Current Live DD %:** 0.00%
+- **Current Live DD Amount:** ₹0.00
+- **Live Equity:** ₹11,00,235.00 (Realized ₹10,70,895.00 + Unrealized ₹29,340.00)
+- **Live Peak Equity:** ₹11,00,235.00
+- **Priced Trades Count:** 10 trades
+- **Unpriced Positions Count:** 0 trades
+- **Trades Used in Live DD:**
+  - Partial trades (open remainder qty): #41 (TCS), #42 (RELIANCE), #43 (INFY), #44 (HDFCBANK), #45 (ICICIBANK)
+  - Open trades: #46 (SBIN), #47 (BHARTIARTL), #48 (ITC), #49 (KOTAKBANK), #50 (LT)
+  - Total Unrealized P&L: +₹29,340.00 (all CMPs active and valid)
 
-| Metric | Daily Aggregated (`computeDrawdownDaily`) | Legacy Per-Trade (`computeDrawdown`) |
-| :--- | :--- | :--- |
-| **Current Drawdown %** | **0.00%** | **0.00%** |
-| **Current Drawdown Amount** | **₹0.00** | **₹0.00** |
-| **Max Drawdown %** | **-0.17%** (-0.1745%) | **-0.25%** (-0.2454%) |
-| **Max Drawdown Amount** | **-₹1,760.00** | **-₹2,600.00** |
-| **Max DD Peak Date** | 2026-01-16 | Trade #37 (2026-04-30 intraday) |
-| **Max DD Trough Date** | 2026-01-20 | Trade #40 (2026-05-07) |
-| **Recovery Date** | 2026-01-22 | Trade #39 (2026-05-08) |
-| **Current Underwater Days** | 0 calendar days | 0 |
-| **Longest Underwater Days**| 10 calendar days | N/A |
-| **Skipped Days (Zero Capital)**| 0 | N/A |
+### Max Drawdown Comparison
+- **Max DD (Realized):** -0.17% (-₹1,760.00)
+- **Max DD (incl. live):** -0.17% (-₹1,760.00) (Live DD is at high-water mark, so peak/trough is unchanged)
+- **Legacy Per-Trade Max DD (`computeDrawdown`):** -0.25% (-₹2,600.00)
 
-*Note on difference between Daily and Legacy Per-Trade:* On 2026-04-30, two trades closed on the same day: one winner (+₹5,040) and one loser (-₹1,200), netting +₹3,840 for the day. In the legacy per-trade sequential calculation, processing the winner first artificially created a higher intraday peak of ₹10,59,395 before processing the loser, which when followed by a loss of -₹1,400 on 2026-05-07, reported a cumulative drawdown of -₹2,600 (-0.25%). In daily aggregated accounting, the end-of-day realized equity on 2026-04-30 was ₹10,58,195, so the drop on 2026-05-07 was only -₹1,400 from that peak, making 2026-01-20 (-₹1,760 / -0.17%) the true maximum daily drawdown.
+*Note on difference between Daily and Legacy Per-Trade:* On 2026-04-30, two trades closed on the same day: one winner (+₹5,040) and one loser (-₹1,200), netting +₹3,840 for the day. In the legacy per-trade sequential calculation, processing the winner first artificially created a higher intraday peak of ₹10,59,395 before processing the loser, which when followed by a loss of -₹1,400 on 2026-05-07, reported an artificial cumulative drawdown of -₹2,600 (-0.25%). In daily aggregated accounting, the end-of-day realized equity on 2026-04-30 was ₹10,58,195, so the drop on 2026-05-07 was only -₹1,400 from that peak, making 2026-01-20 (-₹1,760 / -0.17%) the true maximum daily drawdown.
 
-### Excluded Trades List
-`excluded`: `[]` (0 trades excluded).
+### Excluded Trades Audit
+- `excluded`: `[]` (0 trades excluded).
 
 ### Full Daily Series (41 Trading Days)
 
@@ -108,7 +125,9 @@ Real output verified against the golden benchmark dataset (`nexus-50-golden-trad
 
 ## 3. Limitations
 
-1. **Realized P&L Only:** The drawdown engine evaluates closed trades and partial exits where realized P&L is locked in. Unrealized fluctuations, intraday tick-level drawdowns, and open position mark-to-market (MTM) are not included.
-2. **Partial Exits Attribution:** Partial exit trades are dated at their latest exit leg (`e1`..`e5` with qty > 0). If multiple exit legs occur across different days, the realized P&L is attributed to the final exit date.
-3. **Cash Flow Timing:** When cash flows (`flows`) are provided, deposits and withdrawals are applied at the beginning of the day (`equityStart = equityPrev + flow(day)`).
-4. **Fund Management Ledger Granularity:** The application's Fund Management ledger records capital additions and withdrawals on a monthly basis without per-entry calendar dates. As mandated by safety constraints, intra-month cash flow dates are not guessed or fabricated. When daily flow dates become available in the ledger schema, `computeDrawdownDaily` provides full time-weighted cash flow insulation.
+1. **Realized DD Excludes Open Positions:** The Realized DD calculation evaluates only closed trades and partial exit legs where profit and loss have been realized. Open position fluctuations and mark-to-market swings are not included in the Realized metric.
+2. **CMP Pricing & Refresh Latency:** Live DD uses prices as of the last time CMP was entered, imported, or refreshed via a broker sync. It does not tick in real time unless an active live price stream is running. If CMP prices are older than 24 hours, the UI indicates stale prices.
+3. **Cash Flow Timing:** Deposits and withdrawals from the Fund Management ledger are applied at the start of their recorded calendar date (`equityStart = equityPrev + flow`).
+4. **Migrated Ledger Dates:** Legacy monthly capital adjustments are migrated with approximate dates (the 1st of each month) until the user confirms or edits the exact calendar date in the Fund Management ledger.
+5. **Partial Exits Dating:** For partial exits, realized events are dated at their latest exit leg (`e1`..`e5` with qty > 0). Intraday or multi-day leg staging is resolved at the latest leg date.
+6. **Exit Charges on Open Positions:** Estimated future exit broker charges and taxes for open positions are not deducted in unrealized P&L calculations.

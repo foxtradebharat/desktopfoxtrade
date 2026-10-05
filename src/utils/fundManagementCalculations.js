@@ -284,9 +284,11 @@ export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '202
     }
     localStorage.setItem('tradeontip_base_capital', String(initialAdded));
 
-    window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-      detail: { portfolioId, year, data: derivedAggregates, entries: cleanEntries, baseCapital: initialAdded }
-    }));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+        detail: { portfolioId, year, data: derivedAggregates, entries: cleanEntries, baseCapital: initialAdded }
+      }));
+    }
   } catch (err) {
     console.error('Error saving ledger entries:', err);
   }
@@ -354,9 +356,11 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
     }
     localStorage.setItem('tradeontip_base_capital', String(initialAdded));
 
-    window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-      detail: { portfolioId, year, data, entries, baseCapital: initialAdded }
-    }));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+        detail: { portfolioId, year, data, entries, baseCapital: initialAdded }
+      }));
+    }
   } catch (err) {
     console.error('Error saving capital changes:', err);
   }
