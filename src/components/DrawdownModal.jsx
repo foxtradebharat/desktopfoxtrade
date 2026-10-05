@@ -457,28 +457,6 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
           </div>
         )}
 
-        {/* Approximate Flows Alert */}
-        {ddData.approxFlowCount > 0 && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '8px',
-            padding: '10px 14px',
-            marginBottom: '16px',
-            borderRadius: '8px',
-            backgroundColor: 'rgba(245, 158, 11, 0.08)',
-            border: '1px solid rgba(245, 158, 11, 0.25)',
-            color: '#d97706',
-            fontSize: '12px'
-          }}>
-            <Info size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
-            <div>
-              <div style={{ fontWeight: 600 }}>
-                {ddData.approxFlowCount} deposits/withdrawals have approximate dates
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Unpriced Open Positions Alert */}
         {ddData.unpricedCount > 0 && (

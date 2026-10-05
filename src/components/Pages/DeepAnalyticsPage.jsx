@@ -5687,20 +5687,12 @@ export default function DeepAnalyticsPage({
         </h2>
 
         {/* Drawdown Engine Data Quality Notes */}
-        {((ddDaily.skippedDays && ddDaily.skippedDays.length > 0) || (ddDaily.approxFlowCount && ddDaily.approxFlowCount > 0)) && (
+        {ddDaily.skippedDays && ddDaily.skippedDays.length > 0 && (
           <div className="flex flex-col gap-2">
-            {ddDaily.skippedDays?.length > 0 && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
-                <Info size={14} className="shrink-0" />
-                <span>{ddDaily.skippedDays.length} trades before capital was recorded are excluded</span>
-              </div>
-            )}
-            {ddDaily.approxFlowCount > 0 && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-medium">
-                <Info size={14} className="shrink-0" />
-                <span>{ddDaily.approxFlowCount} deposits/withdrawals have approximate dates</span>
-              </div>
-            )}
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
+              <Info size={14} className="shrink-0" />
+              <span>{ddDaily.skippedDays.length} trades before capital was recorded are excluded</span>
+            </div>
           </div>
         )}
 

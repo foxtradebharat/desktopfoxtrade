@@ -262,6 +262,8 @@ export default function FundManagementPage({
   // Inline editing state: { monthIdx, field: 'added' | 'withdrawn' }
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
+  const editingCellRef = useRef(null);
+  editingCellRef.current = editingCell;
 
   // Note popover modal state: { monthIdx, field: 'added' | 'withdrawn' }
   const [noteModal, setNoteModal] = useState(null);
@@ -414,9 +416,21 @@ export default function FundManagementPage({
     });
   }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId]);
 
-  // Save changes to localStorage and notify parent
-  const handleSaveValue = (monthIdx, field) => {
-    const num = parseFloat(editValue) || 0;
+  // Start direct inline editing for a cell
+  const startEditing = (monthIdx, field) => {
+    const cell = { monthIdx, field };
+    editingCellRef.current = cell;
+    setEditingCell(cell);
+    const rowVal = field === 'added' ? monthlyData[monthIdx]?.added : monthlyData[monthIdx]?.withdrawn;
+    const currentVal = rowVal ?? (capitalChanges[monthIdx]?.[field] ?? 0);
+    setEditValue(currentVal > 0 ? String(currentVal) : '0');
+  };
+
+  // Save changes to localStorage, notify parent, and optionally navigate to next cell
+  const handleSaveValue = (monthIdx, field, nextCell = null, directValue = null) => {
+    const valToUse = directValue !== null && directValue !== undefined ? directValue : editValue;
+    const rawNum = String(valToUse).trim();
+    const num = rawNum === '' ? 0 : Math.max(0, parseFloat(rawNum) || 0);
     const currentMonth = capitalChanges[monthIdx] || {};
     const updatedMonth = {
       ...currentMonth,
@@ -429,9 +443,78 @@ export default function FundManagementPage({
 
     setCapitalChanges(updatedData);
     saveCapitalChanges(activePortfolioId, selectedYear, updatedData);
-    setEditingCell(null);
 
-    // Capital update propagates automatically via tradeontip_capital_updated event in saveCapitalChanges()
+    if (nextCell) {
+      editingCellRef.current = nextCell;
+      setEditingCell(nextCell);
+      const nextMonthData = updatedData[nextCell.monthIdx] || {};
+      const nextVal = nextMonthData[nextCell.field] ?? (nextCell.field === 'added' ? monthlyData[nextCell.monthIdx]?.added : monthlyData[nextCell.monthIdx]?.withdrawn) ?? 0;
+      setEditValue(nextVal > 0 ? String(nextVal) : '0');
+    } else {
+      editingCellRef.current = null;
+      setEditingCell(null);
+      setEditValue('');
+    }
+  };
+
+  // Handle cell blur: save and close only if this cell is still the active editing cell
+  const handleCellBlur = (e, monthIdx, field) => {
+    if (editingCellRef.current?.monthIdx === monthIdx && editingCellRef.current?.field === field) {
+      const explicitVal = e?.target?.value !== undefined ? e.target.value : editValue;
+      handleSaveValue(monthIdx, field, null, explicitVal);
+    }
+  };
+
+  // Keyboard navigation matching Nexus: Enter (next row), Tab (next col/row), Arrows, Escape
+  const handleCellKeyDown = (e, monthIdx, field) => {
+    const currentInputVal = e?.target?.value !== undefined ? e.target.value : editValue;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const nextIdx = monthIdx + (e.shiftKey ? -1 : 1);
+      if (nextIdx >= 0 && nextIdx < 12) {
+        handleSaveValue(monthIdx, field, { monthIdx: nextIdx, field }, currentInputVal);
+      } else {
+        handleSaveValue(monthIdx, field, null, currentInputVal);
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (field === 'withdrawn') {
+          handleSaveValue(monthIdx, field, { monthIdx, field: 'added' }, currentInputVal);
+        } else if (monthIdx > 0) {
+          handleSaveValue(monthIdx, field, { monthIdx: monthIdx - 1, field: 'withdrawn' }, currentInputVal);
+        } else {
+          handleSaveValue(monthIdx, field, null, currentInputVal);
+        }
+      } else {
+        if (field === 'added') {
+          handleSaveValue(monthIdx, field, { monthIdx, field: 'withdrawn' }, currentInputVal);
+        } else if (monthIdx < 11) {
+          handleSaveValue(monthIdx, field, { monthIdx: monthIdx + 1, field: 'added' }, currentInputVal);
+        } else {
+          handleSaveValue(monthIdx, field, null, currentInputVal);
+        }
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (monthIdx < 11) {
+        handleSaveValue(monthIdx, field, { monthIdx: monthIdx + 1, field }, currentInputVal);
+      } else {
+        handleSaveValue(monthIdx, field, null, currentInputVal);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (monthIdx > 0) {
+        handleSaveValue(monthIdx, field, { monthIdx: monthIdx - 1, field }, currentInputVal);
+      } else {
+        handleSaveValue(monthIdx, field, null, currentInputVal);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      editingCellRef.current = null;
+      setEditingCell(null);
+      setEditValue('');
+    }
   };
 
   // Save notes
@@ -546,7 +629,6 @@ export default function FundManagementPage({
                 }}>
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                     <span>ADDED (₹)</span>
-                    <Pencil size={11} className="text-muted-foreground opacity-60" />
                     <Tooltip content={COLUMN_HELP_TEXTS.added}>
                       <span className="opacity-40 hover:opacity-100 transition-opacity cursor-help inline-flex items-center">
                         <Info size={11} color="var(--text-muted)" />
@@ -567,7 +649,6 @@ export default function FundManagementPage({
                 }}>
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                     <span>WITHDRAWN (₹)</span>
-                    <Pencil size={11} className="text-muted-foreground opacity-60" />
                     <Tooltip content={COLUMN_HELP_TEXTS.withdrawn}>
                       <span className="opacity-40 hover:opacity-100 transition-opacity cursor-help inline-flex items-center">
                         <Info size={11} color="var(--text-muted)" />
@@ -831,74 +912,238 @@ export default function FundManagementPage({
                     </td>
 
                     {/* Added Amount (Funds Deposited) */}
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)' }}>
-                      <div
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
-                        onClick={() => openFlowModal(idx, 'deposit')}
-                        title="Click to manage dated deposits"
-                      >
-                        <span style={{
-                          color: row.added > 0 ? '#10b981' : 'var(--text-muted)',
-                          fontWeight: row.added > 0 ? 600 : 400,
-                          borderBottom: '1px dashed rgba(16, 185, 129, 0.3)',
-                          paddingBottom: '1px',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {row.added > 0 ? `₹${row.added.toLocaleString('en-IN')}` : '₹ 0'}
-                        </span>
-                        {monthEntries[idx]?.hasApproxDeposit && (
-                          <Tooltip content="Confirm exact date for accurate drawdown">
-                            <span style={{
-                              fontSize: '10px',
-                              backgroundColor: '#fef3c7',
-                              color: '#92400e',
-                              padding: '1px 5px',
-                              borderRadius: '4px',
-                              fontWeight: 600,
-                              display: 'inline-flex',
-                              alignItems: 'center'
-                            }}>
-                              Approx
+                    <td style={{
+                      padding: '10px 16px',
+                      fontFamily: 'var(--font-mono, monospace)',
+                      textAlign: 'right',
+                      backgroundColor: 'rgba(16, 185, 129, 0.02)'
+                    }}>
+                      <div className="group relative" style={{ width: '100%' }}>
+                        {isAddedEditing ? (
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            autoFocus
+                            value={editValue}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                              const parts = val.split('.');
+                              if (parts.length > 2) return;
+                              setEditValue(val);
+                            }}
+                            onBlur={(e) => handleCellBlur(e, idx, 'added')}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, 'added')}
+                            className="w-full bg-transparent px-0 py-0 font-bold border-0 focus-visible:ring-0 focus-visible:outline-none text-right font-mono text-primary text-[13px]"
+                            style={{
+                              width: '100%',
+                              backgroundColor: 'transparent',
+                              padding: '0',
+                              fontWeight: 700,
+                              border: 'none',
+                              outline: 'none',
+                              textAlign: 'right',
+                              fontFamily: 'var(--font-mono, monospace)',
+                              color: 'var(--text-primary)',
+                              fontSize: '13px',
+                              height: '28px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        ) : (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => startEditing(idx, 'added')}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                startEditing(idx, 'added');
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              textAlign: 'right',
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              paddingRight: '2px',
+                              transition: 'transform 0.15s ease'
+                            }}
+                            className="hover:translate-x-[-3px]"
+                          >
+                            <span
+                              style={{
+                                borderBottom: '1px dashed color-mix(in srgb, var(--border-color) 60%, transparent)',
+                                transition: 'border-color 0.15s ease',
+                                display: 'inline-block'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                                <span>
+                                  {row.added > 0 ? (
+                                    <span style={{ color: '#10b981', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                      ₹ {row.added.toLocaleString('en-IN')}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: 'color-mix(in srgb, var(--text-muted) 50%, transparent)', whiteSpace: 'nowrap' }}>
+                                      ₹ 0
+                                    </span>
+                                  )}
+                                </span>
+
+                                <button
+                                  type="button"
+                                  aria-label="View added amount notes"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNoteModal({ monthIdx: idx, field: 'added' });
+                                    setNoteText(capitalChanges[idx]?.addedNotes || '');
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: '2px',
+                                    borderRadius: '9999px',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: capitalChanges[idx]?.addedNotes ? '#10b981' : 'color-mix(in srgb, var(--text-muted) 50%, transparent)',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.12)';
+                                    e.currentTarget.style.color = '#10b981';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                    e.currentTarget.style.color = capitalChanges[idx]?.addedNotes ? '#10b981' : 'color-mix(in srgb, var(--text-muted) 50%, transparent)';
+                                  }}
+                                >
+                                  <Info size={13} />
+                                </button>
+                              </div>
                             </span>
-                          </Tooltip>
+                          </div>
                         )}
-                        <Pencil size={11} color="var(--text-muted)" style={{ opacity: 0.5 }} />
                       </div>
                     </td>
 
                     {/* Withdrawn Amount (Funds Withdrawn) */}
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)' }}>
-                      <div
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
-                        onClick={() => openFlowModal(idx, 'withdrawal')}
-                        title="Click to manage dated withdrawals"
-                      >
-                        <span style={{
-                          color: row.withdrawn > 0 ? '#ef4444' : 'var(--text-muted)',
-                          fontWeight: row.withdrawn > 0 ? 600 : 400,
-                          borderBottom: '1px dashed rgba(239, 68, 68, 0.3)',
-                          paddingBottom: '1px',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {row.withdrawn > 0 ? `₹${row.withdrawn.toLocaleString('en-IN')}` : '₹ 0'}
-                        </span>
-                        {monthEntries[idx]?.hasApproxWithdrawal && (
-                          <Tooltip content="Confirm exact date for accurate drawdown">
-                            <span style={{
-                              fontSize: '10px',
-                              backgroundColor: '#fef3c7',
-                              color: '#92400e',
-                              padding: '1px 5px',
-                              borderRadius: '4px',
-                              fontWeight: 600,
-                              display: 'inline-flex',
-                              alignItems: 'center'
-                            }}>
-                              Approx
+                    <td style={{
+                      padding: '10px 16px',
+                      fontFamily: 'var(--font-mono, monospace)',
+                      textAlign: 'right',
+                      backgroundColor: 'rgba(239, 68, 68, 0.02)'
+                    }}>
+                      <div className="group relative" style={{ width: '100%' }}>
+                        {isWithdrawnEditing ? (
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            autoFocus
+                            value={editValue}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                              const parts = val.split('.');
+                              if (parts.length > 2) return;
+                              setEditValue(val);
+                            }}
+                            onBlur={(e) => handleCellBlur(e, idx, 'withdrawn')}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, 'withdrawn')}
+                            className="w-full bg-transparent px-0 py-0 font-bold border-0 focus-visible:ring-0 focus-visible:outline-none text-right font-mono text-primary text-[13px]"
+                            style={{
+                              width: '100%',
+                              backgroundColor: 'transparent',
+                              padding: '0',
+                              fontWeight: 700,
+                              border: 'none',
+                              outline: 'none',
+                              textAlign: 'right',
+                              fontFamily: 'var(--font-mono, monospace)',
+                              color: 'var(--text-primary)',
+                              fontSize: '13px',
+                              height: '28px',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        ) : (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => startEditing(idx, 'withdrawn')}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                startEditing(idx, 'withdrawn');
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              textAlign: 'right',
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              paddingRight: '2px',
+                              transition: 'transform 0.15s ease'
+                            }}
+                            className="hover:translate-x-[-3px]"
+                          >
+                            <span
+                              style={{
+                                borderBottom: '1px dashed color-mix(in srgb, var(--border-color) 60%, transparent)',
+                                transition: 'border-color 0.15s ease',
+                                display: 'inline-block'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                                <span>
+                                  {row.withdrawn > 0 ? (
+                                    <span style={{ color: '#ef4444', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                      ₹ {row.withdrawn.toLocaleString('en-IN')}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: 'color-mix(in srgb, var(--text-muted) 50%, transparent)', whiteSpace: 'nowrap' }}>
+                                      ₹ 0
+                                    </span>
+                                  )}
+                                </span>
+
+                                <button
+                                  type="button"
+                                  aria-label="View withdrawn amount notes"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNoteModal({ monthIdx: idx, field: 'withdrawn' });
+                                    setNoteText(capitalChanges[idx]?.withdrawnNotes || '');
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: '2px',
+                                    borderRadius: '9999px',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: capitalChanges[idx]?.withdrawnNotes ? '#ef4444' : 'color-mix(in srgb, var(--text-muted) 50%, transparent)',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.12)';
+                                    e.currentTarget.style.color = '#ef4444';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                    e.currentTarget.style.color = capitalChanges[idx]?.withdrawnNotes ? '#ef4444' : 'color-mix(in srgb, var(--text-muted) 50%, transparent)';
+                                  }}
+                                >
+                                  <Info size={13} />
+                                </button>
+                              </div>
                             </span>
-                          </Tooltip>
+                          </div>
                         )}
-                        <Pencil size={11} color="var(--text-muted)" style={{ opacity: 0.5 }} />
                       </div>
                     </td>
 
@@ -1144,15 +1389,21 @@ export default function FundManagementPage({
               border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
               borderRadius: '16px',
               padding: '20px',
-              width: '360px',
+              width: '380px',
+              maxWidth: 'calc(100vw - 32px)',
               boxShadow: '0 16px 36px rgba(0,0,0,0.18)'
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {MONTH_NAMES[noteModal.monthIdx]} {noteModal.field.toUpperCase()} Notes
-              </span>
-              <button onClick={() => setNoteModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <div>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', display: 'block' }}>
+                  {noteModal.field === 'added' ? 'Added Amount Notes' : 'Withdrawn Amount Notes'}
+                </span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px', display: 'block' }}>
+                  {MONTH_NAMES[noteModal.monthIdx]} - {noteModal.field === 'added' ? 'Added' : 'Withdrawn'} ₹{((noteModal.field === 'added' ? monthlyData[noteModal.monthIdx]?.added : monthlyData[noteModal.monthIdx]?.withdrawn) || 0).toLocaleString('en-IN')}
+                </span>
+              </div>
+              <button onClick={() => setNoteModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px' }}>
                 <X size={16} />
               </button>
             </div>
@@ -1160,21 +1411,48 @@ export default function FundManagementPage({
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
-              placeholder="Add notes for this capital adjustment..."
-              rows={3}
+              placeholder="Add notes for this amount..."
+              maxLength={2000}
+              rows={4}
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
                 borderRadius: '8px',
                 border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
-                padding: '8px 10px',
+                padding: '10px 12px',
                 fontSize: '12px',
                 outline: 'none',
                 backgroundColor: 'var(--bg-surface)',
                 color: 'var(--text-primary)',
-                resize: 'none'
+                resize: 'none',
+                fontFamily: 'inherit'
               }}
             />
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                {noteText.length}/2000 characters
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const mIdx = noteModal.monthIdx;
+                  const fType = noteModal.field === 'added' ? 'deposit' : 'withdrawal';
+                  setNoteModal(null);
+                  openFlowModal(mIdx, fType);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
+              >
+                Detailed Ledger Entries
+              </button>
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <button
@@ -1206,7 +1484,7 @@ export default function FundManagementPage({
                   boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
                 }}
               >
-                Save
+                Save Notes
               </button>
             </div>
           </div>
@@ -1284,30 +1562,10 @@ export default function FundManagementPage({
                       <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
                         {entry.date}
                       </span>
-                      {entry.dateApproximate && (
-                        <span
-                          title="Confirm exact date for accurate drawdown"
-                          style={{
-                            fontSize: '10px',
-                            backgroundColor: '#fef3c7',
-                            color: '#92400e',
-                            padding: '1px 6px',
-                            borderRadius: '4px',
-                            fontWeight: 600
-                          }}
-                        >
-                          Approximate date
-                        </span>
-                      )}
                     </div>
                     {entry.note && (
                       <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                         {entry.note}
-                      </span>
-                    )}
-                    {entry.dateApproximate && (
-                      <span style={{ fontSize: '10.5px', color: '#b45309', fontStyle: 'italic' }}>
-                        Confirm exact date for accurate drawdown
                       </span>
                     )}
                   </div>
@@ -1355,7 +1613,7 @@ export default function FundManagementPage({
             {/* Form to Add / Edit */}
             <form onSubmit={handleSaveEntry} style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)', paddingTop: '14px' }}>
               <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {editingEntry ? 'Edit Entry (clears approximate flag)' : `Add New ${flowModal.type === 'deposit' ? 'Deposit' : 'Withdrawal'}`}
+                {editingEntry ? 'Edit Entry' : `Add New ${flowModal.type === 'deposit' ? 'Deposit' : 'Withdrawal'}`}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <div>
