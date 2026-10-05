@@ -14,7 +14,6 @@ export default function TradeSettingsModal({
   const costBasisMethod = settings.costBasisMethod || 'fifo';
 
   // Journal Display toggles with sensible defaults
-  const liveCmpEnabled = settings.liveCmpEnabled === true; // Default: false (OFF)
   const statsInHoldings = settings.statsInHoldings !== false;
   const statsInBrokers = settings.statsInBrokers === true;
   const tradeReviewIndicators = settings.tradeReviewIndicators === true;
@@ -38,7 +37,6 @@ export default function TradeSettingsModal({
       onUpdateSetting('tradingMarket', 'india');
       onUpdateSetting('columnTerminology', 'pyramidExit');
       onUpdateSetting('costBasisMethod', 'fifo');
-      onUpdateSetting('liveCmpEnabled', false);
       onUpdateSetting('statsInHoldings', true);
       onUpdateSetting('statsInBrokers', false);
       onUpdateSetting('tradeReviewIndicators', false);
@@ -371,12 +369,6 @@ export default function TradeSettingsModal({
               backgroundColor: 'var(--bg-card, #ffffff)'
             }}>
               {[
-                {
-                  id: 'liveCmpEnabled',
-                  title: 'Live Market CMP',
-                  desc: 'Stream live prices from NSE exchange (default OFF to preserve ledger & broker import integrity)',
-                  val: liveCmpEnabled
-                },
                 {
                   id: 'statsInHoldings',
                   title: 'Stats in Holdings',

@@ -395,13 +395,13 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
       const openQty = parseFloat(t.openQty ?? t.qty ?? t.initialQty ?? t.initial_qty) || 0;
       const initialEntry = parseFloat(t.entry) || 0;
       const avgEntry = parseFloat(t.avgEntry ?? t.entry) || 0;
-      const cmp = parseFloat(t.cmp) || avgEntry;
+      const cmp = parseFloat(t.cmp) || 0;
       const sl = parseFloat(t.sl) || 0;
       const tsl = parseFloat(t.tsl) || 0;
       const unrealizedAmt = t.unrealized !== undefined && !isNaN(parseFloat(t.unrealized))
         ? parseFloat(t.unrealized)
-        : (isSell ? (avgEntry - cmp) * openQty : (cmp - avgEntry) * openQty);
-      const movePct = avgEntry > 0 ? (isSell ? ((avgEntry - cmp) / avgEntry) * 100 : ((cmp - avgEntry) / avgEntry) * 100) : 0;
+        : (cmp > 0 ? (isSell ? (avgEntry - cmp) * openQty : (cmp - avgEntry) * openQty) : 0);
+      const movePct = (avgEntry > 0 && cmp > 0) ? (isSell ? ((avgEntry - cmp) / avgEntry) * 100 : ((cmp - avgEntry) / avgEntry) * 100) : 0;
       const isProfit = unrealizedAmt >= 0;
       const invested = openQty * avgEntry;
 
@@ -1235,33 +1235,6 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                 <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
                   UNREALIZED P/L
                 </span>
-                {settings?.liveCmpEnabled !== false ? (
-                  <span
-                    title="Live Market Quotes Active"
-                    style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: '#10b981',
-                      animation: 'statLivePing 1.8s ease-in-out infinite',
-                      cursor: 'help'
-                    }}
-                  />
-                ) : (
-                  <span
-                    title="File Snapshot Quotes (Live CMP Disabled)"
-                    style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--text-muted, #9ca3af)',
-                      opacity: 0.5,
-                      cursor: 'help'
-                    }}
-                  />
-                )}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1312,39 +1285,8 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                       <div style={{ position: 'absolute', bottom: '100%', right: '4px', borderWidth: '4px', borderStyle: 'solid', borderColor: 'transparent transparent #e5e7eb transparent', zIndex: 1 }} />
                       <div style={{ position: 'absolute', bottom: 'calc(100% - 1px)', right: '4px', borderWidth: '4px', borderStyle: 'solid', borderColor: 'transparent transparent #ffffff transparent', zIndex: 2 }} />
 
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                        <div style={{ fontSize: '9.5px', color: 'var(--text-muted, #71717a)', lineHeight: '1.2' }}>
-                          Running impact on portfolio capital
-                        </div>
-                        {onUpdateSetting && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onUpdateSetting('liveCmpEnabled', settings?.liveCmpEnabled === false ? true : false);
-                            }}
-                            title="Toggle between Live Market Quotes (Nexus default) and Imported File Snapshot Quotes"
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '9.5px',
-                              fontWeight: 600,
-                              padding: '2px 7px',
-                              borderRadius: '5px',
-                              border: '1px solid var(--border-color, #e5e7eb)',
-                              backgroundColor: 'var(--bg-card, #f9fafb)',
-                              color: 'var(--text-primary)',
-                              cursor: 'pointer',
-                              transition: 'background-color 0.15s ease'
-                            }}
-                            onMouseDown={(e) => { e.currentTarget.style.backgroundColor = '#9ca3af'; }}
-                            onMouseUp={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-card, #f9fafb)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-card, #f9fafb)'; }}
-                          >
-                            <Activity size={10} color={settings?.liveCmpEnabled !== false ? '#10b981' : 'var(--text-muted)'} />
-                            {settings?.liveCmpEnabled !== false ? 'Live (Nexus)' : 'File CSV'}
-                          </button>
-                        )}
+                      <div style={{ fontSize: '9.5px', color: 'var(--text-muted, #71717a)', lineHeight: '1.2', marginBottom: '6px' }}>
+                        Running impact on portfolio capital.
                       </div>
                       <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f3f4f6)', marginBottom: '6px' }} />
 
@@ -1377,7 +1319,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                                       {item.symbol}
                                     </span>
                                     <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
-                                      {item.openQty} @ {formatRupee(item.avgEntry)} • CMP {formatRupee(item.cmp)}
+                                      {item.openQty} @ {formatRupee(item.avgEntry)} • CMP {item.cmp > 0 ? formatRupee(item.cmp) : '—'}
                                     </span>
                                   </div>
                                 </div>

@@ -700,11 +700,6 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   }, [accessToken]);
   const [liveCMPs, setLiveCMPs] = useState(() => {
     try {
-      const savedSettings = localStorage.getItem('tradeontip_settings');
-      const parsedSettings = savedSettings ? JSON.parse(savedSettings) : {};
-      if (parsedSettings.liveCmpEnabled === false) {
-        return {};
-      }
       const cached = sessionStorage.getItem('tradeontip_live_cmps');
       return cached ? JSON.parse(cached) : {};
     } catch {
@@ -957,8 +952,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // Real-time Live Market Data Feed & WebSocket Engine for NSE
   useEffect(() => {
-    const isLiveCmp = journalSettings.liveCmpEnabled !== false;
-    if (!watchedSymbolsStr || !isLiveCmp) {
+    if (!watchedSymbolsStr) {
       liveMarketFeed.stop();
       return;
     }
@@ -992,7 +986,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       unsubscribe();
       liveMarketFeed.stop();
     };
-  }, [watchedSymbolsStr, journalSettings.liveCmpEnabled]);
+  }, [watchedSymbolsStr]);
 
   // File Ref for CSV Import
   const fileInputRef = useRef(null);
@@ -1015,8 +1009,6 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? initialFundCapital 
       : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : (tradeAlloc > 0 ? tradeAlloc : 200000));
 
-    const isLiveCmp = journalSettings.liveCmpEnabled !== false;
-
     const tradeCapital = getCapital({
       baseCapital: BASE_CAPITAL,
       trades: portfolioTrades,
@@ -1025,7 +1017,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     });
 
     return enrichTradeWithFoxFormulas(t, tradeCapital, {
-      liveCMPs: isLiveCmp ? liveCMPs : {},
+      liveCMPs,
       costBasisMethod: journalSettings.costBasisMethod || 'fifo',
       getCharges: (broker, segment, entryTurnover, exitTurnover, exitedQty) =>
         calculateCharges(broker, segment, entryTurnover, exitTurnover, exitedQty, chargesMap || {})
@@ -1047,7 +1039,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   const enrichedTrades = useMemo(() => {
     return portfolioTrades.map(t => enrichTradeWithLegs(t));
-  }, [portfolioTrades, monthlyPerf, liveCMPs, capitalChanges, portfolioCapital, chargesMap, journalSettings.costBasisMethod, journalSettings.liveCmpEnabled]);
+  }, [portfolioTrades, monthlyPerf, liveCMPs, capitalChanges, portfolioCapital, chargesMap, journalSettings.costBasisMethod]);
 
   // ── 1. Welcome Notification for New User Sign Up / First Visit ───────────
   useEffect(() => {
@@ -1311,7 +1303,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         return d && d >= from && d <= to;
       });
     });
-  }, [portfolioTrades, searchTerm, statusFilter, instrumentFilter, outcomeFilter, tradeTypeFilter, liveCMPs, resolvedDateFilter, journalSettings.liveCmpEnabled]);
+  }, [portfolioTrades, searchTerm, statusFilter, instrumentFilter, outcomeFilter, tradeTypeFilter, liveCMPs, resolvedDateFilter]);
 
   const validFilteredTrades = useMemo(() => {
     return filteredTrades.filter(t => (t.name || t.symbol || '').trim() || t.entry || t.qty);
@@ -1632,7 +1624,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       maxDrawdownTroughDate: ddResult.maxDrawdownTroughDate || null,
       recoveryDate: ddResult.recoveryDate || null
     };
-  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled, activePortfolioId]);
+  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, activePortfolioId]);
 
 
   const triggerBackupWarningIfOff = () => {
