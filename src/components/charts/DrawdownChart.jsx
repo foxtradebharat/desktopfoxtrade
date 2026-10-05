@@ -106,7 +106,7 @@ export default function DrawdownChart({
             fontSize={11}
             tickLine={false}
             axisLine={false}
-            domain={['auto', 0]}
+            domain={[dataMin => Math.min(dataMin * 1.2, -1), 0]}
             tickFormatter={(val) => (hideValues ? '•••' : `${val}%`)}
           />
 
@@ -143,7 +143,7 @@ export default function DrawdownChart({
           />
 
           <Area
-            type="monotone"
+            type="stepAfter"
             dataKey="drawdownPct"
             name="Drawdown"
             stroke={strokeColor}

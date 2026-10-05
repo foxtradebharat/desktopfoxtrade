@@ -68,7 +68,7 @@ import { loadBrokerCharges, calculateCharges, detectSegment } from './utils/brok
 import { getCanonicalSymbol, getCorporateActionDetails } from './utils/securityMaster.js';
 import { toPaise, fromPaise } from './utils/pnlEngine.js';
 import { computeDrawdown } from './utils/drawdown.js';
-import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate } from './utils/tradeMetricsShared.js';
+import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate, buildRealizedEvents, formatDrawdownPct } from './utils/tradeMetricsShared.js';
 /**
  * Robust date parser supporting Indian DD-MM-YYYY / DD/MM/YYYY and ISO YYYY-MM-DD
  */
@@ -1528,18 +1528,16 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? ((grossRealizedPL / baseFundCapital) * 100).toFixed(2)
       : '0.00';
 
-    // ── Current Drawdown (Pre-tax): Dynamic calculation against true peak equity ──
+    // ── Current Drawdown (Realized): Dynamic calculation against true peak equity ──
     // Tracks cumulative realized equity curve peak-to-trough drop % and amount.
     const startingCapitalBasis = monthlyPerf?.find(m => m.capitalIsReal && m.startingCapital > 0)?.startingCapital ?? null;
-    const sortedClosed = sortTradesByEffectiveExitDate(
-      portfolioTrades.filter(t => isClosedTrade(t) || (isPartialTrade(t) && getTradePnl(t) !== 0))
-    );
-    const pnls = sortedClosed.map(getTradePnl);
+    const { events: realizedEvents, excluded: excludedDdTrades } = buildRealizedEvents(portfolioTrades);
+    const pnls = realizedEvents.map(e => e.pnl);
     const ddResult = computeDrawdown(pnls, startingCapitalBasis);
 
-    const currentDrawdown = ddResult.available ? ddResult.currentPct.toFixed(2) : null;
+    const currentDrawdown = ddResult.available ? formatDrawdownPct(ddResult.currentPct) : null;
     const currentDrawdownAmount = ddResult.available ? Math.abs(ddResult.currentAmount).toFixed(2) : null;
-    const maxDrawdown = ddResult.available ? ddResult.maxPct.toFixed(2) : null;
+    const maxDrawdown = ddResult.available ? formatDrawdownPct(ddResult.maxPct) : null;
     const maxDrawdownAmount = ddResult.available ? Math.abs(ddResult.maxAmount).toFixed(2) : null;
 
     return {
@@ -1562,7 +1560,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       currentDrawdown,
       currentDrawdownAmount,
       maxDrawdown,
-      maxDrawdownAmount
+      maxDrawdownAmount,
+      excludedDrawdownTrades: excludedDdTrades
     };
   }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled]);
 
@@ -2392,7 +2391,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             onToggleCol={handleToggleCol}
             dateRange={dateRange}
             resolvedDateFilter={resolvedDateFilter}
-            startingCapital={metrics?.startingCapitalBasis ?? portfolioCapital}
+            startingCapital={metrics?.startingCapitalBasis}
           />
         )}
         {activeTab === 'notes'           && (

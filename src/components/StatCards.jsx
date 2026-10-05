@@ -13,6 +13,7 @@ import {
   formatFullIndianRupee 
 } from '../utils/indianCurrencyFormatter';
 import { calculateMonthlyPerformance, getStoredCapitalChanges, getCapital } from '../utils/fundManagementCalculations';
+import { formatDrawdownAmount, formatDrawdownPct } from '../utils/tradeMetricsShared';
 
 const ICON_COMPONENTS = {
   list: ListChecks,
@@ -2235,7 +2236,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
           </div>
         )}
 
-        {/* ── CARD 12: CURRENT DD (Pre-tax) (Lakhs & Crores formatted) ── */}
+        {/* ── CARD 12: CURRENT DD (Realized) ── */}
         {isEnabled('currentDd') && (
           <div style={{
             backgroundColor: 'var(--bg-card)',
@@ -2250,8 +2251,11 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
             position: 'relative'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                CURRENT DD (Pre-tax)
+              <span
+                title="Realized, net of charges. Closed and partial exits only. Unrealized P&L of open positions is not included."
+                style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}
+              >
+                CURRENT DD (Realized)
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{
@@ -2263,7 +2267,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                 </div>
                 <button
                   onClick={() => setIsDrawdownModalOpen(true)}
-                  title="Click for Drawdown Breakdown"
+                  title="Drawdown Breakdown — Realized, net of charges. Closed and partial exits only. Unrealized P&L of open positions is not included."
                   aria-label="Click for Drawdown Breakdown"
                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                   <Info size={14} color="var(--text-muted)" />
@@ -2281,21 +2285,27 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                     (Set starting capital)
                   </div>
                 </>
-              ) : (
-                <>
-                  <div style={{ fontSize: '22px', fontWeight: 700, color: parseFloat(metrics?.currentDrawdown ?? '0') === 0 ? 'var(--color-green, #10b981)' : '#ef4444', letterSpacing: '-0.02em', lineHeight: '1.1' }}>
-                    {formatValue(metrics?.currentDrawdown ?? '0.00', '', '%')}
-                  </div>
-                  {(trades || []).length > 0 && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
-                    <div 
-                      title={formatFullTooltip(metrics.currentDrawdownAmount)}
-                      style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450, marginTop: '3px', lineHeight: '1.5' }}
-                    >
-                      ({formatRupee(metrics.currentDrawdownAmount)})
+              ) : (() => {
+                const ddNum = Number(metrics?.currentDrawdown ?? 0);
+                const v = Number(ddNum.toFixed(2));
+                const text = v === 0 ? '0.00' : v.toFixed(2);
+                const color = v === 0 ? 'var(--color-green, #10b981)' : '#ef4444';
+                return (
+                  <>
+                    <div style={{ fontSize: '22px', fontWeight: 700, color, letterSpacing: '-0.02em', lineHeight: '1.1' }}>
+                      {formatValue(text, '', '%')}
                     </div>
-                  )}
-                </>
-              )}
+                    {(trades || []).length > 0 && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
+                      <div 
+                        title={`₹${formatDrawdownAmount(metrics.currentDrawdownAmount)}`}
+                        style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450, marginTop: '3px', lineHeight: '1.5' }}
+                      >
+                        (₹{formatDrawdownAmount(metrics.currentDrawdownAmount)})
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

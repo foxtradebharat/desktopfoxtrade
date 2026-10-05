@@ -29,7 +29,10 @@ import {
   generateTradingCalendarDays,
   getRealizedExitDate,
   toLocalDayKey,
-  RISK_FREE_ANNUAL
+  RISK_FREE_ANNUAL,
+  buildRealizedEvents,
+  formatDrawdownAmount,
+  formatDrawdownPct
 } from '../../utils/tradeMetricsShared';
 import { INDIAN_HOLIDAYS } from '../../services/marketTimingService';
 
@@ -5093,22 +5096,26 @@ export default function DeepAnalyticsPage({
   }, [closedTrades]);
 
   // ── Equity Curve ──────────────────────────────────────────────────────
+  const { events: ddEvents } = useMemo(() => {
+    return buildRealizedEvents(trades);
+  }, [trades]);
+
   const equityCurve = useMemo(() => {
-    const sorted = sortTradesByEffectiveExitDate(closedTrades);
-    const pnls = sorted.map(getTradePnl);
+    const pnls = ddEvents.map(e => e.pnl);
     const cap = Number(startingCapital) > 0 ? Number(startingCapital) : null;
     const ddResult = computeDrawdown(pnls, cap);
 
-    return sorted.map((t, i) => {
+    return ddEvents.map((e, i) => {
       const step = ddResult.available ? ddResult.series[i] : null;
       return {
         i: i + 1,
+        date: e.dayKey,
         equity: step ? step.equity : pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
         drawdown: step ? step.pct : 0,
-        name: t.name || t.symbol
+        name: e.symbol
       };
     });
-  }, [closedTrades, startingCapital]);
+  }, [ddEvents, startingCapital]);
 
   // ── Monthly P&L ───────────────────────────────────────────────────────
   const monthlyPnl = useMemo(() => {

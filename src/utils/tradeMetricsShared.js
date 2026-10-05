@@ -298,3 +298,114 @@ export function computeSharpe(events, startingCapital, calendarDays, rfAnnual = 
     dailySd: sd
   };
 }
+
+/**
+ * Shared Indian Rupee NumberFormat instance with two decimal places.
+ * Example: 1000000 -> 10,00,000.00
+ */
+export const indianRupeeFormatter = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+/**
+ * Formats rupee amount with strict Indian number grouping.
+ */
+export function formatDrawdownAmount(amt) {
+  if (amt === null || amt === undefined || isNaN(amt)) return '—';
+  return indianRupeeFormatter.format(Math.abs(Number(amt)));
+}
+
+/**
+ * Formats drawdown percentage avoiding negative zero (-0.00 -> 0.00).
+ */
+export function formatDrawdownPct(x) {
+  if (x === null || x === undefined || isNaN(x)) return '0.00';
+  const numX = Number(x);
+  const v = Number(numX.toFixed(2));
+  return v === 0 ? '0.00' : v.toFixed(2);
+}
+
+/**
+ * Shared realized exit event builder for drawdown analysis.
+ * Strictly uses exit legs e1..e5 or exitDate.
+ *
+ * @param {Array} trades
+ * @returns {{ events: Array<{ dayKey: string, pnl: number, tradeNo: any, symbol: string, date: Date, trade: any }>, excluded: Array<{ tradeNo: any, symbol: string, reason: string, trade: any }> }}
+ */
+export function buildRealizedEvents(trades = []) {
+  if (!Array.isArray(trades)) return { events: [], excluded: [] };
+
+  const events = [];
+  const excluded = [];
+
+  for (let idx = 0; idx < trades.length; idx++) {
+    const t = trades[idx];
+    if (!t) continue;
+
+    const pnl = getTradePnl(t);
+    const isClosed = isClosedTrade(t);
+    const isPartialWithPnl = isPartialTrade(t) && pnl !== 0;
+
+    if (!isClosed && !isPartialWithPnl) {
+      continue;
+    }
+
+    const tradeNo = t.tradeNo ?? t.id ?? idx + 1;
+    const symbol = t.symbol || t.name || '—';
+
+    // Strict exit date lookup:
+    // Latest exit leg among e1..e5 with qty > 0 and parseable date
+    const exits = [
+      { d: t.e1Date, q: Number(t.e1Qty || 0) },
+      { d: t.e2Date, q: Number(t.e2Qty || 0) },
+      { d: t.e3Date, q: Number(t.e3Qty || 0) },
+      { d: t.e4Date, q: Number(t.e4Qty || 0) },
+      { d: t.e5Date, q: Number(t.e5Qty || 0) },
+    ]
+      .filter(e => e.d && e.q > 0)
+      .map(e => ({ date: parseTradeDate(e.d), q: e.q }))
+      .filter(e => e.date !== null);
+
+    let exitDate = null;
+    if (exits.length > 0) {
+      exits.sort((a, b) => b.date.getTime() - a.date.getTime());
+      exitDate = exits[0].date;
+    } else if (t.exitDate) {
+      exitDate = parseTradeDate(t.exitDate);
+    }
+
+    if (!exitDate) {
+      // Do NOT fall back to entry date, do NOT use time 0
+      excluded.push({
+        tradeNo,
+        symbol,
+        reason: 'Missing or invalid exit date',
+        trade: t
+      });
+      continue;
+    }
+
+    const dayKey = toLocalDayKey(exitDate);
+
+    events.push({
+      dayKey,
+      pnl,
+      tradeNo,
+      symbol,
+      date: exitDate,
+      trade: t
+    });
+  }
+
+  // Sort events chronologically by exit date, tie-break tradeNo
+  events.sort((a, b) => {
+    const da = a.date.getTime();
+    const db = b.date.getTime();
+    if (da !== db) return da - db;
+    return (Number(a.tradeNo) || 0) - (Number(b.tradeNo) || 0);
+  });
+
+  return { events, excluded };
+}
+
