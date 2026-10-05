@@ -40,7 +40,7 @@
  *   - Trade in both → take whichever has higher clientUpdatedAt
  */
 
-import { idbGet, idbPut, STORES } from './foxtradeDB.js';
+import { idbGet, idbPut, idbGetAll, getDB, STORES } from './foxtradeDB.js';
 import { getDeviceId, getConfig, setConfig } from './configStore.js';
 import { clearDoneOps } from './operationsQueue.js';
 import { syncPendingImages } from './imageStore.js';
@@ -50,7 +50,12 @@ import {
   saveCalendarNotes,
   saveIndependentNotes,
 } from './noteStore.js';
-import { getValidAccessToken, subscribeToTokenExpired } from './tokenManager.js';
+import {
+  getValidAccessToken,
+  refreshAccessToken,
+  subscribeToTokenExpired,
+  subscribeToTokenUpdate,
+} from './tokenManager.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -136,7 +141,14 @@ export function getLastSyncError() {
 
 // Automatically bridge token expiration into sync error state
 subscribeToTokenExpired(() => {
-  setSyncError('Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.');
+  setSyncError('Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.');
+});
+
+// Automatically clear sync error state as soon as a fresh valid token is active
+subscribeToTokenUpdate((tok) => {
+  if (tok && tok !== 'demo-token') {
+    setSyncError(null);
+  }
 });
 
 // ── Compression helpers ───────────────────────────────────────────────────────
@@ -220,14 +232,59 @@ async function parseDriveResponseError(resp, actionName) {
   return `${actionName} failed: ${detail}`;
 }
 
+// ── Drive fetch wrapper with transparent 401 retry ─────────────────────────────
+
+/**
+ * Resilient fetch wrapper for all Google Drive API requests.
+ * Automatically handles Bearer Authorization and transparently retries ONCE
+ * after force-refreshing the token if Google returns 401 Unauthorized.
+ */
+async function driveFetch(url, options = {}, token = null) {
+  let currentToken = token || (await getValidAccessToken().catch(() => null));
+  if (!currentToken || currentToken === 'demo-token') {
+    throw new Error('Not authenticated with Google Drive.');
+  }
+
+  const baseHeaders = options.headers || {};
+  let reqHeaders;
+  if (typeof Headers !== 'undefined' && baseHeaders instanceof Headers) {
+    reqHeaders = new Headers(baseHeaders);
+    reqHeaders.set('Authorization', `Bearer ${currentToken}`);
+  } else {
+    reqHeaders = {
+      ...baseHeaders,
+      Authorization: `Bearer ${currentToken}`,
+    };
+  }
+
+  let resp = await fetch(url, { ...options, headers: reqHeaders });
+
+  // On 401 Unauthorized: automatically force-refresh token and retry ONCE
+  if (resp.status === 401) {
+    console.warn('[SyncEngine] Drive API returned 401 — force-refreshing token and retrying once...');
+    const refreshedToken = await refreshAccessToken(true).catch(() => null);
+    if (refreshedToken) {
+      if (typeof Headers !== 'undefined' && reqHeaders instanceof Headers) {
+        reqHeaders.set('Authorization', `Bearer ${refreshedToken}`);
+      } else {
+        reqHeaders.Authorization = `Bearer ${refreshedToken}`;
+      }
+      resp = await fetch(url, { ...options, headers: reqHeaders });
+      if (resp.ok) {
+        setSyncError(null);
+      }
+    }
+  }
+
+  return resp;
+}
+
 // ── Drive folder helpers ──────────────────────────────────────────────────────
 
 async function getOrCreateFolder(accessToken, name, parentId = null) {
   const parentQ = parentId ? ` and '${parentId}' in parents` : '';
   const q       = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
-  const search  = await fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const search  = await driveFetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`, {}, accessToken);
   if (!search.ok) {
     const errorMsg = await parseDriveResponseError(search, 'Drive folder search');
     throw new Error(errorMsg);
@@ -237,11 +294,11 @@ async function getOrCreateFolder(accessToken, name, parentId = null) {
 
   const body = { name, mimeType: 'application/vnd.google-apps.folder' };
   if (parentId) body.parents = [parentId];
-  const create = await fetch(DRIVE_API, {
+  const create = await driveFetch(DRIVE_API, {
     method:  'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(body),
-  });
+  }, accessToken);
   if (!create.ok) {
     const errorMsg = await parseDriveResponseError(create, 'Drive folder create');
     throw new Error(errorMsg);
@@ -252,9 +309,7 @@ async function getOrCreateFolder(accessToken, name, parentId = null) {
 
 async function findBackupFile(accessToken, fileName) {
   const q    = `name='${fileName}' and trashed=false`;
-  const resp = await fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id,size,modifiedTime)&pageSize=1`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const resp = await driveFetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id,size,modifiedTime)&pageSize=1`, {}, accessToken);
   if (!resp.ok) return null;
   const { files } = await resp.json();
   return files?.[0] || null;
@@ -417,6 +472,114 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     console.warn('[SyncEngine] Error reading Foxy AI data for backup:', err);
   }
 
+  // 3. Settings & Preferences
+  let journalSettings = null;
+  try {
+    const rawSettings = localStorage.getItem('tradeontip_settings');
+    if (rawSettings) journalSettings = JSON.parse(rawSettings);
+  } catch (_) {}
+
+  // 4. Fund Management & Capital Base
+  let fundManagement = null;
+  let baseCapital = null;
+  try {
+    const rawCap = localStorage.getItem('tradeontip_base_capital');
+    if (rawCap) baseCapital = Number(rawCap);
+
+    const capMap = {};
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (
+          key.startsWith(`tradeontip_monthly_capital_${portfolioId}_`) || 
+          key.startsWith('tradeontip_monthly_capital_') ||
+          key.startsWith(`tradeontip_ledger_entries_${portfolioId}_`) ||
+          key.startsWith('tradeontip_ledger_entries_')
+        )) {
+          try {
+            capMap[key] = JSON.parse(localStorage.getItem(key));
+          } catch (_) {}
+        }
+      }
+    }
+    if (Object.keys(capMap).length > 0) fundManagement = capMap;
+  } catch (_) {}
+
+  // 5. Monthly Performance Records (from dedicated IDB monthly_perf store)
+  let monthlyPerf = null;
+  try {
+    const db = await getDB();
+    if (db.objectStoreNames.contains(STORES.MONTHLY_PERF)) {
+      const allMonthly = await idbGetAll(STORES.MONTHLY_PERF);
+      const pfMonthly = allMonthly.filter(m => !m.portfolioId || m.portfolioId === portfolioId);
+      if (pfMonthly.length > 0) monthlyPerf = pfMonthly;
+    }
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading monthlyPerf for backup:', err);
+  }
+
+  // 6. Tax Analytics Data (monthly tax records & auto tax settings)
+  let taxAnalytics = null;
+  try {
+    const taxMap = {};
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('foxtrade_monthly_taxes_') || key === 'foxtrade_auto_taxes_enabled')) {
+          try {
+            taxMap[key] = JSON.parse(localStorage.getItem(key));
+          } catch (_) {
+            taxMap[key] = localStorage.getItem(key);
+          }
+        }
+      }
+    }
+    if (Object.keys(taxMap).length > 0) taxAnalytics = taxMap;
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading taxAnalytics for backup:', err);
+  }
+
+  // 7. App Preferences & Column Layout
+  let appSettings = null;
+  try {
+    const appSettingsMap = {};
+    const appKeys = [
+      'tradeontip_visible_cols_v5',
+      'tradeontip_col_order_v5',
+      'tradeontip_theme',
+      'tradeontip_trading_market',
+    ];
+    appKeys.forEach(k => {
+      try {
+        const val = localStorage.getItem(k);
+        if (val) appSettingsMap[k] = JSON.parse(val);
+      } catch (_) {
+        const raw = localStorage.getItem(k);
+        if (raw) appSettingsMap[k] = raw;
+      }
+    });
+    if (Object.keys(appSettingsMap).length > 0) appSettings = appSettingsMap;
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading appSettings for backup:', err);
+  }
+
+  // 8. Broker Credentials (Encrypted AES-GCM ciphertext)
+  let brokerTokens = null;
+  try {
+    const brokerMap = {};
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('foxtrade_broker_token_')) {
+          brokerMap[key] = localStorage.getItem(key);
+        }
+      }
+    }
+    if (Object.keys(brokerMap).length > 0) brokerTokens = brokerMap;
+  } catch (err) {
+    console.warn('[SyncEngine] Error reading brokerTokens for backup:', err);
+  }
+
   const payload = {
     version:       BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
@@ -429,10 +592,20 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     ...(foxyChats ? { foxyChats } : {}),
     ...(foxyCommitments ? { foxyCommitments } : {}),
     ...(foxyConfig ? { foxyConfig } : {}),
+    ...(journalSettings ? { journalSettings } : {}),
+    ...(fundManagement ? { fundManagement } : {}),
+    ...(baseCapital ? { baseCapital } : {}),
+    ...(monthlyPerf ? { monthlyPerf } : {}),
+    ...(taxAnalytics ? { taxAnalytics } : {}),
+    ...(appSettings ? { appSettings } : {}),
+    ...(brokerTokens ? { brokerTokens } : {}),
     metadata: {
       tradeCount:          trades.filter(t => !t.deletedAt).length,
       lastTradeUpdatedAt:  Math.max(0, ...trades.map(t => t.clientUpdatedAt || 0)),
       hasFoxyData:         !!(foxyChats?.length || foxyCommitments?.length || foxyConfig?.apiKey),
+      hasFundData:         !!(fundManagement || baseCapital || monthlyPerf),
+      hasSettingsData:     !!(journalSettings || appSettings),
+      hasTaxData:          !!taxAnalytics,
     },
   };
   return compressJSON(payload);
@@ -481,9 +654,23 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
   setSyncingState(true);
   try {
     const deviceId = await getDeviceId();
+    let currentToken = validToken;
+    const folderId = await getOrCreateFolder(currentToken, FOLDER_NAME);
+    currentToken = (await getValidAccessToken().catch(() => null)) || currentToken;
     const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    const folderId = await getOrCreateFolder(validToken, FOLDER_NAME);
-    const existing = await findBackupFile(validToken, fileName);
+    let existing = await findBackupFile(currentToken, fileName);
+    if (!existing) {
+      existing = await findBackupFile(currentToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
+    }
+    currentToken = (await getValidAccessToken().catch(() => null)) || currentToken;
+
+    // Safety guard: Never overwrite an existing Google Drive backup with an empty array
+    // unless forceOverwrite is explicitly true (e.g. user clicked "Clear All Data" in settings).
+    if (!forceOverwrite && (!trades || trades.length === 0) && existing) {
+      console.warn('[SyncEngine] Guard: Refusing to overwrite existing Google Drive backup with empty trades list without forceOverwrite');
+      setSyncingState(false);
+      return { success: true, mode: 'guarded_empty_skipped' };
+    }
 
     // Read sync cursor — tells us what we last synced
     const cursor   = await idbGet(STORES.SYNC_CURSORS, portfolioId);
@@ -529,11 +716,10 @@ export async function saveToDrive(portfolioId, trades, accessToken, forceOverwri
       : `${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id,modifiedTime`;
     const method = existing ? 'PATCH' : 'POST';
 
-    const uploadResp = await fetch(uploadUrl, {
+    const uploadResp = await driveFetch(uploadUrl, {
       method,
-      headers: { Authorization: `Bearer ${validToken}` },
       body: form,
-    });
+    }, currentToken);
 
     if (!uploadResp.ok) {
       const errorMsg = await parseDriveResponseError(uploadResp, 'Drive upload');
@@ -596,9 +782,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       fileToDownload = legacy;
     }
 
-    const resp = await fetch(`${DRIVE_API}/${fileToDownload.id}?alt=media`, {
-      headers: { Authorization: `Bearer ${validToken}` },
-    });
+    const resp = await driveFetch(`${DRIVE_API}/${fileToDownload.id}?alt=media`, {}, validToken);
     if (!resp.ok) return [];
 
     const buffer  = await resp.arrayBuffer();
@@ -660,6 +844,84 @@ export async function loadFromDrive(portfolioId, accessToken) {
         }
       } catch (e) {
         console.warn('[SyncEngine] Restore foxyConfig failed:', e);
+      }
+    }
+
+    // Restore journal settings if present in Drive backup
+    if (payload.journalSettings && typeof payload.journalSettings === 'object') {
+      try {
+        const localSettingsStr = localStorage.getItem('tradeontip_settings');
+        const localSettings = localSettingsStr ? JSON.parse(localSettingsStr) : {};
+        const mergedSettings = { ...payload.journalSettings, ...localSettings };
+        localStorage.setItem('tradeontip_settings', JSON.stringify(mergedSettings));
+        await setConfig('journal_settings', mergedSettings).catch(() => {});
+        window.dispatchEvent(new CustomEvent('tradeontip_settings_updated', { detail: mergedSettings }));
+      } catch (e) {
+        console.warn('[SyncEngine] Restore journal settings failed:', e);
+      }
+    }
+
+    // Restore fund management & base capital if present in Drive backup
+    if (payload.fundManagement && typeof payload.fundManagement === 'object') {
+      try {
+        await setConfig(`fund_management_${portfolioId}`, payload.fundManagement).catch(() => {});
+        Object.entries(payload.fundManagement).forEach(([key, val]) => {
+          if (key && val) {
+            localStorage.setItem(key, JSON.stringify(val));
+          }
+        });
+        if (payload.baseCapital && Number(payload.baseCapital) > 0) {
+          localStorage.setItem('tradeontip_base_capital', String(payload.baseCapital));
+          await setConfig(`base_capital_${portfolioId}`, Number(payload.baseCapital)).catch(() => {});
+        }
+        window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+          detail: { portfolioId, year: '2026', data: payload.fundManagement[`tradeontip_monthly_capital_${portfolioId}_2026`] || {} }
+        }));
+      } catch (e) {
+        console.warn('[SyncEngine] Restore fund management failed:', e);
+      }
+    }
+
+    // Restore monthly performance if present in Drive backup
+    if (Array.isArray(payload.monthlyPerf)) {
+      try {
+        for (const item of payload.monthlyPerf) {
+          if (item && item.pid_year_month && item.data) {
+            await idbPut(STORES.MONTHLY_PERF, item).catch(() => {});
+          }
+        }
+      } catch (e) {
+        console.warn('[SyncEngine] Restore monthlyPerf failed:', e);
+      }
+    }
+
+    // Restore tax analytics if present in Drive backup
+    if (payload.taxAnalytics && typeof payload.taxAnalytics === 'object') {
+      try {
+        Object.entries(payload.taxAnalytics).forEach(([k, v]) => {
+          if (k && v !== undefined) {
+            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+          }
+        });
+        window.dispatchEvent(new CustomEvent('tradeontip_taxes_updated', { detail: { portfolioId } }));
+      } catch (e) {
+        console.warn('[SyncEngine] Restore taxAnalytics failed:', e);
+      }
+    }
+
+    // Restore app settings & column layout if present in Drive backup
+    if (payload.appSettings && typeof payload.appSettings === 'object') {
+      try {
+        Object.entries(payload.appSettings).forEach(([k, v]) => {
+          if (k && v !== undefined) {
+            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+          }
+        });
+        if (payload.appSettings['tradeontip_visible_cols_v5']) {
+          window.dispatchEvent(new CustomEvent('tradeontip_columns_updated', { detail: payload.appSettings['tradeontip_visible_cols_v5'] }));
+        }
+      } catch (e) {
+        console.warn('[SyncEngine] Restore appSettings failed:', e);
       }
     }
 
@@ -768,9 +1030,7 @@ export async function listDriveBackups(accessToken) {
 
   try {
     const q = encodeURIComponent("mimeType != 'application/vnd.google-apps.folder' and (name contains 'foxtrade' or name contains 'tradeontip') and trashed = false");
-    const resp = await fetch(`${DRIVE_API}?q=${q}&fields=files(id,name,size,modifiedTime,createdTime,appProperties)&orderBy=modifiedTime desc&pageSize=20`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const resp = await driveFetch(`${DRIVE_API}?q=${q}&fields=files(id,name,size,modifiedTime,createdTime,appProperties)&orderBy=modifiedTime desc&pageSize=20`, {}, accessToken);
 
     if (!resp.ok) return [];
     const { files } = await resp.json();
@@ -805,9 +1065,7 @@ export async function downloadBackupFileById(fileId, accessToken) {
   if (!fileId || !accessToken) return null;
 
   try {
-    const resp = await fetch(`${DRIVE_API}/${fileId}?alt=media&acknowledgeAbuse=true`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const resp = await driveFetch(`${DRIVE_API}/${fileId}?alt=media&acknowledgeAbuse=true`, {}, accessToken);
     if (!resp.ok) return null;
 
     const buffer = await resp.arrayBuffer();
@@ -828,10 +1086,9 @@ export async function deleteBackupFileById(fileId, accessToken) {
   if (!fileId || !accessToken) return false;
 
   try {
-    const resp = await fetch(`${DRIVE_API}/${fileId}`, {
+    const resp = await driveFetch(`${DRIVE_API}/${fileId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    }, accessToken);
     return resp.ok;
   } catch (err) {
     console.error('[SyncEngine] deleteBackupFileById error:', err.message);
@@ -850,8 +1107,8 @@ export async function clearAllDriveBackups(accessToken) {
   if (!accessToken || accessToken === 'demo-token') return false;
   try {
     const files = await listDriveBackups(accessToken);
-    for (const f of files) {
-      await deleteBackupFileById(f.id, accessToken);
+    if (files.length > 0) {
+      await Promise.all(files.map(f => deleteBackupFileById(f.id, accessToken)));
     }
     return true;
   } catch (err) {

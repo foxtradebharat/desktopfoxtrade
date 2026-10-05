@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Pencil, Info, X, Calendar, ChevronDown, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import {
@@ -6,6 +7,9 @@ import {
   calculateYearlyFundSummary,
   getStoredCapitalChanges,
   saveCapitalChanges,
+  getStoredLedgerEntries,
+  saveLedgerEntries,
+  deriveMonthAggregates,
   parseMonthAndYear,
   MONTH_NAMES
 } from '../../utils/fundManagementCalculations';
@@ -244,6 +248,16 @@ export default function FundManagementPage({
   const [capitalChanges, setCapitalChanges] = useState(() =>
     getStoredCapitalChanges(activePortfolioId, new Date().getFullYear().toString())
   );
+  const [ledgerEntries, setLedgerEntries] = useState(() =>
+    getStoredLedgerEntries(activePortfolioId, selectedYear)
+  );
+
+  // Flow Modal State for exact dated entries: { monthIdx, type: 'deposit' | 'withdrawal' }
+  const [flowModal, setFlowModal] = useState(null);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [flowAmount, setFlowAmount] = useState('');
+  const [flowDate, setFlowDate] = useState('');
+  const [flowNote, setFlowNote] = useState('');
 
   // Inline editing state: { monthIdx, field: 'added' | 'withdrawn' }
   const [editingCell, setEditingCell] = useState(null);
@@ -256,15 +270,131 @@ export default function FundManagementPage({
   // Listen for external updates or reload when active portfolio / year changes
   useEffect(() => {
     setCapitalChanges(getStoredCapitalChanges(activePortfolioId, selectedYear));
+    setLedgerEntries(getStoredLedgerEntries(activePortfolioId, selectedYear));
 
     const handleUpdate = (e) => {
       if (e.detail?.portfolioId === activePortfolioId) {
         setCapitalChanges(e.detail.data || {});
+        if (e.detail.entries) {
+          setLedgerEntries(e.detail.entries);
+        } else {
+          setLedgerEntries(getStoredLedgerEntries(activePortfolioId, selectedYear));
+        }
       }
     };
     window.addEventListener('tradeontip_capital_updated', handleUpdate);
     return () => window.removeEventListener('tradeontip_capital_updated', handleUpdate);
   }, [activePortfolioId, selectedYear]);
+
+  // Group entries by month for badge & quick display
+  const monthEntries = useMemo(() => {
+    const map = {};
+    for (let m = 0; m < 12; m++) {
+      map[m] = { deposits: [], withdrawals: [], hasApproxDeposit: false, hasApproxWithdrawal: false };
+    }
+    (ledgerEntries || []).forEach(e => {
+      if (!e || !e.date) return;
+      const parts = String(e.date).split('-');
+      if (parts.length < 3) return;
+      const y = parts[0];
+      const m = parseInt(parts[1], 10) - 1;
+      if (y !== String(selectedYear) || m < 0 || m > 11) return;
+      if (e.type === 'deposit') {
+        map[m].deposits.push(e);
+        if (e.dateApproximate) map[m].hasApproxDeposit = true;
+      } else if (e.type === 'withdrawal') {
+        map[m].withdrawals.push(e);
+        if (e.dateApproximate) map[m].hasApproxWithdrawal = true;
+      }
+    });
+    return map;
+  }, [ledgerEntries, selectedYear]);
+
+  const openFlowModal = (monthIdx, type) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const defaultDate = `${selectedYear}-${String(monthIdx + 1).padStart(2, '0')}-01`;
+    const initialDate = defaultDate <= todayStr ? defaultDate : todayStr;
+
+    setFlowModal({ monthIdx, type });
+    setEditingEntry(null);
+    setFlowAmount('');
+    setFlowDate(initialDate);
+    setFlowNote('');
+  };
+
+  const handleStartEditEntry = (entry) => {
+    setEditingEntry(entry);
+    setFlowAmount(String(entry.amount || ''));
+    setFlowDate(entry.date || '');
+    setFlowNote(entry.note || '');
+  };
+
+  const handleSaveEntry = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!flowModal) return;
+    const amt = parseFloat(flowAmount) || 0;
+    if (amt <= 0) {
+      alert('Please enter a valid positive amount.');
+      return;
+    }
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (!flowDate || flowDate > todayStr) {
+      alert('Date cannot be in the future.');
+      return;
+    }
+
+    const currentEntries = Array.isArray(ledgerEntries) ? [...ledgerEntries] : [];
+    let updated;
+
+    if (editingEntry) {
+      // Editing date clears dateApproximate
+      updated = currentEntries.map(item => {
+        if (item.id === editingEntry.id) {
+          return {
+            ...item,
+            amount: amt,
+            date: flowDate,
+            dateApproximate: false,
+            note: flowNote.trim()
+          };
+        }
+        return item;
+      });
+    } else {
+      const newEntry = {
+        id: `entry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        portfolioId: activePortfolioId,
+        type: flowModal.type,
+        amount: amt,
+        date: flowDate,
+        dateApproximate: false,
+        note: flowNote.trim()
+      };
+      updated = [...currentEntries, newEntry];
+    }
+
+    saveLedgerEntries(activePortfolioId, selectedYear, updated);
+    setLedgerEntries(updated);
+    setCapitalChanges(deriveMonthAggregates(updated, selectedYear));
+
+    setEditingEntry(null);
+    setFlowAmount('');
+    const defaultDate = `${selectedYear}-${String(flowModal.monthIdx + 1).padStart(2, '0')}-01`;
+    setFlowDate(defaultDate <= todayStr ? defaultDate : todayStr);
+    setFlowNote('');
+  };
+
+  const handleDeleteEntry = (entryId) => {
+    const currentEntries = Array.isArray(ledgerEntries) ? [...ledgerEntries] : [];
+    const updated = currentEntries.filter(e => e.id !== entryId);
+    saveLedgerEntries(activePortfolioId, selectedYear, updated);
+    setLedgerEntries(updated);
+    setCapitalChanges(deriveMonthAggregates(updated, selectedYear));
+    if (editingEntry?.id === entryId) {
+      setEditingEntry(null);
+      setFlowAmount('');
+    }
+  };
 
   const [showPreTax, setShowPreTax] = useState(false);
 
@@ -327,7 +457,8 @@ export default function FundManagementPage({
   const activeMonthlyAvg = showPreTax ? (yearlySummary.preTaxMonthlyAvgReturn ?? yearlySummary.monthlyAvgReturn) : yearlySummary.monthlyAvgReturn;
   const activeTotalCompounded = showPreTax ? (yearlySummary.preTaxTotalCompounded ?? yearlySummary.totalCompounded) : yearlySummary.totalCompounded;
   const activeCagr = showPreTax ? (yearlySummary.preTaxAnnualizedCagr ?? yearlySummary.annualizedCagr) : yearlySummary.annualizedCagr;
-  const hasUnsetCapital = monthlyData.some(m => !m.capitalIsReal);
+  const [isUnsetCapitalDismissed, setIsUnsetCapitalDismissed] = useState(false);
+  const isFundZero = !yearlySummary.capitalIsReal && (yearlySummary.totalAdded || 0) === 0;
 
   return (
     <div style={{ padding: '0 24px 80px 24px', maxWidth: '1440px', margin: '0 auto' }}>
@@ -372,32 +503,6 @@ export default function FundManagementPage({
           />
         </div>
       </div>
-
-      {/* Starting Capital Unset Banner */}
-      {hasUnsetCapital && (
-        <div style={{
-          marginBottom: '20px',
-          padding: '12px 18px',
-          borderRadius: '12px',
-          background: 'rgba(245, 158, 11, 0.08)',
-          border: '1px solid rgba(245, 158, 11, 0.25)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '12px',
-          color: '#d97706',
-          fontSize: '13px',
-          fontWeight: 500,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '16px' }}>ℹ️</span>
-            <span>
-              Set your starting capital (portfolio base capital or a ledger deposit) to see returns. Cumulative Net P&L: <strong>₹ {yearlySummary.totalNetPl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* Table Container */}
       <div style={{
@@ -725,129 +830,81 @@ export default function FundManagementPage({
                       {row.month}
                     </td>
 
-                    {/* Added Amount */}
+                    {/* Added Amount (Funds Deposited) */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)' }}>
-                      {isAddedEditing ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={() => handleSaveValue(idx, 'added')}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSaveValue(idx, 'added')}
-                            autoFocus
-                            style={{
-                              width: '100px',
-                              textAlign: 'right',
-                              fontSize: '13px',
-                              fontWeight: 500,
-                              fontFamily: 'var(--font-mono, monospace)',
-                              padding: '4px 6px',
-                              borderRadius: '6px',
-                              border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-                              outline: 'none',
-                              backgroundColor: 'var(--bg-surface)',
-                              color: 'var(--text-primary)'
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
-                          onClick={() => {
-                            setEditingCell({ monthIdx: idx, field: 'added' });
-                            setEditValue(row.added > 0 ? String(row.added) : '');
-                          }}
-                        >
-                          <span style={{
-                            color: row.added > 0 ? '#10b981' : 'var(--text-muted)',
-                            fontWeight: row.added > 0 ? 600 : 400,
-                            borderBottom: '1px dashed rgba(16, 185, 129, 0.3)',
-                            paddingBottom: '1px',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {row.added > 0 ? `₹${row.added.toLocaleString('en-IN')}` : '₹ 0'}
-                          </span>
-                          <Tooltip content={row.addedNotes || "Click to add/edit note"}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setNoteModal({ monthIdx: idx, field: 'added' });
-                                setNoteText(row.addedNotes || '');
-                              }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', opacity: row.addedNotes ? 1 : 0.4 }}
-                            >
-                              <Info size={12} color={row.addedNotes ? '#10b981' : 'var(--text-muted)'} />
-                            </button>
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
+                        onClick={() => openFlowModal(idx, 'deposit')}
+                        title="Click to manage dated deposits"
+                      >
+                        <span style={{
+                          color: row.added > 0 ? '#10b981' : 'var(--text-muted)',
+                          fontWeight: row.added > 0 ? 600 : 400,
+                          borderBottom: '1px dashed rgba(16, 185, 129, 0.3)',
+                          paddingBottom: '1px',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {row.added > 0 ? `₹${row.added.toLocaleString('en-IN')}` : '₹ 0'}
+                        </span>
+                        {monthEntries[idx]?.hasApproxDeposit && (
+                          <Tooltip content="Confirm exact date for accurate drawdown">
+                            <span style={{
+                              fontSize: '10px',
+                              backgroundColor: '#fef3c7',
+                              color: '#92400e',
+                              padding: '1px 5px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}>
+                              Approx
+                            </span>
                           </Tooltip>
-                        </div>
-                      )}
+                        )}
+                        <Pencil size={11} color="var(--text-muted)" style={{ opacity: 0.5 }} />
+                      </div>
                     </td>
 
-                    {/* Withdrawn Amount */}
+                    {/* Withdrawn Amount (Funds Withdrawn) */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)' }}>
-                      {isWithdrawnEditing ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={() => handleSaveValue(idx, 'withdrawn')}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSaveValue(idx, 'withdrawn')}
-                            autoFocus
-                            style={{
-                              width: '100px',
-                              textAlign: 'right',
-                              fontSize: '13px',
-                              fontWeight: 500,
-                              fontFamily: 'var(--font-mono, monospace)',
-                              padding: '4px 6px',
-                              borderRadius: '6px',
-                              border: '1px solid #ef4444',
-                              outline: 'none',
-                              backgroundColor: 'var(--bg-surface)',
-                              color: 'var(--text-primary)'
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
-                          onClick={() => {
-                            setEditingCell({ monthIdx: idx, field: 'withdrawn' });
-                            setEditValue(row.withdrawn > 0 ? String(row.withdrawn) : '');
-                          }}
-                        >
-                          <span style={{
-                            color: row.withdrawn > 0 ? '#ef4444' : 'var(--text-muted)',
-                            fontWeight: row.withdrawn > 0 ? 600 : 400,
-                            borderBottom: '1px dashed rgba(239, 68, 68, 0.3)',
-                            paddingBottom: '1px',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {row.withdrawn > 0 ? `₹${row.withdrawn.toLocaleString('en-IN')}` : '₹ 0'}
-                          </span>
-                          <Tooltip content={row.withdrawnNotes || "Click to add/edit note"}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setNoteModal({ monthIdx: idx, field: 'withdrawn' });
-                                setNoteText(row.withdrawnNotes || '');
-                              }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', opacity: row.withdrawnNotes ? 1 : 0.4 }}
-                            >
-                              <Info size={12} color={row.withdrawnNotes ? '#ef4444' : 'var(--text-muted)'} />
-                            </button>
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', cursor: 'pointer' }}
+                        onClick={() => openFlowModal(idx, 'withdrawal')}
+                        title="Click to manage dated withdrawals"
+                      >
+                        <span style={{
+                          color: row.withdrawn > 0 ? '#ef4444' : 'var(--text-muted)',
+                          fontWeight: row.withdrawn > 0 ? 600 : 400,
+                          borderBottom: '1px dashed rgba(239, 68, 68, 0.3)',
+                          paddingBottom: '1px',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {row.withdrawn > 0 ? `₹${row.withdrawn.toLocaleString('en-IN')}` : '₹ 0'}
+                        </span>
+                        {monthEntries[idx]?.hasApproxWithdrawal && (
+                          <Tooltip content="Confirm exact date for accurate drawdown">
+                            <span style={{
+                              fontSize: '10px',
+                              backgroundColor: '#fef3c7',
+                              color: '#92400e',
+                              padding: '1px 5px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}>
+                              Approx
+                            </span>
                           </Tooltip>
-                        </div>
-                      )}
+                        )}
+                        <Pencil size={11} color="var(--text-muted)" style={{ opacity: 0.5 }} />
+                      </div>
                     </td>
 
                     {/* Starting Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      {row.startingCapital !== null ? `₹ ${row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                      {row.startingCapital !== null ? (row.startingCapital === 0 ? '₹ 0' : `₹ ${row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '₹ 0'}
                     </td>
 
                     {/* Net P/L */}
@@ -874,7 +931,7 @@ export default function FundManagementPage({
 
                     {/* Final Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                      {row.finalCapital !== null ? `₹ ${row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}
+                      {row.finalCapital !== null ? (row.finalCapital === 0 ? '₹ 0' : `₹ ${row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '₹ 0'}
                     </td>
 
                     {/* Trades */}
@@ -1154,6 +1211,340 @@ export default function FundManagementPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Exact Dated Cash Flow (Deposits & Withdrawals) Modal */}
+      {flowModal && (
+        <div
+          onClick={() => setFlowModal(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            backdropFilter: 'blur(3px)'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+              borderRadius: '16px',
+              padding: '24px',
+              width: '460px',
+              maxWidth: 'calc(100vw - 32px)',
+              boxShadow: '0 16px 36px rgba(0,0,0,0.18)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {MONTH_NAMES[flowModal.monthIdx]} {selectedYear} — {flowModal.type === 'deposit' ? 'Deposits (Added Funds)' : 'Withdrawals'}
+                </h3>
+                <p style={{ margin: '3px 0 0', fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                  Exact calendar dates insulate your portfolio drawdown from cash flows.
+                </p>
+              </div>
+              <button
+                onClick={() => setFlowModal(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* List of existing entries in this month */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+              {((flowModal.type === 'deposit' ? monthEntries[flowModal.monthIdx]?.deposits : monthEntries[flowModal.monthIdx]?.withdrawals) || []).map(entry => (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid color-mix(in srgb, var(--border-color) 50%, transparent)',
+                    fontSize: '12.5px'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontWeight: 600, color: flowModal.type === 'deposit' ? '#10b981' : '#ef4444', fontFamily: 'monospace' }}>
+                        {flowModal.type === 'deposit' ? '+' : '-'}₹{entry.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                        {entry.date}
+                      </span>
+                      {entry.dateApproximate && (
+                        <span
+                          title="Confirm exact date for accurate drawdown"
+                          style={{
+                            fontSize: '10px',
+                            backgroundColor: '#fef3c7',
+                            color: '#92400e',
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 600
+                          }}
+                        >
+                          Approximate date
+                        </span>
+                      )}
+                    </div>
+                    {entry.note && (
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        {entry.note}
+                      </span>
+                    )}
+                    {entry.dateApproximate && (
+                      <span style={{ fontSize: '10.5px', color: '#b45309', fontStyle: 'italic' }}>
+                        Confirm exact date for accurate drawdown
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleStartEditEntry(entry)}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        background: 'none',
+                        border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)'
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteEntry(entry.id)}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        background: 'none',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        color: '#ef4444'
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {((flowModal.type === 'deposit' ? monthEntries[flowModal.monthIdx]?.deposits : monthEntries[flowModal.monthIdx]?.withdrawals) || []).length === 0 && (
+                <div style={{ textAlign: 'center', padding: '12px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                  No {flowModal.type} entries recorded for this month.
+                </div>
+              )}
+            </div>
+
+            {/* Form to Add / Edit */}
+            <form onSubmit={handleSaveEntry} style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)', paddingTop: '14px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {editingEntry ? 'Edit Entry (clears approximate flag)' : `Add New ${flowModal.type === 'deposit' ? 'Deposit' : 'Withdrawal'}`}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '3px' }}>
+                    Amount (₹)*
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.01"
+                    required
+                    value={flowAmount}
+                    onChange={(e) => setFlowAmount(e.target.value)}
+                    placeholder="e.g. 500000"
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      padding: '7px 9px',
+                      borderRadius: '8px',
+                      border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      fontSize: '12px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '3px' }}>
+                    Date (cannot be future)*
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    max={new Date().toISOString().split('T')[0]}
+                    value={flowDate}
+                    onChange={(e) => setFlowDate(e.target.value)}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      padding: '7px 9px',
+                      borderRadius: '8px',
+                      border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      fontSize: '12px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '3px' }}>
+                  Note / Reference
+                </label>
+                <input
+                  type="text"
+                  value={flowNote}
+                  onChange={(e) => setFlowNote(e.target.value)}
+                  placeholder="e.g. Bank transfer, quarterly settlement"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    padding: '7px 9px',
+                    borderRadius: '8px',
+                    border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+                {editingEntry && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingEntry(null);
+                      setFlowAmount('');
+                      setFlowNote('');
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                      background: 'none',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      color: 'var(--text-secondary)'
+                    }}
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setFlowModal(null)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid color-mix(in srgb, var(--border-color) 60%, transparent)',
+                    background: 'none',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    color: 'var(--text-secondary)'
+                  }}
+                >
+                  Done
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: 'var(--text-primary)',
+                    color: 'var(--bg-surface)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {editingEntry ? 'Update Entry' : 'Add Entry'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Right Notification for Unset Starting Capital */}
+      {isFundZero && !isUnsetCapitalDismissed && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '72px',
+            right: '24px',
+            zIndex: 999999,
+            width: '356px',
+            maxWidth: 'calc(100vw - 32px)',
+            backgroundColor: 'var(--bg-card, #ffffff)',
+            color: 'var(--text-primary, #111827)',
+            border: '1px solid var(--border-color, rgba(0, 0, 0, 0.12))',
+            borderRadius: '14px',
+            boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.05)',
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '12px'
+          }}
+        >
+          {/* Lucid Info Icon (Black & White monochrome theme, no emoji) */}
+          <div style={{ flexShrink: 0, marginTop: '2px', color: 'var(--text-primary, #111827)' }}>
+            <Info size={16} strokeWidth={2} />
+          </div>
+
+          <div style={{ flex: 1, paddingRight: '12px' }}>
+            <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary, #111827)', letterSpacing: '-0.01em' }}>
+              Starting Capital Unset
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted, #6b7280)', marginTop: '3px', lineHeight: '1.45' }}>
+              Set your starting capital (portfolio base capital or a ledger deposit) to calculate returns. Cumulative Net P&L: <strong>₹ {yearlySummary.totalNetPl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsUnsetCapitalDismissed(true)}
+            aria-label="Close notification"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: '4px',
+              cursor: 'pointer',
+              color: 'var(--text-muted, #9ca3af)',
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'color 0.15s ease'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary, #111827)'}
+            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted, #9ca3af)'}
+          >
+            <X size={14} />
+          </button>
+        </div>,
+        document.body
       )}
     </div>
   );

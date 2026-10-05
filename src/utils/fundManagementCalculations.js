@@ -6,8 +6,253 @@ export const MONTH_NAMES = [
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
 ];
 
+export const LEDGER_MIGRATION_FLAG_KEY = 'tradeontip_migr_ledger_dates_v1';
+
+/**
+ * Derives 12-month capital aggregate map from dated entries array.
+ * Shape: { 0: { added, addedNotes, withdrawn, withdrawnNotes }, ... 11: { ... } }
+ */
+export function deriveMonthAggregates(entries = [], year = '2026') {
+  const numYear = parseInt(year, 10) || 2026;
+  const result = {};
+  for (let m = 0; m < 12; m++) {
+    result[m] = { added: 0, addedNotes: '', withdrawn: 0, withdrawnNotes: '' };
+  }
+
+  const validEntries = Array.isArray(entries) ? entries : [];
+  validEntries.forEach(entry => {
+    if (!entry || !entry.date) return;
+    const parts = String(entry.date).split('-');
+    if (parts.length < 3) return;
+    const entryYear = parseInt(parts[0], 10);
+    const entryMonth = parseInt(parts[1], 10) - 1; // 0-indexed
+    if (entryYear !== numYear || entryMonth < 0 || entryMonth > 11) return;
+
+    const amt = Math.max(0, Number(entry.amount) || 0);
+    const note = (entry.note || '').trim();
+
+    if (entry.type === 'deposit') {
+      result[entryMonth].added += amt;
+      if (note) {
+        result[entryMonth].addedNotes = result[entryMonth].addedNotes
+          ? `${result[entryMonth].addedNotes}; ${note}`
+          : note;
+      }
+    } else if (entry.type === 'withdrawal') {
+      result[entryMonth].withdrawn += amt;
+      if (note) {
+        result[entryMonth].withdrawnNotes = result[entryMonth].withdrawnNotes
+          ? `${result[entryMonth].withdrawnNotes}; ${note}`
+          : note;
+      }
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Converts legacy month aggregates object to dated entries on the 1st of each month.
+ */
+export function convertLegacyAggregatesToEntries(legacyData = {}, portfolioId = 'portfolio-default', year = '2026') {
+  const entries = [];
+  if (!legacyData || typeof legacyData !== 'object') return entries;
+
+  for (let m = 0; m < 12; m++) {
+    const monthData = legacyData[m] || legacyData[String(m)];
+    if (!monthData) continue;
+
+    const added = Number(monthData.added || 0);
+    const addedNotes = (monthData.addedNotes || '').trim();
+    const withdrawn = Number(monthData.withdrawn || 0);
+    const withdrawnNotes = (monthData.withdrawnNotes || '').trim();
+    const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-01`;
+
+    if (added > 0) {
+      entries.push({
+        id: `migr_${portfolioId}_${year}_m${m}_dep`,
+        portfolioId,
+        type: 'deposit',
+        amount: added,
+        date: dateStr,
+        dateApproximate: true,
+        note: addedNotes
+      });
+    }
+
+    if (withdrawn > 0) {
+      entries.push({
+        id: `migr_${portfolioId}_${year}_m${m}_wth`,
+        portfolioId,
+        type: 'withdrawal',
+        amount: withdrawn,
+        date: dateStr,
+        dateApproximate: true,
+        note: withdrawnNotes
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Migration: One-time, idempotent migration guarded by flag key.
+ * Backs up old data to `key + '_backup_premigration'` before converting.
+ */
+export function migrateLedgerToDatedEntries() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const isMigrated = localStorage.getItem(LEDGER_MIGRATION_FLAG_KEY);
+    if (isMigrated === 'true') return;
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('tradeontip_monthly_capital_') || key.includes('_backup')) {
+        continue;
+      }
+
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      // 1. Create backup key
+      const backupKey = `${key}_backup_premigration`;
+      if (!localStorage.getItem(backupKey)) {
+        localStorage.setItem(backupKey, raw);
+      }
+
+      // 2. Parse key to extract portfolioId and year
+      const parts = key.replace('tradeontip_monthly_capital_', '').split('_');
+      let portfolioId = 'portfolio-default';
+      let year = '2026';
+      if (parts.length === 1) {
+        year = parts[0];
+      } else if (parts.length >= 2) {
+        portfolioId = parts.slice(0, parts.length - 1).join('_');
+        year = parts[parts.length - 1];
+      }
+
+      try {
+        const legacyData = JSON.parse(raw);
+        if (legacyData && typeof legacyData === 'object') {
+          const entries = convertLegacyAggregatesToEntries(legacyData, portfolioId, year);
+          if (entries.length > 0) {
+            const entriesKey = `tradeontip_ledger_entries_${portfolioId}_${year}`;
+            localStorage.setItem(entriesKey, JSON.stringify(entries));
+          }
+        }
+      } catch (_) {}
+    }
+
+    localStorage.setItem(LEDGER_MIGRATION_FLAG_KEY, 'true');
+  } catch (err) {
+    console.error('Error during ledger dates migration:', err);
+  }
+}
+
+/**
+ * Retrieves dated ledger entries for a specific portfolio and year.
+ */
+export function getStoredLedgerEntries(portfolioId = 'portfolio-default', year = '2026') {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    migrateLedgerToDatedEntries();
+
+    const key = `tradeontip_ledger_entries_${portfolioId}_${year}`;
+    const fallbackKey = `tradeontip_ledger_entries_${year}`;
+    const saved = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+
+    const legacyKey = `tradeontip_monthly_capital_${portfolioId}_${year}`;
+    const legacyFallback = `tradeontip_monthly_capital_${year}`;
+    const legacySaved = localStorage.getItem(legacyKey) || localStorage.getItem(legacyFallback);
+    if (legacySaved) {
+      try {
+        const legacyData = JSON.parse(legacySaved);
+        if (legacyData && typeof legacyData === 'object') {
+          const converted = convertLegacyAggregatesToEntries(legacyData, portfolioId, year);
+          if (converted.length > 0) {
+            saveLedgerEntries(portfolioId, year, converted);
+            return converted;
+          }
+        }
+      } catch {}
+    }
+
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Saves dated ledger entries as single source of truth, deriving month aggregates.
+ */
+export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '2026', entries = []) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const cleanEntries = (Array.isArray(entries) ? entries : []).map((e, idx) => ({
+      id: e.id || `entry_${Date.now()}_${idx}`,
+      portfolioId: e.portfolioId || portfolioId,
+      type: e.type === 'withdrawal' ? 'withdrawal' : 'deposit',
+      amount: Math.max(0, Number(e.amount) || 0),
+      date: e.date || `${year}-01-01`,
+      dateApproximate: Boolean(e.dateApproximate),
+      note: String(e.note || '').trim()
+    }));
+
+    const key = `tradeontip_ledger_entries_${portfolioId}_${year}`;
+    localStorage.setItem(key, JSON.stringify(cleanEntries));
+    localStorage.setItem(`tradeontip_ledger_entries_${year}`, JSON.stringify(cleanEntries));
+
+    // Derive month aggregates and save to legacy monthly capital key
+    const derivedAggregates = deriveMonthAggregates(cleanEntries, year);
+    const legacyKey = `tradeontip_monthly_capital_${portfolioId}_${year}`;
+    localStorage.setItem(legacyKey, JSON.stringify(derivedAggregates));
+    localStorage.setItem(`tradeontip_monthly_capital_${year}`, JSON.stringify(derivedAggregates));
+
+    // Derive base capital from first deposit
+    let initialAdded = 0;
+    for (let m = 0; m < 12; m++) {
+      const added = Number(derivedAggregates[m]?.added || 0);
+      if (added > 0) {
+        initialAdded = added;
+        break;
+      }
+    }
+    localStorage.setItem('tradeontip_base_capital', String(initialAdded));
+
+    window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+      detail: { portfolioId, year, data: derivedAggregates, entries: cleanEntries, baseCapital: initialAdded }
+    }));
+  } catch (err) {
+    console.error('Error saving ledger entries:', err);
+  }
+}
+
 export function getStoredCapitalChanges(portfolioId = 'portfolio-default', year = '2026') {
   try {
+    if (typeof localStorage === 'undefined') return {};
+    migrateLedgerToDatedEntries();
+
+    // If dated entries exist, derive month aggregates directly
+    const entriesKey = `tradeontip_ledger_entries_${portfolioId}_${year}`;
+    const fallbackEntriesKey = `tradeontip_ledger_entries_${year}`;
+    const entriesRaw = localStorage.getItem(entriesKey) || localStorage.getItem(fallbackEntriesKey);
+    if (entriesRaw) {
+      try {
+        const entries = JSON.parse(entriesRaw);
+        if (Array.isArray(entries) && entries.length > 0) {
+          return deriveMonthAggregates(entries, year);
+        }
+      } catch {}
+    }
+
     const key = `tradeontip_monthly_capital_${portfolioId}_${year}`;
     const fallbackKey = `tradeontip_monthly_capital_${year}`;
     const saved = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
@@ -34,7 +279,14 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
     localStorage.setItem(key, JSON.stringify(data));
     localStorage.setItem(`tradeontip_monthly_capital_${year}`, JSON.stringify(data));
 
-    // Also derive and sync tradeontip_base_capital with Fund Management additions
+    // If legacy saveCapitalChanges is called, keep dated entries in sync
+    const entries = convertLegacyAggregatesToEntries(data, portfolioId, year);
+    if (entries.length > 0) {
+      const entriesKey = `tradeontip_ledger_entries_${portfolioId}_${year}`;
+      localStorage.setItem(entriesKey, JSON.stringify(entries));
+      localStorage.setItem(`tradeontip_ledger_entries_${year}`, JSON.stringify(entries));
+    }
+
     let initialAdded = 0;
     for (let m = 0; m < 12; m++) {
       const added = Number(data[m]?.added || 0);
@@ -45,7 +297,9 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
     }
     localStorage.setItem('tradeontip_base_capital', String(initialAdded));
 
-    window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', { detail: { portfolioId, year, data, baseCapital: initialAdded } }));
+    window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+      detail: { portfolioId, year, data, entries, baseCapital: initialAdded }
+    }));
   } catch (err) {
     console.error('Error saving capital changes:', err);
   }
