@@ -82,6 +82,7 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
     .filter(f => Number(f?.amount || 0) > 0)
     .reduce((sum, f) => sum + Number(f.amount), 0);
   const initialCap = Number(openingCapital) || 0;
+  const approxFlowCount = validFlows.filter(f => Boolean(f?.dateApproximate)).length;
 
   if (initialCap <= 0 && totalDeposits <= 0) {
     return {
@@ -92,8 +93,11 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
       maxAmount: null,
       peakEquity: null,
       equity: null,
+      index: 1,
+      peakIndex: 1,
       series: [],
       skippedDays: [],
+      approxFlowCount,
       currentUnderwaterDays: 0,
       longestUnderwaterDays: 0,
       maxDrawdownPeakDate: null,
@@ -138,9 +142,9 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
 
     if (equityStart <= 0) {
       if (dayPnlMap.has(dayKey)) {
-        skippedDays.push({ date: dayKey, pnl: pnlDay });
+        skippedDays.push({ date: dayKey, pnl: pnlDay, reason: 'equity non-positive before P&L' });
       }
-      equityPrev = equityStart;
+      // Equity stays as is
       continue;
     }
 
@@ -205,8 +209,11 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
       maxAmount: 0,
       peakEquity: initialCap,
       equity: initialCap,
+      index: 1,
+      peakIndex: 1,
       series: [],
       skippedDays,
+      approxFlowCount,
       currentUnderwaterDays: 0,
       longestUnderwaterDays: 0,
       maxDrawdownPeakDate: null,
@@ -226,8 +233,11 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
     maxAmount: maxAmt,
     peakEquity,
     equity: last.equity,
+    index: indexPrev,
+    peakIndex,
     series,
     skippedDays,
+    approxFlowCount,
     currentUnderwaterDays,
     longestUnderwaterDays,
     maxDrawdownPeakDate,

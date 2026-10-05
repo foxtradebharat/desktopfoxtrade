@@ -191,6 +191,63 @@ export function getStoredLedgerEntries(portfolioId = 'portfolio-default', year =
 }
 
 /**
+ * Retrieves all ledger flows formatted for computeDrawdownDaily across all years.
+ * Returns: [{ dayKey: 'YYYY-MM-DD', amount: number (deposit +, withdrawal -), dateApproximate: boolean, id, note }]
+ */
+export function getLedgerFlows(portfolioId = 'portfolio-default') {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    migrateLedgerToDatedEntries();
+
+    const targetPf = portfolioId || 'portfolio-default';
+    const entriesMap = new Map();
+    const prefix = `tradeontip_ledger_entries_${targetPf}_`;
+    const fallbackPrefix = 'tradeontip_ledger_entries_';
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith(prefix)) {
+        try {
+          const arr = JSON.parse(localStorage.getItem(k));
+          if (Array.isArray(arr)) {
+            arr.forEach(e => { if (e && e.id) entriesMap.set(e.id, e); });
+          }
+        } catch {}
+      }
+    }
+
+    if (entriesMap.size === 0) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith(fallbackPrefix) && !k.includes('_backup_')) {
+          try {
+            const arr = JSON.parse(localStorage.getItem(k));
+            if (Array.isArray(arr)) {
+              arr.forEach(e => { if (e && e.id) entriesMap.set(e.id, e); });
+            }
+          } catch {}
+        }
+      }
+    }
+
+    return Array.from(entriesMap.values())
+      .filter(e => e && e.date && !isNaN(Number(e.amount)))
+      .map(e => ({
+        dayKey: e.date,
+        amount: e.type === 'withdrawal' ? -Math.abs(Number(e.amount)) : Math.abs(Number(e.amount)),
+        dateApproximate: Boolean(e.dateApproximate),
+        id: e.id,
+        note: e.note
+      }))
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Saves dated ledger entries as single source of truth, deriving month aggregates.
  */
 export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '2026', entries = []) {

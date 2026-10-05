@@ -67,7 +67,8 @@ import { deduplicateAndMergeTrades } from './utils/tradeDeduplicationEngine';
 import { loadBrokerCharges, calculateCharges, detectSegment } from './utils/brokerChargesService';
 import { getCanonicalSymbol, getCorporateActionDetails } from './utils/securityMaster.js';
 import { toPaise, fromPaise } from './utils/pnlEngine.js';
-import { computeDrawdown } from './utils/drawdown.js';
+import { computeDrawdown, computeDrawdownDaily } from './utils/drawdown.js';
+import { getLedgerFlows } from './utils/fundManagementCalculations.js';
 import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate, buildRealizedEvents, formatDrawdownPct } from './utils/tradeMetricsShared.js';
 /**
  * Robust date parser supporting Indian DD-MM-YYYY / DD/MM/YYYY and ISO YYYY-MM-DD
@@ -1528,12 +1529,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       ? ((grossRealizedPL / baseFundCapital) * 100).toFixed(2)
       : '0.00';
 
-    // ── Current Drawdown (Realized): Dynamic calculation against true peak equity ──
+    // ── Current Drawdown (Realized): Daily cash-flow-adjusted calculation against true peak equity ──
     // Tracks cumulative realized equity curve peak-to-trough drop % and amount.
     const startingCapitalBasis = monthlyPerf?.find(m => m.capitalIsReal && m.startingCapital > 0)?.startingCapital ?? null;
     const { events: realizedEvents, excluded: excludedDdTrades } = buildRealizedEvents(portfolioTrades);
-    const pnls = realizedEvents.map(e => e.pnl);
-    const ddResult = computeDrawdown(pnls, startingCapitalBasis);
+    const flows = getLedgerFlows(activePortfolioId);
+    const ddResult = computeDrawdownDaily({ events: realizedEvents, flows, openingCapital: startingCapitalBasis });
 
     const currentDrawdown = ddResult.available ? formatDrawdownPct(ddResult.currentPct) : null;
     const currentDrawdownAmount = ddResult.available ? Math.abs(ddResult.currentAmount).toFixed(2) : null;
@@ -1561,9 +1562,18 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       currentDrawdownAmount,
       maxDrawdown,
       maxDrawdownAmount,
-      excludedDrawdownTrades: excludedDdTrades
+      excludedDrawdownTrades: excludedDdTrades,
+      ddDailyResult: ddResult,
+      drawdownFlows: flows,
+      skippedDays: ddResult.skippedDays || [],
+      approxFlowCount: ddResult.approxFlowCount || 0,
+      currentUnderwaterDays: ddResult.currentUnderwaterDays || 0,
+      longestUnderwaterDays: ddResult.longestUnderwaterDays || 0,
+      maxDrawdownPeakDate: ddResult.maxDrawdownPeakDate || null,
+      maxDrawdownTroughDate: ddResult.maxDrawdownTroughDate || null,
+      recoveryDate: ddResult.recoveryDate || null
     };
-  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled]);
+  }, [filteredTrades, capitalChanges, monthlyPerf, liveCMPs, journalSettings.liveCmpEnabled, activePortfolioId]);
 
 
   const triggerBackupWarningIfOff = () => {

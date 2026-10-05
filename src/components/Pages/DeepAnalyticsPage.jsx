@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import SymbolLogo from '../SymbolLogo';
 import { getStockClassification } from '../../services/stockClassificationService';
-import { computeDrawdown } from '../../utils/drawdown';
+import { computeDrawdown, computeDrawdownDaily } from '../../utils/drawdown';
+import { getLedgerFlows } from '../../utils/fundManagementCalculations';
 import {
   getTradePnl,
   isClosedTrade,
@@ -5095,27 +5096,36 @@ export default function DeepAnalyticsPage({
     return bins;
   }, [closedTrades]);
 
-  // ── Equity Curve ──────────────────────────────────────────────────────
+  // ── Equity Curve & Daily Drawdown Engine ──────────────────────────────
   const { events: ddEvents } = useMemo(() => {
     return buildRealizedEvents(trades);
   }, [trades]);
 
-  const equityCurve = useMemo(() => {
-    const pnls = ddEvents.map(e => e.pnl);
+  const ddDaily = useMemo(() => {
+    const flows = getLedgerFlows();
     const cap = Number(startingCapital) > 0 ? Number(startingCapital) : null;
-    const ddResult = computeDrawdown(pnls, cap);
-
-    return ddEvents.map((e, i) => {
-      const step = ddResult.available ? ddResult.series[i] : null;
-      return {
-        i: i + 1,
-        date: e.dayKey,
-        equity: step ? step.equity : pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
-        drawdown: step ? step.pct : 0,
-        name: e.symbol
-      };
-    });
+    return computeDrawdownDaily({ events: ddEvents, flows, openingCapital: cap });
   }, [ddEvents, startingCapital]);
+
+  const equityCurve = useMemo(() => {
+    if (ddDaily.available && ddDaily.series?.length > 0) {
+      return ddDaily.series.map((s, idx) => ({
+        i: idx + 1,
+        date: s.date,
+        equity: s.equity,
+        drawdown: s.pct,
+        name: s.date
+      }));
+    }
+    const pnls = ddEvents.map(e => e.pnl);
+    return ddEvents.map((e, i) => ({
+      i: i + 1,
+      date: e.dayKey,
+      equity: pnls.slice(0, i + 1).reduce((a, b) => a + b, 0),
+      drawdown: 0,
+      name: e.symbol
+    }));
+  }, [ddDaily, ddEvents]);
 
   // ── Monthly P&L ───────────────────────────────────────────────────────
   const monthlyPnl = useMemo(() => {
@@ -5675,6 +5685,24 @@ export default function DeepAnalyticsPage({
         <h2 className="text-[17px] font-bold tracking-tight text-foreground/80 italic">
           Key Performance Metrics
         </h2>
+
+        {/* Drawdown Engine Data Quality Notes */}
+        {((ddDaily.skippedDays && ddDaily.skippedDays.length > 0) || (ddDaily.approxFlowCount && ddDaily.approxFlowCount > 0)) && (
+          <div className="flex flex-col gap-2">
+            {ddDaily.skippedDays?.length > 0 && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
+                <Info size={14} className="shrink-0" />
+                <span>{ddDaily.skippedDays.length} trades before capital was recorded are excluded</span>
+              </div>
+            )}
+            {ddDaily.approxFlowCount > 0 && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-medium">
+                <Info size={14} className="shrink-0" />
+                <span>{ddDaily.approxFlowCount} deposits/withdrawals have approximate dates</span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
           

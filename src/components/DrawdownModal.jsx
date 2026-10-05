@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { X, LineChart, Table, Info } from 'lucide-react';
 import DrawdownChart from './charts/DrawdownChart';
 import { Button } from '@/components/ui/button';
-import { computeDrawdown } from '../utils/drawdown';
+import { computeDrawdown, computeDrawdownDaily } from '../utils/drawdown';
+import { getLedgerFlows } from '../utils/fundManagementCalculations';
 import {
   buildRealizedEvents,
   formatDrawdownPct,
@@ -22,8 +23,8 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
       ? Number(metrics.startingCapitalBasis ?? metrics.startingCapital)
       : null;
 
-    const pnls = closed.map(e => e.pnl);
-    const ddResult = computeDrawdown(pnls, startingCapital);
+    const flows = metrics?.drawdownFlows || getLedgerFlows();
+    const ddResult = computeDrawdownDaily({ events: closed, flows, openingCapital: startingCapital });
 
     if (closed.length === 0 || !ddResult.available) {
       return {
@@ -57,7 +58,14 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
         historicalPeakAmount: null,
         portfolioHealth: 'Unavailable',
         healthSub: 'Set starting capital',
-        healthColor: 'var(--text-muted)'
+        healthColor: 'var(--text-muted)',
+        skippedDays: [],
+        approxFlowCount: ddResult.approxFlowCount || 0,
+        currentUnderwaterDays: 0,
+        longestUnderwaterDays: 0,
+        maxDrawdownPeakDate: null,
+        maxDrawdownTroughDate: null,
+        recoveryDate: null
       };
     }
 
@@ -65,10 +73,12 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
     let peakCummPfImpact = 0;
     let sumSqDd = 0;
 
+    const seriesByDate = new Map((ddResult.series || []).map(s => [s.date, s]));
+
     const rows = closed.map((e, idx) => {
       const net = e.pnl;
       const t = e.trade || {};
-      const step = ddResult.series[idx];
+      const step = seriesByDate.get(e.dayKey) || ddResult.series[idx] || {};
 
       const pfImpact = t.pfImpact !== undefined && t.pfImpact !== null
         ? Number(t.pfImpact)
@@ -83,8 +93,8 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
 
       if (cummPfImpact > peakCummPfImpact) peakCummPfImpact = cummPfImpact;
 
-      const ddPct = step ? step.pct : 0;
-      const ddAmount = step ? step.amt : 0;
+      const ddPct = step.pct !== undefined ? step.pct : 0;
+      const ddAmount = step.amt !== undefined ? step.amt : 0;
 
       sumSqDd += Math.pow(Math.abs(ddPct), 2);
 
@@ -105,11 +115,11 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
         drawdownPct: Math.min(0, Math.round(ddPct * 100) / 100),
         ddAmount,
         amount: ddAmount,
-        equity: step.equity,
-        peak: step.peak,
+        equity: step.equity !== undefined ? step.equity : (startingCapital + net),
+        peak: ddResult.peakEquity,
         pnl: net,
-        runningNet: step.equity - startingCapital,
-        peakNet: step.peak - startingCapital,
+        runningNet: (step.equity !== undefined ? step.equity : (startingCapital + net)) - startingCapital,
+        peakNet: (ddResult.peakEquity || startingCapital) - startingCapital,
         commentary
       };
     });
@@ -145,11 +155,20 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
       ? peakCummPfImpact
       : (metrics?.grossPFImpact ? Number(metrics.grossPFImpact) : 0);
 
+    const chartData = (ddResult.series && ddResult.series.length > 0)
+      ? ddResult.series.map(s => ({
+          date: s.date,
+          drawdownPct: s.pct,
+          amount: s.amt,
+          equity: s.equity
+        }))
+      : rows;
+
     return {
       available: true,
       excludedTrades,
       rows,
-      chartData: rows,
+      chartData,
       currentDD,
       currentDDAmount,
       maxDD: ddResult.maxPct,
@@ -160,7 +179,14 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
       historicalPeakAmount: ddResult.peakEquity,
       portfolioHealth,
       healthSub,
-      healthColor
+      healthColor,
+      skippedDays: ddResult.skippedDays || [],
+      approxFlowCount: ddResult.approxFlowCount || 0,
+      currentUnderwaterDays: ddResult.currentUnderwaterDays || 0,
+      longestUnderwaterDays: ddResult.longestUnderwaterDays || 0,
+      maxDrawdownPeakDate: ddResult.maxDrawdownPeakDate || null,
+      maxDrawdownTroughDate: ddResult.maxDrawdownTroughDate || null,
+      recoveryDate: ddResult.recoveryDate || null
     };
   }, [trades, metrics]);
 
@@ -299,6 +325,65 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
           ))}
         </div>
 
+        {/* Time Fields (Modal only) */}
+        {ddData.available && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '12px',
+            marginBottom: '20px'
+          }}>
+            {[
+              {
+                label: 'Current Underwater',
+                val: `${ddData.currentUnderwaterDays} days`,
+                sub: ddData.currentUnderwaterDays === 0 ? 'Currently at peak' : 'Days in drawdown'
+              },
+              {
+                label: 'Longest Underwater',
+                val: `${ddData.longestUnderwaterDays} days`,
+                sub: 'Historical maximum duration'
+              },
+              {
+                label: 'Max DD Period',
+                val: ddData.maxDrawdownPeakDate && ddData.maxDrawdownTroughDate
+                  ? `${ddData.maxDrawdownPeakDate} → ${ddData.maxDrawdownTroughDate}`
+                  : '—',
+                sub: 'Peak to trough dates'
+              },
+              {
+                label: 'Recovery Date',
+                val: ddData.recoveryDate ? ddData.recoveryDate : (ddData.maxDrawdownTroughDate ? 'Not recovered' : '—'),
+                sub: ddData.recoveryDate ? 'Recovered to new high' : (ddData.maxDrawdownTroughDate ? 'Awaiting recovery' : 'At peak')
+              }
+            ].map((item, idx) => (
+              <div
+                key={idx}
+                style={{
+                  backgroundColor: 'color-mix(in srgb, var(--bg-surface) 50%, var(--bg-primary))',
+                  borderRadius: '10px',
+                  border: '1px solid color-mix(in srgb, var(--border-color) 35%, transparent)',
+                  padding: '12px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: '68px'
+                }}
+              >
+                <div style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.02em' }}>
+                  {item.label}
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {item.val}
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  {item.sub}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Excluded Trades Alert */}
         {ddData.excludedTrades && ddData.excludedTrades.length > 0 && (
           <div style={{
@@ -320,6 +405,52 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
               </div>
               <div style={{ marginTop: '2px', color: 'var(--text-muted)' }}>
                 {ddData.excludedTrades.map(t => `#${t.tradeNo} (${t.symbol})`).join(', ')}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Skipped Days Alert */}
+        {ddData.skippedDays && ddData.skippedDays.length > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            padding: '10px 14px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            color: '#ef4444',
+            fontSize: '12px'
+          }}>
+            <Info size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>
+                {ddData.skippedDays.length} trades before capital was recorded are excluded
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Approximate Flows Alert */}
+        {ddData.approxFlowCount > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            padding: '10px 14px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.25)',
+            color: '#d97706',
+            fontSize: '12px'
+          }}>
+            <Info size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>
+                {ddData.approxFlowCount} deposits/withdrawals have approximate dates
               </div>
             </div>
           </div>
