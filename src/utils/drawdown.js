@@ -246,3 +246,114 @@ export function computeDrawdownDaily({ events = [], flows = [], openingCapital =
   };
 }
 
+export const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Computes live drawdown considering open-position P&L.
+ *
+ * @param {object} options
+ * @param {object} options.realized - Realized drawdown output (from computeDrawdownDaily or computeDrawdown)
+ * @param {number} [options.unrealizedPnl=0] - Sum of unrealized P&L across priced open positions
+ * @param {number} [options.unpricedCount=0] - Number of open positions with missing/zero/NaN CMP
+ * @param {number} [options.pricedCount=0] - Number of open positions with valid CMP
+ * @param {boolean} [options.hasPricedPositions] - Explicit flag indicating if priced positions exist
+ * @param {Array} [options.pricedTrades=[]] - List of priced trade objects (optional)
+ * @param {boolean} [options.isStale=false] - Whether any CMP price is stale or missing timestamp
+ * @param {string|null} [options.oldestCmpUpdatedAt=null] - ISO timestamp of oldest price among priced positions
+ * @returns {object|null} Live drawdown result, or null if no priced open positions exist
+ */
+export function liveDrawdown({
+  realized,
+  unrealizedPnl = 0,
+  unpricedCount = 0,
+  pricedCount = 0,
+  hasPricedPositions,
+  pricedTrades = [],
+  isStale = false,
+  oldestCmpUpdatedAt = null
+} = {}) {
+  if (!realized || realized.available === false) {
+    return null;
+  }
+
+  const pricedExists = hasPricedPositions !== undefined
+    ? Boolean(hasPricedPositions)
+    : (pricedCount > 0 || (Array.isArray(pricedTrades) && pricedTrades.length > 0) || (unrealizedPnl !== 0 && unrealizedPnl !== null && !isNaN(unrealizedPnl)));
+
+  if (!pricedExists) {
+    return null;
+  }
+
+  let staleFlag = Boolean(isStale);
+  let oldestTs = oldestCmpUpdatedAt;
+  if (Array.isArray(pricedTrades) && pricedTrades.length > 0) {
+    const now = Date.now();
+    let minTime = Infinity;
+    for (const t of pricedTrades) {
+      if (!t.cmpUpdatedAt) {
+        staleFlag = true;
+      } else {
+        const time = new Date(t.cmpUpdatedAt).getTime();
+        if (isNaN(time) || (now - time) > STALE_MS) {
+          staleFlag = true;
+        }
+        if (!isNaN(time) && time < minTime) {
+          minTime = time;
+          oldestTs = t.cmpUpdatedAt;
+        }
+      }
+    }
+  }
+
+  const realizedEquity = Number(realized?.equity) || 0;
+  const liveEquity = realizedEquity + Number(unrealizedPnl || 0);
+  const realizedMaxPct = Number(realized?.maxPct) || 0;
+
+  if (liveEquity <= 0 || realizedEquity <= 0) {
+    const pct = -100;
+    const maxIncludingLive = Math.min(realizedMaxPct, pct);
+    return {
+      liveEquity,
+      livePct: pct,
+      liveAmount: liveEquity - (Number(realized?.peakEquity) || 0),
+      maxIncludingLive,
+      liveEquityNonPositive: true,
+      unpricedCount: Number(unpricedCount) || 0,
+      isStale: staleFlag,
+      oldestCmpUpdatedAt: oldestTs
+    };
+  }
+
+  let pct = 0;
+  let amt = 0;
+
+  if (realized?.index !== undefined && realized?.peakIndex !== undefined && Number(realized.index) > 0 && Number(realized.peakIndex) > 0) {
+    const liveIndex = Number(realized.index) * (1 + (Number(unrealizedPnl) || 0) / realizedEquity);
+    const livePeakIndex = Math.max(Number(realized.peakIndex), liveIndex);
+    pct = livePeakIndex > 0 ? (liveIndex / livePeakIndex - 1) * 100 : 0;
+    amt = liveIndex > 0 ? liveEquity * (1 - livePeakIndex / liveIndex) : 0;
+  } else {
+    const peakEquity = Number(realized?.peakEquity) || realizedEquity;
+    const livePeak = Math.max(peakEquity, liveEquity);
+    pct = livePeak > 0 ? ((liveEquity - livePeak) / livePeak) * 100 : 0;
+    amt = liveEquity - livePeak;
+  }
+
+  if (isNaN(pct) || !isFinite(pct)) pct = 0;
+  if (isNaN(amt) || !isFinite(amt)) amt = 0;
+
+  const maxIncludingLive = Math.min(realizedMaxPct, pct);
+
+  return {
+    liveEquity,
+    livePct: pct,
+    liveAmount: amt,
+    maxIncludingLive,
+    liveEquityNonPositive: false,
+    unpricedCount: Number(unpricedCount) || 0,
+    isStale: staleFlag,
+    oldestCmpUpdatedAt: oldestTs
+  };
+}
+
+

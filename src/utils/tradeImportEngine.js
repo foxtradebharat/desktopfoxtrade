@@ -831,6 +831,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
         grossPnl: grossPnlVal,
         status: statusVal,
         currentAllocation: currentAllocVal,
+        cmpUpdatedAt: (cmpVal > 0) ? new Date().toISOString() : undefined,
       };
 
       resultTrades.push(enrichTradeWithFoxFormulas(rawTrade, baseCapital, { liveCMPs, costBasisMethod: options.costBasisMethod || 'fifo' }));

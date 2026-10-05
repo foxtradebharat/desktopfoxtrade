@@ -265,6 +265,9 @@ export default function AddTradeModal({
       type: side,
       status,
       cmp,
+      cmpUpdatedAt: (cmp !== '' && cmp !== undefined && cmp !== null && Number(cmp) > 0)
+        ? ((initialData && initialData.cmp == cmp && initialData.cmpUpdatedAt) ? initialData.cmpUpdatedAt : new Date().toISOString())
+        : (initialData?.cmpUpdatedAt || null),
       trailingSl,
       setup,
       entryType,

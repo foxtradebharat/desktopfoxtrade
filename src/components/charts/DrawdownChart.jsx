@@ -3,6 +3,7 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -29,36 +30,71 @@ export default function DrawdownChart({
   hideValues = false,
   maxDrawdown,
   strokeColor = '#ef4444',
-  fillColor = '#ef4444'
+  fillColor = '#ef4444',
+  livePoint = null
 }) {
   // Calculate drawdown series from trades if raw trades provided
   const chartData = useMemo(() => {
-    if (data && data.length > 0) return data;
-    if (!trades || trades.length === 0) return DEFAULT_MOCK_DRAWDOWN;
+    let base = [];
+    if (data && data.length > 0) {
+      base = data;
+    } else if (!trades || trades.length === 0) {
+      base = DEFAULT_MOCK_DRAWDOWN;
+    } else {
+      let peak = 0;
+      let runningNet = 0;
 
-    let peak = 0;
-    let runningNet = 0;
+      base = trades
+        .filter((t) => t.status === 'Closed')
+        .map((t, idx) => {
+          const net = Number(t.netPnl ?? t.pl ?? t.pnl ?? 0);
+          runningNet += net;
+          if (runningNet > peak) peak = runningNet;
+          const fallbackCap = 100000;
+          const ddAmount = runningNet - peak;
+          const ddPct = peak > 0 ? (ddAmount / peak) * 100 : (runningNet < 0 ? (runningNet / fallbackCap) * 100 : 0);
 
-    return trades
-      .filter((t) => t.status === 'Closed')
-      .map((t, idx) => {
-        const net = Number(t.netPnl ?? t.pl ?? t.pnl ?? 0);
-        runningNet += net;
-        if (runningNet > peak) peak = runningNet;
-        const fallbackCap = 100000;
-        const ddPct = peak > 0 ? (ddAmount / peak) * 100 : (runningNet < 0 ? (runningNet / fallbackCap) * 100 : 0);
+          return {
+            date: t.e1Date || t.exitDate || t.date || `T#${idx + 1}`,
+            tradeNo: idx + 1,
+            symbol: t.name || t.symbol || '',
+            drawdownPct: Math.min(0, Math.round(ddPct * 100) / 100),
+            amount: ddAmount,
+            equity: runningNet,
+            peak
+          };
+        });
+    }
 
-        return {
-          date: t.e1Date || t.exitDate || t.date || `T#${idx + 1}`,
-          tradeNo: idx + 1,
-          symbol: t.name || t.symbol || '',
-          drawdownPct: Math.min(0, Math.round(ddPct * 100) / 100),
-          amount: ddAmount,
-          equity: runningNet,
-          peak
-        };
-      });
-  }, [data, trades]);
+    if (!livePoint || (livePoint.drawdownPct === undefined && livePoint.livePct === undefined)) {
+      return base;
+    }
+
+    const liveVal = Number(livePoint.drawdownPct ?? livePoint.livePct ?? 0);
+    const lastItem = base[base.length - 1] || {};
+    const lastDd = lastItem.drawdownPct ?? 0;
+
+    // Build series appending temporary 'Now (live)' point — not stored
+    const result = base.map((d, i) => {
+      if (i === base.length - 1) {
+        return { ...d, liveSegmentPct: d.drawdownPct };
+      }
+      return { ...d, liveSegmentPct: undefined };
+    });
+
+    result.push({
+      date: 'Now (live)',
+      tradeNo: 'Live',
+      symbol: 'Live Portfolio',
+      drawdownPct: null,
+      liveSegmentPct: Math.min(0, Math.round(liveVal * 100) / 100),
+      amount: livePoint.amount ?? 0,
+      equity: livePoint.liveEquity,
+      isLive: true
+    });
+
+    return result;
+  }, [data, trades, livePoint]);
 
   // Find maximum drawdown value
   const computedMaxDD = useMemo(() => {
@@ -135,7 +171,7 @@ export default function DrawdownChart({
                 unit="%"
                 hideValues={hideValues}
                 formatter={(val, name) => {
-                  if (name === 'drawdownPct') return `${val.toFixed(2)}%`;
+                  if (name === 'drawdownPct' || name === 'liveSegmentPct') return `${val.toFixed(2)}%`;
                   return val;
                 }}
               />
@@ -154,6 +190,20 @@ export default function DrawdownChart({
             animationDuration={900}
             animationEasing="ease-out"
           />
+
+          {livePoint && (
+            <Line
+              type="linear"
+              dataKey="liveSegmentPct"
+              name="Live DD"
+              stroke="#3b82f6"
+              strokeDasharray="4 4"
+              strokeWidth={2}
+              dot={{ r: 4.5, fill: '#3b82f6', stroke: '#ffffff', strokeWidth: 2 }}
+              activeDot={{ r: 6, fill: '#3b82f6', stroke: '#ffffff', strokeWidth: 2 }}
+              isAnimationActive={false}
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
     </div>

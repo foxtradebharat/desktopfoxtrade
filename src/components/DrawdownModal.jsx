@@ -164,6 +164,26 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
         }))
       : rows;
 
+    const live = metrics?.liveDdResult;
+    const maxIncludingLive = (live && ddResult.available)
+      ? live.maxIncludingLive
+      : (ddResult.available ? ddResult.maxPct : null);
+    const isLiveWorst = Boolean(
+      live &&
+      ddResult.available &&
+      live.livePct < ddResult.maxPct
+    );
+    const maxDDLabel = isLiveWorst ? 'Max DD (incl. live)' : 'Max DD (realized)';
+
+    const livePoint = live ? {
+      date: 'Now (live)',
+      drawdownPct: Number(Number(live.livePct || 0).toFixed(2)),
+      liveEquity: live.liveEquity,
+      amount: live.liveAmount
+    } : null;
+
+    const unpricedCount = Number(metrics?.unpricedOpenCount ?? 0);
+
     return {
       available: true,
       excludedTrades,
@@ -171,8 +191,12 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
       chartData,
       currentDD,
       currentDDAmount,
-      maxDD: ddResult.maxPct,
+      maxDD: maxIncludingLive,
       maxDDAmount: Math.abs(ddResult.maxAmount),
+      maxDDLabel,
+      isLiveWorst,
+      livePoint,
+      unpricedCount,
       ulcerIndex,
       ulcerLabel,
       historicalPeakPct: peakPfDisplay,
@@ -283,7 +307,7 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
             {
               label: 'Ulcer Index',
               val: hideValues ? '•••' : (ddData.ulcerIndex !== null ? ddData.ulcerIndex.toFixed(2) : '—'),
-              sub: hideValues ? '••••' : (ddData.maxDD !== null ? `Max ${formatDrawdownPct(Math.abs(ddData.maxDD))}% | ${ddData.ulcerLabel}` : 'Set starting capital')
+              sub: hideValues ? '••••' : (ddData.maxDD !== null ? `${ddData.maxDDLabel || 'Max'}: ${formatDrawdownPct(Math.abs(ddData.maxDD))}% | ${ddData.ulcerLabel}` : 'Set starting capital')
             },
             {
               label: 'Historical Peak (Realized)',
@@ -456,6 +480,29 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
           </div>
         )}
 
+        {/* Unpriced Open Positions Alert */}
+        {ddData.unpricedCount > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '8px',
+            padding: '10px 14px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.25)',
+            color: '#d97706',
+            fontSize: '12px'
+          }}>
+            <Info size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>
+                {ddData.unpricedCount} open {ddData.unpricedCount === 1 ? 'position has' : 'positions have'} no price and {ddData.unpricedCount === 1 ? 'is' : 'are'} excluded
+              </div>
+            </div>
+          </div>
+        )}
+
         {!ddData.available && (
           <div style={{
             display: 'flex',
@@ -600,7 +647,7 @@ export default function DrawdownModal({ isOpen, onClose, trades = [], hideValues
                 Peak-to-trough equity declines
               </span>
             </div>
-            <DrawdownChart data={ddData.chartData} maxDrawdown={ddData.maxDD} hideValues={hideValues} height={240} />
+            <DrawdownChart data={ddData.chartData} maxDrawdown={ddData.maxDD} hideValues={hideValues} height={240} livePoint={ddData.livePoint} />
           </div>
         )}
       </div>

@@ -67,7 +67,7 @@ import { deduplicateAndMergeTrades } from './utils/tradeDeduplicationEngine';
 import { loadBrokerCharges, calculateCharges, detectSegment } from './utils/brokerChargesService';
 import { getCanonicalSymbol, getCorporateActionDetails } from './utils/securityMaster.js';
 import { toPaise, fromPaise } from './utils/pnlEngine.js';
-import { computeDrawdown, computeDrawdownDaily } from './utils/drawdown.js';
+import { computeDrawdown, computeDrawdownDaily, liveDrawdown, STALE_MS } from './utils/drawdown.js';
 import { getLedgerFlows } from './utils/fundManagementCalculations.js';
 import { getTradePnl, isClosedTrade, isPartialTrade, sortTradesByEffectiveExitDate, buildRealizedEvents, formatDrawdownPct } from './utils/tradeMetricsShared.js';
 /**
@@ -1387,6 +1387,37 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     const unrealizedPaise = openTrades.reduce((acc, t) => acc + toPaise(t.unrealized), 0);
     const unrealizedPL = fromPaise(unrealizedPaise);
 
+    // ── Priced vs unpriced open positions & price staleness for Live DD ──
+    const isPricedTrade = (t) => {
+      const c = Number(t?.cmp);
+      return !isNaN(c) && c > 0;
+    };
+    const pricedOpenTrades = openTrades.filter(isPricedTrade);
+    const unpricedCount = openTrades.length - pricedOpenTrades.length;
+    const pricedUnrealizedPaise = pricedOpenTrades.reduce((acc, t) => acc + toPaise(t.unrealized), 0);
+    const pricedUnrealizedPL = fromPaise(pricedUnrealizedPaise);
+
+    const nowMs = Date.now();
+    let oldestCmpUpdatedAt = null;
+    let isCmpStale = false;
+    if (pricedOpenTrades.length > 0) {
+      let minTs = Infinity;
+      for (const t of pricedOpenTrades) {
+        if (!t.cmpUpdatedAt) {
+          isCmpStale = true;
+        } else {
+          const ts = new Date(t.cmpUpdatedAt).getTime();
+          if (isNaN(ts) || (nowMs - ts) > STALE_MS) {
+            isCmpStale = true;
+          }
+          if (!isNaN(ts) && ts < minTs) {
+            minTs = ts;
+            oldestCmpUpdatedAt = t.cmpUpdatedAt;
+          }
+        }
+      }
+    }
+
     // ── Total Invested (₹): sum of (avgEntry * openQty) for open positions ─────
     const totalInvested = openTrades.reduce(
       (acc, t) => acc + (t.avgEntry || t.entry || 0) * (t.openQty || 0),
@@ -1536,9 +1567,30 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     const flows = getLedgerFlows(activePortfolioId);
     const ddResult = computeDrawdownDaily({ events: realizedEvents, flows, openingCapital: startingCapitalBasis });
 
+    // ── Live Drawdown (Part 3): Temporary evaluation including priced open-position P&L ──
+    const liveDdResult = liveDrawdown({
+      realized: ddResult,
+      unrealizedPnl: pricedUnrealizedPL,
+      unpricedCount,
+      pricedCount: pricedOpenTrades.length,
+      isStale: isCmpStale,
+      oldestCmpUpdatedAt
+    });
+
+    const maxIncludingLive = (liveDdResult && ddResult.available)
+      ? liveDdResult.maxIncludingLive
+      : (ddResult.available ? ddResult.maxPct : null);
+
+    const isLiveWorst = Boolean(
+      liveDdResult &&
+      ddResult.available &&
+      liveDdResult.livePct < ddResult.maxPct
+    );
+    const maxDdLabel = isLiveWorst ? 'Max DD (incl. live)' : 'Max DD (realized)';
+
     const currentDrawdown = ddResult.available ? formatDrawdownPct(ddResult.currentPct) : null;
     const currentDrawdownAmount = ddResult.available ? Math.abs(ddResult.currentAmount).toFixed(2) : null;
-    const maxDrawdown = ddResult.available ? formatDrawdownPct(ddResult.maxPct) : null;
+    const maxDrawdown = (ddResult.available && maxIncludingLive !== null) ? formatDrawdownPct(maxIncludingLive) : null;
     const maxDrawdownAmount = ddResult.available ? Math.abs(ddResult.maxAmount).toFixed(2) : null;
 
     return {
@@ -1562,9 +1614,16 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       currentDrawdownAmount,
       maxDrawdown,
       maxDrawdownAmount,
+      maxDrawdownLabel: maxDdLabel,
+      isLiveWorst,
       excludedDrawdownTrades: excludedDdTrades,
       ddDailyResult: ddResult,
       drawdownFlows: flows,
+      liveDdResult,
+      unpricedOpenCount: unpricedCount,
+      pricedOpenCount: pricedOpenTrades.length,
+      isCmpStale,
+      oldestCmpUpdatedAt,
       skippedDays: ddResult.skippedDays || [],
       approxFlowCount: ddResult.approxFlowCount || 0,
       currentUnderwaterDays: ddResult.currentUnderwaterDays || 0,
@@ -1600,6 +1659,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       id: editingTrade ? editingTrade.id : `trade-${now}`,
       tradeNo: editingTrade ? editingTrade.tradeNo : trades.length + 1,
       ...tradeData,
+      cmpUpdatedAt: tradeData.cmpUpdatedAt || ((tradeData.cmp && Number(tradeData.cmp) > 0) ? new Date().toISOString() : null),
       clientUpdatedAt: now,
       updatedAt: now,
     });
@@ -1645,6 +1705,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     setTrades(prev => prev.map(t => {
       if (t.id === id) {
         const updated = { ...t, [field]: value, clientUpdatedAt: now, updatedAt: now };
+        if (field === 'cmp') {
+          updated.cmp = value;
+          updated.cmpUpdatedAt = (value !== '' && value !== undefined && value !== null && Number(value) > 0)
+            ? new Date().toISOString()
+            : null;
+        }
         if (field === 'name') {
           updated.name = value;
           if (!updated.symbol || updated.symbol === t.name) {
@@ -1655,12 +1721,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             const cachedPrice = getCachedCMP(sym) || liveCMPs?.[sym] || liveCMPs?.[value.toUpperCase()];
             if (cachedPrice && Number(cachedPrice) > 0) {
               updated.cmp = Number(cachedPrice);
+              updated.cmpUpdatedAt = new Date().toISOString();
             } else if (!t.cmp || Number(t.cmp) === 0) {
               fetchLiveCMPForSymbol(sym).then(p => {
                 if (p > 0) {
                   setTrades(latest => latest.map(item => {
                     if (item.id === id && (!item.cmp || Number(item.cmp) === 0)) {
-                      return enrichTradeWithLegs({ ...item, cmp: p });
+                      return enrichTradeWithLegs({ ...item, cmp: p, cmpUpdatedAt: new Date().toISOString() });
                     }
                     return item;
                   }));
