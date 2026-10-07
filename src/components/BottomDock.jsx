@@ -544,6 +544,7 @@ export default function BottomDock({
       <RestoreBackupModal
         isOpen={isRestoreModalOpen}
         onClose={() => setIsRestoreModalOpen(false)}
+        portfolios={portfolios}
         activePortfolioId={activePortfolioId}
         activePortfolioName={activePortfolioName}
         currentTrades={trades}

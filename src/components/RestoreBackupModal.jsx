@@ -68,6 +68,72 @@ function formatBytes(bytes) {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
+// Convert technical backup filename or payload into a clean, human-readable portfolio name
+export function getPortfolioDisplayName(backup, portfoliosList = []) {
+  if (!backup) return 'FoxTrade Backup';
+
+  // 1. Explicit portfolio name in metadata / data payload
+  if (backup.data?.portfolioName) return backup.data.portfolioName;
+  if (backup.portfolioName) return backup.portfolioName;
+
+  // 2. Resolve portfolios list (props or localStorage)
+  let allPortfolios = Array.isArray(portfoliosList) && portfoliosList.length > 0 ? portfoliosList : [];
+  if (allPortfolios.length === 0) {
+    try {
+      const raw = localStorage.getItem('tradeontip_portfolios');
+      if (raw) allPortfolios = JSON.parse(raw);
+    } catch (_) {}
+  }
+
+  // 3. Match by explicit portfolioId
+  const pid = backup.portfolioId || backup.data?.portfolioId;
+  if (pid) {
+    const match = allPortfolios.find(p => 
+      p.id === pid || 
+      p.id === `portfolio-${pid}` || 
+      pid === `portfolio-${p.id}` ||
+      p.id?.toLowerCase() === pid.toLowerCase()
+    );
+    if (match && match.name) return match.name;
+    if (pid === 'default' || pid === 'portfolio-default') return 'My Portfolio';
+    const cleanSlug = pid.replace(/^portfolio-/, '');
+    return cleanSlug.charAt(0).toUpperCase() + cleanSlug.slice(1);
+  }
+
+  // 4. Parse from filename (e.g. foxtrade-journal-portfolio-nexus40.json.gz -> Nexus40)
+  const rawName = backup.name || '';
+  if (rawName.startsWith('foxtrade-journal-')) {
+    const cleanId = rawName
+      .replace(/^foxtrade-journal-/, '')
+      .replace(/\.json\.gz$/, '')
+      .replace(/\.json$/, '')
+      .replace(/\.gz$/, '');
+
+    const match = allPortfolios.find(p => 
+      p.id === cleanId || 
+      p.id === `portfolio-${cleanId}` || 
+      cleanId === `portfolio-${p.id}` ||
+      p.id?.toLowerCase() === cleanId.toLowerCase()
+    );
+    if (match && match.name) return match.name;
+
+    if (cleanId === 'default' || cleanId === 'portfolio-default') {
+      const defPf = allPortfolios.find(p => p.id === 'default' || p.id === 'portfolio-default');
+      return defPf?.name || 'My Portfolio';
+    }
+
+    const stripped = cleanId.replace(/^portfolio-/, '');
+    return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  }
+
+  // 5. Fallback for uploaded files
+  if (backup.isLocalUpload) {
+    return backup.name.replace(/\.(json|gz|csv)$/i, '');
+  }
+
+  return backup.name || 'FoxTrade Backup';
+}
+
 // Custom Minimalist Dropdown (Replaces native OS select)
 function MinimalDropdown({ label, value, onChange, options, description }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -198,6 +264,7 @@ function MinimalDropdown({ label, value, onChange, options, description }) {
 export default function RestoreBackupModal({
   isOpen,
   onClose,
+  portfolios = [],
   activePortfolioId = 'default',
   activePortfolioName = 'My Portfolio',
   currentTrades = [],
@@ -465,7 +532,8 @@ export default function RestoreBackupModal({
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to delete backup "${backup.name}" from Google Drive?`)) {
+    const displayName = getPortfolioDisplayName(backup, portfolios);
+    if (!window.confirm(`Are you sure you want to delete backup "${displayName}" (${backup.name}) from Google Drive?`)) {
       return;
     }
 
@@ -1005,8 +1073,11 @@ export default function RestoreBackupModal({
                               backgroundColor: backup.isLocalUpload ? '#8b5cf6' : '#3b82f6',
                               flexShrink: 0
                             }} />
-                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {backup.name || 'FoxTrade Backup'}
+                            <span 
+                              style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                              title={backup.name}
+                            >
+                              {getPortfolioDisplayName(backup, portfolios)}
                             </span>
                           </div>
                           
@@ -1135,13 +1206,18 @@ export default function RestoreBackupModal({
                 marginBottom: '16px'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <div>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                      {selectedBackup.name || 'FoxTrade Backup'}
-                    </span>
-                    <span style={{ fontSize: '10px', color: 'var(--text-muted, #6b7280)', marginLeft: '8px' }}>
-                      v{selectedBackupData?.version || '3.0'}
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {getPortfolioDisplayName(selectedBackup, portfolios)}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted, #6b7280)' }}>
+                        v{selectedBackupData?.version || '3.0'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted, #9ca3af)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={selectedBackup.name}>
+                      {selectedBackup.name}
+                    </div>
                   </div>
 
                   <div style={{
