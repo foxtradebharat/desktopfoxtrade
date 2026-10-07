@@ -159,8 +159,10 @@ export function getStoredLedgerEntries(portfolioId = 'portfolio-default', year =
     migrateLedgerToDatedEntries();
 
     const key = `tradeontip_ledger_entries_${portfolioId}_${year}`;
-    const fallbackKey = `tradeontip_ledger_entries_${year}`;
-    const saved = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
+    let saved = localStorage.getItem(key);
+    if (!saved && portfolioId === 'portfolio-default') {
+      saved = localStorage.getItem(`tradeontip_ledger_entries_${year}`);
+    }
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -169,8 +171,10 @@ export function getStoredLedgerEntries(portfolioId = 'portfolio-default', year =
     }
 
     const legacyKey = `tradeontip_monthly_capital_${portfolioId}_${year}`;
-    const legacyFallback = `tradeontip_monthly_capital_${year}`;
-    const legacySaved = localStorage.getItem(legacyKey) || localStorage.getItem(legacyFallback);
+    let legacySaved = localStorage.getItem(legacyKey);
+    if (!legacySaved && portfolioId === 'portfolio-default') {
+      legacySaved = localStorage.getItem(`tradeontip_monthly_capital_${year}`);
+    }
     if (legacySaved) {
       try {
         const legacyData = JSON.parse(legacySaved);
@@ -217,11 +221,11 @@ export function getLedgerFlows(portfolioId = 'portfolio-default') {
       }
     }
 
-    if (entriesMap.size === 0) {
+    if (entriesMap.size === 0 && targetPf === 'portfolio-default') {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
-        if (k.startsWith(fallbackPrefix) && !k.includes('_backup_')) {
+        if (/^tradeontip_ledger_entries_\d{4}$/.test(k) && !k.includes('_backup_')) {
           try {
             const arr = JSON.parse(localStorage.getItem(k));
             if (Array.isArray(arr)) {
@@ -301,8 +305,10 @@ export function getStoredCapitalChanges(portfolioId = 'portfolio-default', year 
 
     // If dated entries exist, derive month aggregates directly
     const entriesKey = `tradeontip_ledger_entries_${portfolioId}_${year}`;
-    const fallbackEntriesKey = `tradeontip_ledger_entries_${year}`;
-    const entriesRaw = localStorage.getItem(entriesKey) || localStorage.getItem(fallbackEntriesKey);
+    let entriesRaw = localStorage.getItem(entriesKey);
+    if (!entriesRaw && portfolioId === 'portfolio-default') {
+      entriesRaw = localStorage.getItem(`tradeontip_ledger_entries_${year}`);
+    }
     if (entriesRaw) {
       try {
         const entries = JSON.parse(entriesRaw);
@@ -313,8 +319,10 @@ export function getStoredCapitalChanges(portfolioId = 'portfolio-default', year 
     }
 
     const key = `tradeontip_monthly_capital_${portfolioId}_${year}`;
-    const fallbackKey = `tradeontip_monthly_capital_${year}`;
-    const saved = localStorage.getItem(key) || localStorage.getItem(fallbackKey);
+    let saved = localStorage.getItem(key);
+    if (saved === null && portfolioId === 'portfolio-default') {
+      saved = localStorage.getItem(`tradeontip_monthly_capital_${year}`);
+    }
     if (saved !== null) {
       try {
         return JSON.parse(saved) || {};
@@ -336,14 +344,18 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
   try {
     const key = `tradeontip_monthly_capital_${portfolioId}_${year}`;
     localStorage.setItem(key, JSON.stringify(data));
-    localStorage.setItem(`tradeontip_monthly_capital_${year}`, JSON.stringify(data));
+    if (portfolioId === 'portfolio-default') {
+      localStorage.setItem(`tradeontip_monthly_capital_${year}`, JSON.stringify(data));
+    }
 
     // If legacy saveCapitalChanges is called, keep dated entries in sync
     const entries = convertLegacyAggregatesToEntries(data, portfolioId, year);
     if (entries.length > 0) {
       const entriesKey = `tradeontip_ledger_entries_${portfolioId}_${year}`;
       localStorage.setItem(entriesKey, JSON.stringify(entries));
-      localStorage.setItem(`tradeontip_ledger_entries_${year}`, JSON.stringify(entries));
+      if (portfolioId === 'portfolio-default') {
+        localStorage.setItem(`tradeontip_ledger_entries_${year}`, JSON.stringify(entries));
+      }
     }
 
     let initialAdded = 0;

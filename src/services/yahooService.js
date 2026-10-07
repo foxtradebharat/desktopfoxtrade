@@ -36,7 +36,7 @@ function cleanSymbolForYahoo(symbol) {
   if (sym === 'L&TFH' || sym === 'L_TFH') return 'LTF.NS';
 
   // Default to NSE (.NS) for Indian equities
-  const clean = sym.replace(/[^A-Z0-9&]/g, '');
+  const clean = sym.replace(/[^A-Z0-9&-]/g, '');
   return clean ? `${clean}.NS` : null;
 }
 

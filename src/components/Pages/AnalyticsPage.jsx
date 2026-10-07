@@ -22,7 +22,8 @@ import {
   Info,
   Calendar,
   ChevronDown,
-  Check
+  Check,
+  Sparkles
 } from 'lucide-react';
 import SymbolLogo from '../SymbolLogo';
 import { getCapital } from '../../utils/fundManagementCalculations';
@@ -356,7 +357,8 @@ export default function AnalyticsPage({
   onOpenStockChart,
   chargesMap = null,
   dateRange = 'All Time',
-  resolvedDateFilter = null
+  resolvedDateFilter = null,
+  onNavigateToDeepAnalytics = null
 }) {
   // ─── States ──────────────────────────────────────────────────
   const [pnlMode, setPnlMode] = useState('gross'); // 'gross' | 'net' (defaults to gross)
@@ -1458,6 +1460,39 @@ function getTradeActualCloseDateStr(t) {
 
         {/* Right Header Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {onNavigateToDeepAnalytics && (
+            <button
+              type="button"
+              onClick={onNavigateToDeepAnalytics}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '9999px',
+                border: '1px solid #10b981',
+                backgroundColor: '#ecfdf5',
+                color: '#047857',
+                fontSize: '11px',
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#d1fae5';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#ecfdf5';
+              }}
+              title="Open Deep Analytics suite: Pareto curve, holding period spread, and weekday heatmap"
+            >
+              <Sparkles size={12} strokeWidth={2.5} />
+              Deep Stats &amp; Pareto &rarr;
+            </button>
+          )}
+
           {/* Customize Dashboard Button & Dropdown Menu */}
           <div ref={customizeDropdownRef} style={{ position: 'relative' }}>
             <button

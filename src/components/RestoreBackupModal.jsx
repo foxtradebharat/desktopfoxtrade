@@ -34,8 +34,15 @@ import {
   setConfig,
   mergeFoxyChats,
   mergeFoxyCommitments,
+  getCalendarNotes,
   saveCalendarNotes,
+  getIndependentNotes,
   saveIndependentNotes,
+  getMonthlyPerf,
+  setMonthlyPerf,
+  setBaseCapital,
+  saveToDrive,
+  syncPendingImages,
 } from '../db/index.js';
 import { requestAccessToken } from '../services/googleDrive.js';
 
@@ -377,7 +384,33 @@ export default function RestoreBackupModal({
     try {
       let blob;
       if (backup.isLocal) {
-        blob = new Blob([JSON.stringify({ version: '3.0', trades: currentTrades }, null, 2)], { type: 'application/json' });
+        const calNotes = await getCalendarNotes().catch(() => ({}));
+        const indNotes = await getIndependentNotes().catch(() => []);
+        const foxyChats = await getConfig('foxy_ai_chats', []).catch(() => []);
+        const foxyCommitments = await getConfig('foxy_trader_commitments', []).catch(() => []);
+        let settings = null;
+        try { settings = JSON.parse(localStorage.getItem('tradeontip_settings') || '{}'); } catch {}
+        let baseCapital = null;
+        try { baseCapital = Number(localStorage.getItem('tradeontip_base_capital') || 0); } catch {}
+        
+        const localPayload = {
+          version: '3.0',
+          schemaVersion: 2,
+          portfolioId: activePortfolioId,
+          exportedAt: new Date().toISOString(),
+          trades: currentTrades,
+          notes: calNotes,
+          independentNotes: indNotes,
+          foxyChats,
+          foxyCommitments,
+          journalSettings: settings,
+          baseCapital,
+          metadata: {
+            tradeCount: currentTrades.filter(t => !t.deletedAt).length,
+            isLocalSnapshot: true,
+          }
+        };
+        blob = new Blob([JSON.stringify(localPayload, null, 2)], { type: 'application/json' });
       } else {
         const token = await getValidAccessToken().catch(() => accessToken);
         const data = await downloadBackupFileById(backup.id, token);
@@ -451,15 +484,138 @@ export default function RestoreBackupModal({
         remoteTrades = data?.trades || [];
       }
 
-      // Restore daily & notebook notes from backup to both localStorage and IndexedDB
-      if (backupPayload?.notes && typeof backupPayload.notes === 'object') {
-        try { await saveCalendarNotes(backupPayload.notes); } catch {}
-      }
-      if (Array.isArray(backupPayload?.independentNotes)) {
-        try { await saveIndependentNotes(backupPayload.independentNotes); } catch {}
+      const targetPortfolio = selectedBackup.portfolioId || activePortfolioId;
+
+      // 1. NOTES & PLAYBOOK STRATEGY
+      if (notesStrategy !== 'skip') {
+        if (notesStrategy === 'overwrite') {
+          if (backupPayload?.notes && typeof backupPayload.notes === 'object') {
+            await saveCalendarNotes(backupPayload.notes);
+          } else {
+            await saveCalendarNotes({});
+          }
+          if (Array.isArray(backupPayload?.independentNotes)) {
+            await saveIndependentNotes(backupPayload.independentNotes);
+          } else {
+            await saveIndependentNotes([]);
+          }
+        } else if (notesStrategy === 'merge') {
+          if (backupPayload?.notes && typeof backupPayload.notes === 'object') {
+            const curCal = await getCalendarNotes().catch(() => ({}));
+            await saveCalendarNotes({ ...(backupPayload.notes || {}), ...curCal });
+          }
+          if (Array.isArray(backupPayload?.independentNotes)) {
+            const curInd = await getIndependentNotes().catch(() => []);
+            const idMap = new Map();
+            (backupPayload.independentNotes || []).forEach(n => { if (n?.id) idMap.set(n.id, n); });
+            curInd.forEach(n => { if (n?.id) idMap.set(n.id, n); });
+            await saveIndependentNotes(Array.from(idMap.values()));
+          }
+        }
       }
 
-      // Restore Foxy AI chats with smart merge if present
+      // 2. MONTHLY PERFORMANCE & FUND MANAGEMENT STRATEGY
+      if (monthlyStrategy !== 'skip') {
+        // Fund management monthly capital entries
+        if (backupPayload?.fundManagement && typeof backupPayload.fundManagement === 'object') {
+          Object.entries(backupPayload.fundManagement).forEach(([k, v]) => {
+            if (monthlyStrategy === 'overwrite') {
+              localStorage.setItem(k, JSON.stringify(v));
+            } else if (monthlyStrategy === 'merge') {
+              try {
+                const existing = JSON.parse(localStorage.getItem(k) || '{}');
+                localStorage.setItem(k, JSON.stringify({ ...v, ...existing }));
+              } catch (_) {
+                localStorage.setItem(k, JSON.stringify(v));
+              }
+            }
+          });
+        }
+        if (backupPayload?.baseCapital && Number(backupPayload.baseCapital) > 0) {
+          localStorage.setItem('tradeontip_base_capital', String(backupPayload.baseCapital));
+          await setBaseCapital(targetPortfolio, Number(backupPayload.baseCapital)).catch(() => {});
+        }
+        // Dedicated monthly performance records
+        if (Array.isArray(backupPayload?.monthlyPerf)) {
+          for (const item of backupPayload.monthlyPerf) {
+            if (item && item.year && item.data) {
+              const pid = item.portfolioId || targetPortfolio;
+              if (monthlyStrategy === 'overwrite') {
+                await setMonthlyPerf(pid, item.year, item.data).catch(() => {});
+              } else if (monthlyStrategy === 'merge') {
+                const existing = await getMonthlyPerf(pid, item.year).catch(() => null);
+                const mergedData = existing ? { ...item.data, ...existing } : item.data;
+                await setMonthlyPerf(pid, item.year, mergedData).catch(() => {});
+              }
+            }
+          }
+        }
+        window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
+          detail: { portfolioId: targetPortfolio, year: '2026', data: backupPayload?.fundManagement?.[`tradeontip_monthly_capital_${targetPortfolio}_2026`] || {} }
+        }));
+      }
+
+      // 3. TAX ANALYTICS STRATEGY
+      if (taxStrategy !== 'skip' && backupPayload?.taxAnalytics && typeof backupPayload.taxAnalytics === 'object') {
+        Object.entries(backupPayload.taxAnalytics).forEach(([key, val]) => {
+          if (taxStrategy === 'overwrite') {
+            localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+          } else if (taxStrategy === 'merge') {
+            try {
+              const existingRaw = localStorage.getItem(key);
+              if (existingRaw) {
+                const existing = JSON.parse(existingRaw);
+                const merged = (typeof val === 'object' && val !== null) ? { ...val, ...existing } : existing;
+                localStorage.setItem(key, JSON.stringify(merged));
+              } else {
+                localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+              }
+            } catch (_) {
+              localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+            }
+          }
+        });
+        window.dispatchEvent(new CustomEvent('tradeontip_taxes_updated', { detail: { portfolioId: targetPortfolio } }));
+      }
+
+      // 4. APP & COLUMN SETTINGS STRATEGY
+      if (appSettingsStrategy === 'restore') {
+        if (backupPayload?.appSettings && typeof backupPayload.appSettings === 'object') {
+          Object.entries(backupPayload.appSettings).forEach(([k, v]) => {
+            try {
+              localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+            } catch (_) {}
+          });
+        }
+        if (backupPayload?.journalSettings && typeof backupPayload.journalSettings === 'object') {
+          try {
+            localStorage.setItem('tradeontip_settings', JSON.stringify(backupPayload.journalSettings));
+          } catch (_) {}
+        }
+        window.dispatchEvent(new CustomEvent('tradeontip_settings_updated', { detail: backupPayload?.journalSettings || {} }));
+        if (backupPayload?.appSettings?.['tradeontip_visible_cols_v5']) {
+          window.dispatchEvent(new CustomEvent('tradeontip_columns_updated', { detail: backupPayload.appSettings['tradeontip_visible_cols_v5'] }));
+        }
+      }
+
+      // 5. BROKER API KEYS TOGGLE
+      if (restoreBrokerKeys && backupPayload?.brokerTokens && typeof backupPayload.brokerTokens === 'object') {
+        Object.entries(backupPayload.brokerTokens).forEach(([k, v]) => {
+          try {
+            localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+          } catch (_) {}
+        });
+      }
+
+      // 6. CHART IMAGES TOGGLE
+      if (restoreImages) {
+        const token = await getValidAccessToken().catch(() => accessToken);
+        if (token && token !== 'demo-token') {
+          syncPendingImages(token, targetPortfolio).catch(() => {});
+        }
+      }
+
+      // 7. FOXY AI DATA (Smart merge)
       if (Array.isArray(backupPayload?.foxyChats) && backupPayload.foxyChats.length > 0) {
         try {
           const localChats = await getConfig('foxy_ai_chats', []);
@@ -469,8 +625,6 @@ export default function RestoreBackupModal({
           console.warn('[RestoreBackupModal] Restore foxyChats failed:', e);
         }
       }
-
-      // Restore Foxy trader commitments with deduplication
       if (Array.isArray(backupPayload?.foxyCommitments) && backupPayload.foxyCommitments.length > 0) {
         try {
           const localComms = await getConfig('foxy_trader_commitments', []);
@@ -480,8 +634,6 @@ export default function RestoreBackupModal({
           console.warn('[RestoreBackupModal] Restore foxyCommitments failed:', e);
         }
       }
-
-      // Restore Foxy API key & settings if present
       if (backupPayload?.foxyConfig && typeof backupPayload.foxyConfig === 'object') {
         try {
           const localKey = await getConfig('foxy_ai_api_key', '');
@@ -499,32 +651,34 @@ export default function RestoreBackupModal({
         }
       }
 
-      if (!remoteTrades.length) {
+      // 8. JOURNAL ENTRIES RESTORE STRATEGY
+      if (!remoteTrades.length && journalStrategy !== 'skip') {
         throw new Error('No trade entries found in this backup');
       }
 
-      const targetPortfolio = selectedBackup.portfolioId || activePortfolioId;
-
-      let finalTradesToSave = [];
+      let finalTradesToSave = currentTrades;
       if (journalStrategy === 'merge') {
         const localAll = await getTradesWithDeleted(targetPortfolio);
         finalTradesToSave = mergeTradeArrays(localAll, remoteTrades);
       } else if (journalStrategy === 'overwrite') {
         await clearTrades(targetPortfolio);
         finalTradesToSave = remoteTrades;
-      } else {
-        // Skip journal restore
-        finalTradesToSave = currentTrades;
       }
 
       if (journalStrategy !== 'skip') {
         await bulkPutTrades(targetPortfolio, finalTradesToSave, true);
+        if (onTradesRestored) {
+          const activeTrades = finalTradesToSave.filter(t => !t.deletedAt);
+          onTradesRestored(activeTrades);
+        }
       }
 
-      // Notify parent Dashboard
-      if (onTradesRestored && journalStrategy !== 'skip') {
-        const activeTrades = finalTradesToSave.filter(t => !t.deletedAt);
-        onTradesRestored(activeTrades);
+      // 9. IMMEDIATELY FLUSH RESTORED STATE TO GOOGLE DRIVE
+      const token = await getValidAccessToken().catch(() => accessToken);
+      if (token && token !== 'demo-token') {
+        saveToDrive(targetPortfolio, finalTradesToSave, token, true).catch(err => {
+          console.warn('[RestoreBackupModal] Post-restore Drive sync notification:', err?.message || err);
+        });
       }
 
       if (onShowToast) {

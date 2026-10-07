@@ -15,6 +15,7 @@
  */
 
 import { calculateCharges, getChargesMap } from './brokerChargesService.js';
+import { toPaise, fromPaise } from './pnlEngine.js';
 
 export const MONTH_NAMES_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -179,14 +180,22 @@ export function calculateTaxMonthlyBreakdown(trades = [], options = {}) {
           ? t.e3Date || t.e2Date || t.e1Date || t.exitDate || t.closeDate || t.date
           : t.date || t.entryDate;
 
-      const parsed = parseDateParts(dateString);
-      if (!parsed) return false;
+      let parsed = parseDateParts(dateString);
+      if (!parsed || (selectedYear !== 'All' && String(parsed.year) !== String(selectedYear))) {
+        const fallbackParsed = parseDateParts(t.date || t.entryDate);
+        if (fallbackParsed && (selectedYear === 'All' || String(fallbackParsed.year) === String(selectedYear))) {
+          parsed = fallbackParsed;
+        } else if (!parsed) {
+          return false;
+        }
+      }
 
       if (selectedYear !== 'All' && String(parsed.year) !== String(selectedYear)) return false;
       return parsed.month === m.index;
     });
 
-    const grossPl = monthTrades.reduce((acc, t) => acc + getTradeRealizedPl(t), 0);
+    const grossPlPaise = monthTrades.reduce((acc, t) => acc + toPaise(getTradeRealizedPl(t)), 0);
+    const grossPl = fromPaise(grossPlPaise);
 
     const autoTradeCharges = {
       stt: 0,

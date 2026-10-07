@@ -332,6 +332,37 @@ await asyncTest('Test 8: Golden Regression - The 18 Nexus-zeroed trades are rest
   assert.strictEqual(trades._reconciliation.pnlReconciliationHolds, true, 'Multi-dimensional P&L parity must hold');
 });
 
+// 9. QTY_MISMATCH Validation & Hierarchy
+test('Test 9: QTY_MISMATCH validation hierarchy (legs, exitedQty fallback, exits[] fallback)', () => {
+  // Case 1: qty 20, e1Qty 20, exitedQty 20 -> no QTY_MISMATCH
+  const t1 = validateTradeRecord({ entry: 100, qty: 20, e1Qty: 20, exitedQty: 20, status: 'Closed' });
+  assert.strictEqual(t1.flags.includes('QTY_MISMATCH'), false, 'Case 1: qty 20, e1Qty 20, exitedQty 20 must not be flagged QTY_MISMATCH');
+
+  // Case 2: qty 50, p1Qty 25, e1Qty 75, exitedQty 75 -> no flag
+  const t2 = validateTradeRecord({ entry: 100, qty: 50, p1Qty: 25, e1Qty: 75, exitedQty: 75, status: 'Closed' });
+  assert.strictEqual(t2.flags.includes('QTY_MISMATCH'), false, 'Case 2: qty 50, p1Qty 25, e1Qty 75, exitedQty 75 must not be flagged QTY_MISMATCH');
+
+  // Case 3: qty 100, e1Qty 40, e2Qty 60, exitedQty 100 -> no flag
+  const t3 = validateTradeRecord({ entry: 100, qty: 100, e1Qty: 40, e2Qty: 60, exitedQty: 100, status: 'Closed' });
+  assert.strictEqual(t3.flags.includes('QTY_MISMATCH'), false, 'Case 3: qty 100, e1Qty 40, e2Qty 60, exitedQty 100 must not be flagged QTY_MISMATCH');
+
+  // Case 4: qty 20, no legs, exitedQty 20 -> no flag
+  const t4 = validateTradeRecord({ entry: 100, qty: 20, exitedQty: 20, status: 'Closed' });
+  assert.strictEqual(t4.flags.includes('QTY_MISMATCH'), false, 'Case 4: qty 20, no legs, exitedQty 20 must not be flagged QTY_MISMATCH');
+
+  // Case 5: qty 20, no legs, no exitedQty, exits [{qty: 20}] -> no flag
+  const t5 = validateTradeRecord({ entry: 100, qty: 20, exits: [{ qty: 20 }], status: 'Closed' });
+  assert.strictEqual(t5.flags.includes('QTY_MISMATCH'), false, 'Case 5: qty 20, no legs, no exitedQty, exits [{qty: 20}] must not be flagged QTY_MISMATCH');
+
+  // Case 6: qty 20, e1Qty 15, exitedQty 15 -> QTY_MISMATCH flagged
+  const t6 = validateTradeRecord({ entry: 100, qty: 20, e1Qty: 15, exitedQty: 15, status: 'Closed' });
+  assert.strictEqual(t6.flags.includes('QTY_MISMATCH'), true, 'Case 6: qty 20, e1Qty 15, exitedQty 15 must be flagged QTY_MISMATCH');
+
+  // Case 7: Partial trade with mismatched quantities -> never flagged
+  const t7 = validateTradeRecord({ entry: 100, qty: 20, e1Qty: 15, exitedQty: 15, status: 'Partial' });
+  assert.strictEqual(t7.flags.includes('QTY_MISMATCH'), false, 'Case 7: Partial trade with mismatched quantities must never be flagged QTY_MISMATCH');
+});
+
 console.log('--------------------------------------------------------------------------------');
 console.log(`RESULTS: ${passed} PASSED | ${failed} FAILED | TOTAL: ${passed + failed}`);
 console.log('================================================================================');

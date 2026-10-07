@@ -43,6 +43,7 @@ import MilestonesPage from './components/Pages/MilestonesPage';
 import SymbolDeepDivePage from './components/Pages/SymbolDeepDivePage';
 import PlaybookEngine from './components/Playbook/PlaybookEngine';
 import TradeAuditorModal from './components/Playbook/TradeAuditorModal';
+import PageErrorBoundary from './components/PageErrorBoundary';
 import {
   loadPlaybooks,
   loadTradeAudits,
@@ -114,7 +115,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   );
   const [portfolioCapital, setPortfolioCapital] = useState(() => {
     try {
-      const initialChanges = getStoredCapitalChanges(activePortfolioId, '2026');
+      const activeId = getStoredActivePortfolioId();
+      const allPfs = getStoredPortfolios();
+      const activePf = allPfs.find(p => p.id === activeId);
+      if (activePf && Number(activePf.baseCapital) > 0) return Number(activePf.baseCapital);
+
+      const initialChanges = getStoredCapitalChanges(activeId, '2026');
       if (initialChanges && typeof initialChanges === 'object') {
         for (let m = 0; m < 12; m++) {
           const added = Number(initialChanges[m]?.added || 0);
@@ -220,6 +226,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       if (path === 'fund-management' || path === 'funds') return 'fund-management';
       if (path === 'deep-analytics' || path === 'deep') return 'deep-analytics';
       if (path === 'notes') return 'notes';
+      if (path === 'foxy-ai' || path === 'foxy' || path === 'ai-coach' || path === 'ai') return 'foxy-ai';
     } catch {}
     return 'journal';
   });
@@ -1429,9 +1436,11 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         }
       } catch {}
       if (portfolioCapital > 0) return portfolioCapital;
+      const activeBase = Number(portfolios.find(p => p.id === activePortfolioId)?.baseCapital || 0);
+      if (activeBase > 0) return activeBase;
       const tradeWithAlloc = portfolioTrades.find(t => Number(t.totalCapitalAllocated) > 0);
       if (tradeWithAlloc) return Number(tradeWithAlloc.totalCapitalAllocated);
-      return 200000;
+      return 0;
     })();
 
     // Current portfolio capital using shared getCapital formula:
@@ -1680,15 +1689,40 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   };
 
   const handleReorderTrades = (reorderedActiveTrades) => {
-    if (!reorderedActiveTrades) return;
+    if (!reorderedActiveTrades || !Array.isArray(reorderedActiveTrades)) return;
     setTrades(prev => {
-      const otherPortfolioTrades = prev.filter(t => (t.portfolioId || 'portfolio-default') !== activePortfolioId);
-      const renumbered = reorderedActiveTrades.map((t, idx) => ({
-        ...t,
-        tradeNo: idx + 1,
-        portfolioId: activePortfolioId || 'portfolio-default'
-      }));
-      return [...otherPortfolioTrades, ...renumbered];
+      const currentPfId = activePortfolioId || 'portfolio-default';
+      const otherPortfolioTrades = prev.filter(t => (t.portfolioId || 'portfolio-default') !== currentPfId);
+      const currentPortfolioTrades = prev.filter(t => (t.portfolioId || 'portfolio-default') === currentPfId);
+
+      const reorderedCurrent = [];
+      const seenIds = new Set();
+
+      reorderedActiveTrades.forEach((t, idx) => {
+        const original = currentPortfolioTrades.find(c => c.id === t.id);
+        if (original) {
+          reorderedCurrent.push({
+            ...original,
+            ...t,
+            tradeNo: idx + 1,
+            portfolioId: original.portfolioId || currentPfId
+          });
+          seenIds.add(t.id);
+        }
+      });
+
+      // Preserve any active portfolio trades not in the reorder view (e.g. filtered out)
+      let nextTradeNo = reorderedCurrent.length + 1;
+      currentPortfolioTrades.forEach(c => {
+        if (!seenIds.has(c.id)) {
+          reorderedCurrent.push({
+            ...c,
+            tradeNo: nextTradeNo++
+          });
+        }
+      });
+
+      return [...otherPortfolioTrades, ...reorderedCurrent];
     });
   };
 
@@ -2003,7 +2037,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       'E4 PRICE (₹)', 'E4 QTY/LOT', 'E4 DATE',
       'OPEN QTY/LOT', 'EXITED QTY/LOT', 'AVG EXIT PRICE (₹)',
       'STOCK MOVE', 'REWARD:RISK', 'HOLDING DAYS', 'POSITION STATUS', 
-      'REALISED AMOUNT (₹)', 'Gross P/L (₹)', 'PF IMPACT (%)', 'CUMM PF IMPACT (%)',
+      'REALISED AMOUNT (₹)', 'Gross P/L (₹)', 'Charges (₹)', 'Net P/L (₹)', 'PF IMPACT (%)', 'CUMM PF IMPACT (%)',
       'PLAN FOLLOWED', 'EXIT TRIGGER', 'GROWTH AREAS', 'CAPITAL AT RISK (%)',
       'BASE DURATION', 'QUICK NOTE', 'UNREALIZED P/L (₹)'
     ];
@@ -2062,6 +2096,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       t.status || 'Open',
       t.realisedAmount ?? 0,
       t.grossPnl ?? t.pnl ?? 0,
+      t.charges?.total !== undefined ? t.charges.total : (t.brokerage ?? 0),
+      t.netPnl !== undefined ? t.netPnl : (t.grossPnl ?? t.pnl ?? 0),
       t.pfImpact ?? 0,
       t.cummPf ?? 0,
       t.planFollowed || '',
@@ -2362,116 +2398,143 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           )
         )}
         {activeTab === 'analytics'       && (
-          <AnalyticsPage 
-            trades={validFilteredTrades} 
-            allTrades={enrichedTrades}
-            portfolioCapital={portfolioCapital || (metrics?.portfolioCapital || 0)} 
-            onOpenStockChart={handleOpenStockChart}
-            chargesMap={chargesMap}
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-          />
+          <PageErrorBoundary moduleName="Analytics" onNavigateToJournal={() => setActiveTab('journal')}>
+            <AnalyticsPage 
+              trades={validFilteredTrades} 
+              allTrades={enrichedTrades}
+              portfolioCapital={portfolioCapital || (metrics?.portfolioCapital || 0)} 
+              onOpenStockChart={handleOpenStockChart}
+              chargesMap={chargesMap}
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+              onNavigateToDeepAnalytics={() => setActiveTab('deep-analytics')}
+            />
+          </PageErrorBoundary>
         )}
-        {activeTab === 'expiry-tracker'  && <ExpiryTrackerPage trades={validFilteredTrades} allTrades={portfolioTrades} />}
-        {activeTab === 'milestones'      && <MilestonesPage trades={validFilteredTrades} allTrades={portfolioTrades} />}
+        {activeTab === 'expiry-tracker'  && (
+          <PageErrorBoundary moduleName="Expiry Tracker" onNavigateToJournal={() => setActiveTab('journal')}>
+            <ExpiryTrackerPage trades={validFilteredTrades} allTrades={portfolioTrades} />
+          </PageErrorBoundary>
+        )}
+        {activeTab === 'milestones'      && (
+          <PageErrorBoundary moduleName="Milestones" onNavigateToJournal={() => setActiveTab('journal')}>
+            <MilestonesPage trades={validFilteredTrades} allTrades={portfolioTrades} />
+          </PageErrorBoundary>
+        )}
         {activeTab === 'playbook' && (
-          <PlaybookEngine
-            trades={validFilteredTrades}
-            allTrades={portfolioTrades}
-            user={user}
-            initialPlaybookId={selectedPlaybookId}
-            onSelectPlaybookId={setSelectedPlaybookId}
-            onOpenStockChart={handleOpenStockChart}
-            onUpdateTrade={handleUpdateTrade}
-          />
+          <PageErrorBoundary moduleName="Playbook Studio" onNavigateToJournal={() => setActiveTab('journal')}>
+            <PlaybookEngine
+              trades={validFilteredTrades}
+              allTrades={portfolioTrades}
+              user={user}
+              initialPlaybookId={selectedPlaybookId}
+              onSelectPlaybookId={setSelectedPlaybookId}
+              onOpenStockChart={handleOpenStockChart}
+              onUpdateTrade={handleUpdateTrade}
+            />
+          </PageErrorBoundary>
         )}
         {activeTab === 'stock-charts'    && (
-          <StockChartsPage 
-            trades={validFilteredTrades} 
-            allTrades={enrichedTrades}
-            selectedSymbol={selectedChartSymbol}
-            onSelectSymbol={setSelectedChartSymbol}
-            onOpenAddTrade={() => setIsAddModalOpen(true)}
-            onOpenQuickLog={() => setIsQuickLogOpen(true)}
-            onOpenImport={() => setIsBrokerImportOpen(true)}
-            onNavigateToJournal={() => setActiveTab('journal')}
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-          />
+          <PageErrorBoundary moduleName="Stock Charts" onNavigateToJournal={() => setActiveTab('journal')}>
+            <StockChartsPage 
+              trades={validFilteredTrades} 
+              allTrades={enrichedTrades}
+              selectedSymbol={selectedChartSymbol}
+              onSelectSymbol={setSelectedChartSymbol}
+              onOpenAddTrade={() => setIsAddModalOpen(true)}
+              onOpenQuickLog={() => setIsQuickLogOpen(true)}
+              onOpenImport={() => setIsBrokerImportOpen(true)}
+              onNavigateToJournal={() => setActiveTab('journal')}
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+            />
+          </PageErrorBoundary>
         )}
         {activeTab === 'symbol-deep-dive' && (
-          <SymbolDeepDivePage
-            trades={validFilteredTrades}
-            allTrades={portfolioTrades}
-            symbol={deepDiveConfig?.symbol || selectedChartSymbol || 'WAAREEENER'}
-            tradeNo={deepDiveConfig?.tradeNo || null}
-            tradeId={deepDiveConfig?.tradeId || null}
-            themeMode={themeMode}
-            onClose={() => setActiveTab('journal')}
-            onUpdateTrade={handleUpdateTrade}
-            onOpenPlaybook={(pbId) => {
-              setSelectedPlaybookId(pbId);
-              setActiveTab('playbook');
-            }}
-          />
+          <PageErrorBoundary moduleName="Symbol Deep Dive" onNavigateToJournal={() => setActiveTab('journal')}>
+            <SymbolDeepDivePage
+              trades={validFilteredTrades}
+              allTrades={portfolioTrades}
+              symbol={deepDiveConfig?.symbol || selectedChartSymbol || 'WAAREEENER'}
+              tradeNo={deepDiveConfig?.tradeNo || null}
+              tradeId={deepDiveConfig?.tradeId || null}
+              themeMode={themeMode}
+              onClose={() => setActiveTab('journal')}
+              onUpdateTrade={handleUpdateTrade}
+              onOpenPlaybook={(pbId) => {
+                setSelectedPlaybookId(pbId);
+                setActiveTab('playbook');
+              }}
+            />
+          </PageErrorBoundary>
         )}
         {(activeTab === 'foxy-ai' || activeTab === 'ai-coach' || activeTab === 'foxy') && (
-          <FoxyAiPage 
-            trades={validFilteredTrades} 
-            allTrades={portfolioTrades} 
-            metrics={metrics} 
-            user={user} 
-            onBackToJournal={() => setActiveTab('journal')} 
-            activePortfolioId={activePortfolioId} 
-            portfolioCapital={portfolioCapital} 
-            capitalChanges={capitalChanges}
-            themeMode={themeMode}
-          />
+          <PageErrorBoundary moduleName="Foxy AI Assistant" onNavigateToJournal={() => setActiveTab('journal')}>
+            <FoxyAiPage 
+              trades={validFilteredTrades} 
+              allTrades={portfolioTrades} 
+              metrics={metrics} 
+              user={user} 
+              onBackToJournal={() => setActiveTab('journal')} 
+              activePortfolioId={activePortfolioId} 
+              portfolioCapital={portfolioCapital} 
+              capitalChanges={capitalChanges}
+              themeMode={themeMode}
+            />
+          </PageErrorBoundary>
         )}
         {(activeTab === 'fund-management' || activeTab === 'fundManagement') && (
-          <FundManagementPage 
-            trades={validFilteredTrades} 
-            allTrades={portfolioTrades}
-            user={user} 
-            activePortfolioId={activePortfolioId}
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-            onUpdateCapitalBase={(val) => {
-              setPortfolioCapital(val);
-              localStorage.setItem('tradeontip_base_capital', String(val));
-            }} 
-          />
+          <PageErrorBoundary moduleName="Fund Management" onNavigateToJournal={() => setActiveTab('journal')}>
+            <FundManagementPage 
+              trades={validFilteredTrades} 
+              allTrades={portfolioTrades}
+              user={user} 
+              activePortfolioId={activePortfolioId}
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+              onUpdateCapitalBase={(val) => {
+                setPortfolioCapital(val);
+                localStorage.setItem('tradeontip_base_capital', String(val));
+              }} 
+            />
+          </PageErrorBoundary>
         )}
         {(activeTab === 'tax-analytics' || activeTab === 'tax') && (
-          <TaxAnalyticsPage
-            trades={validFilteredTrades}
-            allTrades={portfolioTrades}
-            user={user}
-            portfolioValue={portfolioCapital}
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-          />
+          <PageErrorBoundary moduleName="Tax Analytics" onNavigateToJournal={() => setActiveTab('journal')}>
+            <TaxAnalyticsPage
+              trades={validFilteredTrades}
+              allTrades={portfolioTrades}
+              user={user}
+              portfolioValue={portfolioCapital}
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+            />
+          </PageErrorBoundary>
         )}
         {activeTab === 'deep-analytics'  && (
-          <DeepAnalyticsPage 
-            trades={validFilteredTrades}
-            allTrades={enrichedTrades}
-            visibleCols={visibleCols}
-            onToggleCol={handleToggleCol}
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-            startingCapital={metrics?.startingCapitalBasis}
-          />
+          <PageErrorBoundary moduleName="Deep Analytics" onNavigateToJournal={() => setActiveTab('journal')}>
+            <DeepAnalyticsPage 
+              trades={validFilteredTrades}
+              allTrades={enrichedTrades}
+              visibleCols={visibleCols}
+              onToggleCol={handleToggleCol}
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+              startingCapital={metrics?.startingCapitalBasis}
+            />
+          </PageErrorBoundary>
         )}
         {activeTab === 'notes'           && (
-          <NotesPage 
-            trades={validFilteredTrades} 
-            allTrades={portfolioTrades} 
-            user={user} 
-            dateRange={dateRange}
-            resolvedDateFilter={resolvedDateFilter}
-            onOpenPlaybook={() => setActiveTab('playbook')} 
-          />
+          <PageErrorBoundary moduleName="Notes & Calendar" onNavigateToJournal={() => setActiveTab('journal')}>
+            <NotesPage 
+              trades={validFilteredTrades} 
+              allTrades={portfolioTrades} 
+              user={user} 
+              dateRange={dateRange}
+              resolvedDateFilter={resolvedDateFilter}
+              onOpenPlaybook={() => setActiveTab('playbook')} 
+            />
+          </PageErrorBoundary>
         )}
       </main>
 

@@ -8,6 +8,7 @@ import SymbolLogo from './SymbolLogo';
 import ActiveStockChartCard from './ActiveStockChartCard';
 import BenchmarkIndexChart from './BenchmarkIndexChart';
 import { getStockClassification, getPeersByTaxonomy, FOXTRADE_DNA_PALETTE } from '../services/stockClassificationService';
+import { getCapital } from '../utils/fundManagementCalculations';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 // Custom Tooltip for Donut Chart
@@ -117,7 +118,9 @@ export default function PortfolioDNAView({
     return (trades || []).filter(t => (t.status === 'Open' || t.status === 'Partial') && (parseFloat(t.openQty ?? t.qty) || 0) > 0);
   }, [trades]);
 
-  const activePfCapital = metrics?.portfolioCapital || portfolioCapital || 212880.89;
+  const activePfCapital = Number(metrics?.portfolioCapital) > 0
+    ? Number(metrics.portfolioCapital)
+    : getCapital({ baseCapital: portfolioCapital, trades });
 
   // Filter and sort active positions
   const displayedPositions = useMemo(() => {

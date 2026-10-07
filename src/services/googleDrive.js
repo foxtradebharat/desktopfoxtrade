@@ -19,13 +19,14 @@ import {
   isAuthenticated,
   getStoredEmail,
   exchangeAuthCode,
+  ensureGsiLoaded,
 } from '../db/tokenManager.js';
 import { saveToDrive, loadFromDrive, clearAllDriveBackups as clearAllDriveBackupsEngine } from '../db/syncEngine.js';
 import { bulkPutTrades }              from '../db/tradeStore.js';
 import { loginWithGoogle }            from './firebase.js';
 
 // Re-export tokenManager functions for direct use
-export { getValidAccessToken, clearTokens, isAuthenticated, getStoredEmail };
+export { getValidAccessToken, clearTokens, isAuthenticated, getStoredEmail, ensureGsiLoaded };
 
 /**
  * Load the Google Identity Services script.
@@ -33,24 +34,7 @@ export { getValidAccessToken, clearTokens, isAuthenticated, getStoredEmail };
  * @returns {Promise<void>}
  */
 export function loadGoogleGsiScript() {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) { resolve(); return; }
-    if (document.querySelector('script[src*="gsi/client"]')) {
-      // Script already in DOM, wait for it
-      const check = setInterval(() => {
-        if (window.google?.accounts?.oauth2) { clearInterval(check); resolve(); }
-      }, 100);
-      setTimeout(() => { clearInterval(check); resolve(); }, 5000);
-      return;
-    }
-    const script   = document.createElement('script');
-    script.src     = 'https://accounts.google.com/gsi/client';
-    script.async   = true;
-    script.defer   = true;
-    script.onload  = () => resolve();
-    script.onerror = (err) => reject(err);
-    document.head.appendChild(script);
-  });
+  return ensureGsiLoaded();
 }
 
 /**

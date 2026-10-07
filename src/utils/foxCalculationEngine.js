@@ -384,10 +384,14 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     .replace(/\.(NS|BO|EQ|NF|BF)$/i, '')
     .replace(/-EQ$/i, '');
 
-  const livePrice = options.liveCMPs?.[cleanSym] ?? options.liveCMPs?.[upperRaw] ?? options.liveCMPs?.[rawSym];
-  const cmp = (livePrice !== undefined && Number(livePrice) > 0)
-    ? Number(livePrice)
-    : parseCleanNum(t.cmp ?? t.ltp ?? t.currentPrice, 0);
+  const explicitCmp = parseCleanNum(t.cmp ?? t.ltp ?? t.currentPrice, 0);
+  const isClosedTrade = String(t.status || '').toLowerCase() === 'closed' || (parseCleanNum(t.exitPrice ?? t.exit) > 0 && parseCleanNum(t.openQty ?? 0) <= 0 && parseCleanNum(t.exitedQty ?? 0) > 0);
+  const livePrice = !isClosedTrade
+    ? (options.liveCMPs?.[cleanSym] ?? options.liveCMPs?.[upperRaw] ?? options.liveCMPs?.[rawSym])
+    : undefined;
+  const cmp = explicitCmp > 0
+    ? explicitCmp
+    : ((livePrice !== undefined && Number(livePrice) > 0) ? Number(livePrice) : 0);
 
   // 1. Build Entry Legs List (Initial + P1..P5)
   const entryLegs = [];
@@ -679,7 +683,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     entry,
     qty,
     initialQty: qty,
-    cmp,
+    cmp: (status === 'Closed' || openQty <= 0) ? (explicitCmp > 0 ? explicitCmp : 0) : cmp,
     sl,
     tsl,
     avgEntry: Math.round(avgEntry * 100) / 100,

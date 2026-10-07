@@ -258,6 +258,44 @@ input, select, textarea {
   font-family: inherit;
 }
 
+/* ── Minimalist Modern Aesthetic Cursor Standards ─────────────────────────────
+   Provides a clean, minimalistic pointer cursor on interactive headers (matching
+   the Fund Management dock aesthetic) and an ultra-sleek, modern line cursor for text fields.
+────────────────────────────────────────────────────────────────────────────── */
+
+/* Interactive table headers have clean pointer cursor like bottom dock tabs */
+th, thead th, .jt-header-col {
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.jt-header-col:hover {
+  background-color: var(--bg-hover, rgba(0, 0, 0, 0.025)) !important;
+}
+
+/* Modern Beautiful Aesthetic Text Field Line Cursor:
+   Ultra-sleek 1.5px vertical line with smooth rounded tips and subtle contrast backing. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="range"]):not([type="color"]),
+textarea,
+[contenteditable="true"],
+.editable-text-field {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cline x1='12' y1='3' x2='12' y2='21' stroke='white' stroke-width='2.5' stroke-linecap='round' opacity='0.75'/%3E%3Cline x1='12' y1='3' x2='12' y2='21' stroke='%230f172a' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") 12 12, text !important;
+  caret-color: var(--accent-orange, #f97316) !important;
+}
+
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="range"]):not([type="color"]),
+[data-theme="dark"] textarea,
+[data-theme="dark"] [contenteditable="true"],
+[data-theme="pitch-black"] input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="range"]):not([type="color"]),
+[data-theme="pitch-black"] textarea,
+[data-theme="pitch-black"] [contenteditable="true"],
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="range"]):not([type="color"]),
+.dark textarea,
+.dark [contenteditable="true"] {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cline x1='12' y1='3' x2='12' y2='21' stroke='black' stroke-width='2.5' stroke-linecap='round' opacity='0.75'/%3E%3Cline x1='12' y1='3' x2='12' y2='21' stroke='%23f1f5f9' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") 12 12, text !important;
+  caret-color: var(--accent-orange, #f97316) !important;
+}
+
 /* Custom Number Input Stepper Arrows on Hover */
 .number-input-wrapper {
   position: relative;
@@ -691,5 +729,20 @@ body[data-theme="pitch-black"],
   .dark .news-icon-img,
   [data-theme="pitch-black"] .news-icon-img {
     filter: invert(1) brightness(1.15);
+  }
+
+  /* Review Flagged & Done buttons: turn gray on click */
+  .review-action-btn {
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+  }
+  .review-action-btn:hover {
+    background-color: #27272a !important;
+    border-color: #27272a !important;
+  }
+  .review-action-btn:active {
+    background-color: #6b7280 !important;
+    border-color: #6b7280 !important;
+    color: #ffffff !important;
+    transform: scale(0.96);
   }
 }

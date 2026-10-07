@@ -12,7 +12,8 @@ import FoxyAiIcon from './FoxyAiIcon';
 import { 
   subscribeToSyncStatus, 
   subscribeToSyncError, 
-  subscribeToTokenExpired, 
+  subscribeToTokenExpired,
+  subscribeToTokenUpdate,
   setSyncError 
 } from '../db/index.js';
 import { saveTradesToDrive } from '../services/driveService.js';
@@ -68,6 +69,18 @@ export default function BottomDock({
       .then(tok => setHasValidDriveToken(Boolean(tok && tok !== 'demo-token')))
       .catch(() => setHasValidDriveToken(false));
   }, [accessToken, user?.uid, isDemo]);
+
+  // Subscribe to real-time token updates across tabs and background silent refreshes
+  useEffect(() => {
+    if (isDemo) return;
+    const unsub = subscribeToTokenUpdate((newTok) => {
+      if (newTok && newTok !== 'demo-token') {
+        setHasValidDriveToken(true);
+        setSyncErrorState(null);
+      }
+    });
+    return unsub;
+  }, [isDemo]);
 
   const isDriveConnected = !isDemo && (Boolean(accessToken && accessToken !== 'demo-token') || hasValidDriveToken);
 
@@ -316,6 +329,7 @@ export default function BottomDock({
               autoBackup={autoBackup}
               setAutoBackup={setAutoBackup}
               isConnected={isDriveConnected && !syncError}
+              isSyncing={isSyncing}
               syncError={syncError}
               onLogout={onLogout}
               onShowToast={onShowToast}

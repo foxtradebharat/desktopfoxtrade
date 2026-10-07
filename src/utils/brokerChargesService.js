@@ -143,16 +143,17 @@ export function calculateCharges(broker, segment, entryTurnover, exitTurnover, e
   // ── 2. STT (Securities Transaction Tax) ────────────────────────────────
   const sttBuy  = (buyTurnover  * c.sttBuyPct)  / 100;
   const sttSell = (sellTurnover * c.sttSellPct) / 100;
-  const stt = Math.round((sttBuy + sttSell) * 100) / 100;
+  // Section 97 of Finance (No. 2) Act, 2004: STT must be rounded to nearest integer rupee
+  const stt = Math.round(sttBuy + sttSell);
 
   // ── 3. Exchange Transaction Fee ─────────────────────────────────────────
   const exchangeFee = Math.round((totalTurnover * c.exchangeFeePct) / 100 * 100) / 100;
 
-  // ── 4. GST on Brokerage + Exchange Fee ──────────────────────────────────
-  const gst = Math.round(((brokerage + exchangeFee) * c.gstPct) / 100 * 100) / 100;
-
-  // ── 5. SEBI Charges (₹10 per crore of turnover) ─────────────────────────
+  // ── 4. SEBI Charges (₹10 per crore of turnover) ─────────────────────────
   const sebi = Math.round((totalTurnover / 10000000) * c.sebiPerCrore * 100) / 100;
+
+  // ── 5. GST (18% on Brokerage + Exchange Fee + SEBI Charges) ──────────────
+  const gst = Math.round(((brokerage + exchangeFee + sebi) * c.gstPct) / 100 * 100) / 100;
 
   // ── 6. Stamp Duty (buy-side only) ───────────────────────────────────────
   const stampDuty = Math.round((buyTurnover * c.stampDutyBuyPct) / 100 * 100) / 100;

@@ -238,7 +238,7 @@ export function runQuery(trades = [], querySpec = {}) {
   }
 
   // Aggregations
-  const results = [];
+  let results = [];
   for (const [gKey, gTrades] of Object.entries(groups)) {
     const row = { group: gKey };
     const count = gTrades.length;

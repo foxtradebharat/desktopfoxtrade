@@ -224,7 +224,12 @@ export default function NotificationDropBanner() {
       ref={bannerRef}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={() => triggerGenieSuction(currentNotif)}
+      onClick={() => {
+        if (currentNotif?.action === 'review_flagged' || currentNotif?.id === 'date-issues-alert') {
+          window.dispatchEvent(new CustomEvent('foxtrade_open_review_flagged'));
+        }
+        triggerGenieSuction(currentNotif);
+      }}
       style={{
         position: 'fixed',
         top: 0,

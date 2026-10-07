@@ -242,6 +242,7 @@ function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteg
           borderRadius: '6px',
           backgroundColor: 'var(--bg-surface)',
           color: 'var(--text-primary)',
+          caretColor: 'var(--accent-orange, #f97316)',
           border: '1px solid var(--accent-orange, #f97316)',
           boxShadow: '0 0 0 1px var(--accent-orange, #f97316)',
           outline: 'none',
@@ -284,6 +285,7 @@ function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteg
   return (
     <div
       onClick={() => setIsEditing(true)}
+      className="editable-text-field"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -2591,6 +2593,7 @@ export default function JournalTable({
                   textAlign: 'center',
                   verticalAlign: 'middle',
                   backgroundColor: 'var(--bg-card, #ffffff)',
+                  cursor: 'default',
                   ...getStickyProps('gutter', true).style
                 }}
               >
@@ -2655,6 +2658,7 @@ export default function JournalTable({
                 return (
                   <th
                     key={col.id}
+                    className="jt-header-col"
                     draggable={showReorderHandles}
                     onDragStart={showReorderHandles ? (e) => handleDragStart(e, col.id) : undefined}
                     onDragOver={showReorderHandles ? (e) => handleDragOver(e, col.id) : undefined}
@@ -2668,10 +2672,11 @@ export default function JournalTable({
                       fontWeight: 500,
                       color: 'var(--text-muted, rgba(0, 0, 0, 0.55))',
                       letterSpacing: '0.05em',
-                      cursor: showReorderHandles ? 'grab' : 'default',
+                      cursor: 'pointer',
                       textAlign: col.align === 'right' ? 'right' : 'left',
                       verticalAlign: 'middle',
                       backgroundColor: 'var(--bg-card, #ffffff)',
+                      transition: 'background-color 0.15s ease, color 0.15s ease',
                       ...stickyProps.style
                     }}
                   >
@@ -2681,14 +2686,16 @@ export default function JournalTable({
                           <button
                             type="button"
                             title="Drag to reorder column"
-                            style={{ border: 'none', background: 'none', color: 'var(--text-muted, rgba(128,128,128,0.4))', cursor: 'grab', padding: '2px', display: 'flex', alignItems: 'center', marginLeft: '-4px' }}
+                            style={{ border: 'none', background: 'none', color: 'var(--text-muted, rgba(128,128,128,0.4))', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', marginLeft: '-4px', opacity: 0.35, transition: 'opacity 0.15s ease' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.35'; }}
                           >
                             <GripVertical size={12} />
                           </button>
                         )}
                         <span>{col.label}</span>
                         {isEditableCol && (
-                          <Pencil size={10} style={{ color: 'var(--text-muted, #111827)', opacity: 0.4, flexShrink: 0, marginLeft: '2px' }} />
+                          <Pencil size={10} style={{ color: 'var(--text-muted, #111827)', opacity: 0.35, flexShrink: 0, marginLeft: '2px' }} />
                         )}
                         {isPyramidAddCol && nextPyramidLevel && (
                           <button
@@ -2987,38 +2994,74 @@ export default function JournalTable({
                       );
                     }
 
-                    // 2. DATE (Clean HTML5 Date input)
+                    // 2. DATE (Clean HTML5 Date input + Validation Flags)
                     if (col.id === 'date') {
                       const inputDateVal = toInputDateFormat(trade.date);
+                      const hasExitBeforeEntry = trade.flags && trade.flags.includes('EXIT_BEFORE_ENTRY');
+                      const hasFutureDate = trade.flags && trade.flags.includes('FUTURE_DATE');
                       return (
                         <td key={col.id} className={cellStickyClass} style={{ padding: '12px 14px', whiteSpace: 'nowrap', verticalAlign: 'middle', ...cellStickyStyle }}>
-                          <input
-                            type="date"
-                            className="jt-date-input"
-                            value={inputDateVal}
-                            onChange={(e) => {
-                              const newDate = e.target.value; // YYYY-MM-DD
-                              onUpdateTrade(trade.id, 'date', newDate);
-                            }}
-                            style={{
-                              width: '135px',
-                              height: '28px',
-                              padding: '0 6px',
-                              borderRadius: '6px',
-                              backgroundColor: 'transparent',
-                              border: '1px solid transparent',
-                              fontSize: '13px',
-                              fontWeight: 500,
-                              color: 'var(--text-primary, #111827)',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.04)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-                            onFocus={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = 'rgba(0,0,0,0.15)'; }}
-                            onBlur={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
-                          />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <input
+                              type="date"
+                              className="jt-date-input"
+                              value={inputDateVal}
+                              onChange={(e) => {
+                                const newDate = e.target.value; // YYYY-MM-DD
+                                onUpdateTrade(trade.id, 'date', newDate);
+                              }}
+                              style={{
+                                width: '135px',
+                                height: '28px',
+                                padding: '0 6px',
+                                borderRadius: '6px',
+                                backgroundColor: 'transparent',
+                                border: '1px solid transparent',
+                                fontSize: '13px',
+                                fontWeight: 500,
+                                color: 'var(--text-primary, #111827)',
+                                cursor: 'pointer',
+                                outline: 'none',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.04)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                              onFocus={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = 'rgba(0,0,0,0.15)'; }}
+                              onBlur={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
+                            />
+                            {hasExitBeforeEntry && (
+                              <span
+                                title={`Date typo: Exit date (${trade.e1Date || trade.exitDate}) is before Entry date (${trade.date}). Realized P&L is 100% computed from execution prices.`}
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 'bold',
+                                  color: '#ef4444',
+                                  background: 'rgba(239, 68, 68, 0.12)',
+                                  padding: '2px 5px',
+                                  borderRadius: '4px',
+                                  cursor: 'help'
+                                }}
+                              >
+                                Exit&lt;Entry
+                              </span>
+                            )}
+                            {hasFutureDate && (
+                              <span
+                                title={`Future date detected: ${trade.date}.`}
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 'bold',
+                                  color: '#f59e0b',
+                                  background: 'rgba(245, 158, 11, 0.12)',
+                                  padding: '2px 5px',
+                                  borderRadius: '4px',
+                                  cursor: 'help'
+                                }}
+                              >
+                                Future
+                              </span>
+                            )}
+                          </div>
                         </td>
                       );
                     }

@@ -95,8 +95,13 @@ export default function NotificationsPopover({ isOpen, onClose, anchorRef }) {
     notificationManager.markAllAsRead();
   };
 
-  const handleItemClick = (id) => {
-    notificationManager.markAsRead(id);
+  const handleItemClick = (notif) => {
+    const notifId = typeof notif === 'object' ? notif.id : notif;
+    notificationManager.markAsRead(notifId);
+    if (typeof notif === 'object' && (notif.action === 'review_flagged' || notif.id === 'date-issues-alert')) {
+      window.dispatchEvent(new CustomEvent('foxtrade_open_review_flagged'));
+      onClose();
+    }
   };
 
   const handleToggleSound = (e) => {
@@ -480,7 +485,7 @@ export default function NotificationsPopover({ isOpen, onClose, anchorRef }) {
               {items.map((notif) => (
                 <div
                   key={notif.id}
-                  onClick={() => handleItemClick(notif.id)}
+                  onClick={() => handleItemClick(notif)}
                   style={{
                     display: 'flex',
                     alignItems: 'flex-start',

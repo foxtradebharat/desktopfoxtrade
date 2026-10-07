@@ -35,12 +35,14 @@ import {
   syncPendingImages,
   subscribeToMergedTrades,
   subscribeToTokenExpired,
+  subscribeToTokenUpdate,
   initTokenKeepalive,
   initNoteStore,
   purgeExpiredOhlcCache,
   getDB,
   STORES,
   idbClearStore,
+  deleteConfig,
 } from '../db/index.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -78,6 +80,13 @@ _cleanupMerge = subscribeToMergedTrades((mergedTrades, portfolioId) => {
   _currentTrades = mergedTrades;
   _notifyListeners(mergedTrades);
   console.log(`[dbService] Real-time merge: ${mergedTrades.length} trades updated from Drive`);
+});
+
+// Automatically keep in-memory _accessToken updated whenever any tab refreshes token
+subscribeToTokenUpdate((tok) => {
+  if (tok && tok !== 'demo-token') {
+    _accessToken = tok;
+  }
 });
 
 // Re-export subscribeToTokenExpired so Dashboard.jsx only needs one import
@@ -138,13 +147,21 @@ export async function saveUserTrades(uid, trades, portfolioId) {
   // 3. Notify local subscribers
   _notifyListeners(trades);
 
-  // 4. Drive sync (skip for demo users)
+  // 4. Drive sync (skip for demo users or if autoBackup disabled)
   if (!uid.startsWith('demo-')) {
     const token = _accessToken || await getValidAccessToken().catch(() => null);
     if (token) {
-      triggerAutoSync(pid, token, _currentTrades);
-      // Also sync any pending images
-      syncPendingImages(token, pid).catch(() => {});
+      let isAutoBackupEnabled = true;
+      try {
+        const saved = localStorage.getItem('tradeontip_auto_backup');
+        if (saved !== null) isAutoBackupEnabled = (saved !== 'false');
+      } catch (_) {}
+
+      if (isAutoBackupEnabled) {
+        triggerAutoSync(pid, token, _currentTrades);
+        // Also sync any pending images
+        syncPendingImages(token, pid).catch(() => {});
+      }
     }
   }
 
@@ -260,6 +277,19 @@ export async function clearAllLocalTrades() {
     if (db.objectStoreNames.contains(STORES.SYNC_CURSORS)) {
       await idbClearStore(STORES.SYNC_CURSORS);
     }
+    if (db.objectStoreNames.contains(STORES.MONTHLY_PERF)) {
+      await idbClearStore(STORES.MONTHLY_PERF);
+    }
+    if (db.objectStoreNames.contains(STORES.CHART_IMAGES)) {
+      await idbClearStore(STORES.CHART_IMAGES);
+    }
+    // Purge transactional user data from APP_CONFIG store
+    await deleteConfig('notes_v2');
+    await deleteConfig('independent_notes_v2');
+    await deleteConfig('foxy_ai_chats');
+    await deleteConfig('foxy_trader_commitments');
+    await deleteConfig('journal_settings');
+    await deleteConfig('base_capital_default');
   } catch (err) {
     console.warn('[dbService] clearAllLocalTrades error:', err);
   }
@@ -292,20 +322,27 @@ async function _migrateFromV1Data(uid, portfolioId) {
     }
   } catch {}
 
-  // Try scoped localStorage fallback (only for this specific uid)
-  const lsKey = `tradeontip_trades_cache_${uid}`;
-  try {
-    const raw = localStorage.getItem(lsKey);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const arr = Array.isArray(parsed) ? parsed : (parsed?.trades || []);
-      if (arr.length > 0) {
-        const count = await migrateFromV1(uid, arr, portfolioId);
-        console.log(`[dbService] Migrated ${count} trades from localStorage (${lsKey})`);
-        return count;
+  // Try scoped localStorage fallback (check v5 first, then legacy cache)
+  const candidateKeys = [
+    `tradeontip_trades_v5_${uid}`,
+    `tradeontip_trades_cache_${uid}`,
+    'tradeontip_trades_v5',
+    'tradeontip_trades_cache'
+  ];
+  for (const lsKey of candidateKeys) {
+    try {
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const arr = Array.isArray(parsed) ? parsed : (parsed?.trades || []);
+        if (arr.length > 0) {
+          const count = await migrateFromV1(uid, arr, portfolioId);
+          console.log(`[dbService] Migrated ${count} trades from localStorage (${lsKey})`);
+          return count;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   return 0;
 }

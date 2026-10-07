@@ -1,11 +1,15 @@
 /**
  * Trade Deduplication Engine for FoxTrade
- * Implements multi-tier deduplication & upsert defense:
- * 1. Exchange Execution Identifiers (allExchangeTradeIds, orderId, tradeId, exchangeTradeId)
- * 2. Broker-Specific Adapters (Zerodha, Dhan, Upstox, Groww, AngelOne, ICICI, Motilal, mStock)
- * 3. Deterministic Content Signature (csvSignatureKey for manual/custom imports)
- * 4. Smart Upsert/Merge (updates open trades with incoming exit data without duplicating)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Implements multi-tier deduplication & smart upsert defense:
+ * 1. Canonical Symbol & Date Normalization (NSE/BSE suffixes, Indian date formats)
+ * 2. Exchange Execution Identifiers (allExchangeTradeIds, orderId, tradeId, fillId)
+ * 3. Broker-Specific Adapters (Zerodha, Dhan, Upstox, Groww, AngelOne, ICICI, Motilal, mStock)
+ * 4. Deterministic Content Signature (csvSignatureKey for manual/custom imports)
+ * 5. Smart Leg Merging (merges pyramids P1-P4 and exits E1-E5 onto open trades without duplicating)
  */
+
+import { getCanonicalSymbol } from './securityMaster.js';
 
 export function normalizeId(val) {
   if (val === null || val === undefined) return '';
@@ -25,14 +29,85 @@ export function normalizeId(val) {
   return str;
 }
 
+/**
+ * Normalizes any date representation (ISO, DD-MM-YYYY, DD/MM/YYYY, Timestamp)
+ * into a canonical YYYY-MM-DD string for deterministic cross-format matching.
+ */
+export function normalizeDateToCanonical(dateVal) {
+  if (!dateVal) return '';
+  const str = String(dateVal).trim();
+  if (!str) return '';
+
+  // 1. ISO format YYYY-MM-DD or YYYY/MM/DD (with optional time)
+  const ymd = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(str);
+  if (ymd) {
+    const y = ymd[1];
+    const m = String(ymd[2]).padStart(2, '0');
+    const d = String(ymd[3]).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. Indian broker format DD-MM-YYYY or DD/MM/YYYY (with optional time)
+  const dmy = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(str);
+  if (dmy) {
+    const d = String(dmy[1]).padStart(2, '0');
+    const m = String(dmy[2]).padStart(2, '0');
+    const y = dmy[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // 3. Native Date parse fallback
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  return str;
+}
+
+/**
+ * Strips broker/exchange artifacts (.NS, .BO, -EQ, -BE) and returns canonical ticker
+ */
+export function normalizeSymbol(rawSymbol) {
+  if (!rawSymbol) return '';
+  const s = String(rawSymbol)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/\.(NS|BO|NSE|BSE)$/i, '')
+    .replace(/-(EQ|BE|SM|ST)$/i, '');
+  try {
+    return getCanonicalSymbol ? getCanonicalSymbol(s) : s;
+  } catch {
+    return s;
+  }
+}
+
+/**
+ * Builds a deterministic content signature for matching trades even when
+ * brokers omit exchange order IDs or when importing generic CSVs.
+ */
 export function buildTradeSignatureKey(trade) {
   if (!trade) return '';
-  const sym = String(trade.name || trade.symbol || '').trim().toUpperCase().replace(/\s+/g, '');
+  const sym = normalizeSymbol(trade.name || trade.symbol || trade.scripName || trade.scrip);
   if (!sym) return '';
-  const date = String(trade.date || trade.entryDate || '').trim();
-  const entry = Number(trade.entry || trade.avgEntry || trade.p1Price || 0).toFixed(2);
-  const qty = Number(trade.qty || trade.initialQty || trade.p1Qty || 0);
-  const type = String(trade.type || trade.side || 'Buy').toUpperCase();
+
+  const rawDate = trade.date || trade.entryDate || trade.tradeDate || trade.executionDate || trade.orderDate || '';
+  const date = normalizeDateToCanonical(rawDate);
+
+  const entry = Number(
+    trade.entry ?? trade.avgEntry ?? trade.entryPrice ?? trade.price ?? trade.tradePrice ?? trade.rate ?? trade.p1Price ?? 0
+  ).toFixed(2);
+
+  const qty = Number(
+    trade.qty ?? trade.initialQty ?? trade.quantity ?? trade.tradeQty ?? trade.tradedQty ?? trade.p1Qty ?? 0
+  );
+
+  const type = String(trade.type || trade.side || trade.tradeType || trade.transType || 'Buy').trim().toUpperCase();
+
   return `sig:${sym}|${date}|${type}|${entry}|${qty}`;
 }
 
@@ -44,6 +119,7 @@ export function extractTradeIdentifiers(trade) {
     ids.add(`id:${directId}`);
   }
 
+  // 1. All Exchange Trade IDs (comma/semicolon/bracket separated)
   const exchangeIds = Array.isArray(trade.allExchangeTradeIds)
     ? trade.allExchangeTradeIds
     : typeof trade.allExchangeTradeIds === 'string'
@@ -57,10 +133,14 @@ export function extractTradeIdentifiers(trade) {
     }
   });
 
+  // 2. Broker-Specific IDs & Execution references
   const brokerSpecificFields = [
     trade.tradeId, trade.trade_id, trade.exchangeTradeId, trade.exchange_trade_id,
     trade.orderId, trade.order_id, trade.exchangeOrderId, trade.exchange_order_id,
-    trade.subtranNo, trade.orderRef
+    trade.orderNo, trade.order_no, trade.orderNumber,
+    trade.tradeNo, trade.trade_no, trade.tradeNumber,
+    trade.fillId, trade.fill_id, trade.execId, trade.exec_id,
+    trade.brokerTradeId, trade.subtranNo, trade.orderRef
   ];
 
   brokerSpecificFields.forEach(val => {
@@ -70,6 +150,7 @@ export function extractTradeIdentifiers(trade) {
     }
   });
 
+  // 3. Deterministic Content Signature (Date + Symbol + Price + Qty)
   const sig = trade.csvSignatureKey || buildTradeSignatureKey(trade);
   if (sig) {
     ids.add(sig);
@@ -101,22 +182,46 @@ export function buildExistingTradesIndex(existingTrades = []) {
   return index;
 }
 
+/**
+ * Merges updates (exits, pyramids, stops) from an incoming trade record onto an existing trade.
+ */
 export function mergeTradeUpdates(existingTrade, incomingTrade) {
-  const merged = { ...existingTrade };
+  const now = Date.now();
+  const merged = { 
+    ...existingTrade,
+    updatedAt: now,
+    clientUpdatedAt: now
+  };
 
+  // 1. Combine exchange IDs
   const existingExIds = new Set(
     (Array.isArray(existingTrade.allExchangeTradeIds) ? existingTrade.allExchangeTradeIds : [])
       .map(normalizeId)
       .filter(Boolean)
   );
-
   const incomingExIds = (Array.isArray(incomingTrade.allExchangeTradeIds) ? incomingTrade.allExchangeTradeIds : [])
     .map(normalizeId)
     .filter(Boolean);
-
   incomingExIds.forEach(id => existingExIds.add(id));
   merged.allExchangeTradeIds = Array.from(existingExIds);
 
+  // 2. Merge Pyramid Additions (P1 to P4)
+  for (let i = 1; i <= 4; i++) {
+    if (incomingTrade[`p${i}Price`] && (!merged[`p${i}Price`] || merged[`p${i}Price`] === 0)) {
+      merged[`p${i}Price`] = incomingTrade[`p${i}Price`];
+      merged[`p${i}Qty`] = incomingTrade[`p${i}Qty`] || 0;
+      merged[`p${i}Date`] = incomingTrade[`p${i}Date`] || '';
+      if (incomingTrade[`p${i}Sl`]) merged[`p${i}Sl`] = incomingTrade[`p${i}Sl`];
+    }
+  }
+
+  // 3. Merge Stop Loss, TSL, and Target
+  if (incomingTrade.sl && (!merged.sl || merged.sl === 0)) merged.sl = incomingTrade.sl;
+  if (incomingTrade.tsl && (!merged.tsl || merged.tsl === 0)) merged.tsl = incomingTrade.tsl;
+  if (incomingTrade.cmp && (!merged.cmp || merged.cmp === 0)) merged.cmp = incomingTrade.cmp;
+  if (incomingTrade.broker && !merged.broker) merged.broker = incomingTrade.broker;
+
+  // 4. Merge Exit Legs (E1 to E5) and Position Closure
   const incomingStatus = String(incomingTrade.status || incomingTrade.positionStatus || '').trim().toLowerCase();
   const existingStatus = String(existingTrade.status || existingTrade.positionStatus || '').trim().toLowerCase();
 
@@ -143,6 +248,9 @@ export function mergeTradeUpdates(existingTrade, incomingTrade) {
     if (incomingTrade.e4Price) merged.e4Price = incomingTrade.e4Price;
     if (incomingTrade.e4Qty) merged.e4Qty = incomingTrade.e4Qty;
     if (incomingTrade.e4Date) merged.e4Date = incomingTrade.e4Date;
+    if (incomingTrade.e5Price) merged.e5Price = incomingTrade.e5Price;
+    if (incomingTrade.e5Qty) merged.e5Qty = incomingTrade.e5Qty;
+    if (incomingTrade.e5Date) merged.e5Date = incomingTrade.e5Date;
 
     if (incomingTrade.pnl !== undefined) merged.pnl = incomingTrade.pnl;
     if (incomingTrade.realisedAmount !== undefined) merged.realisedAmount = incomingTrade.realisedAmount;
@@ -151,12 +259,18 @@ export function mergeTradeUpdates(existingTrade, incomingTrade) {
     if (incomingTrade.exitTrigger) merged.exitTrigger = incomingTrade.exitTrigger;
   }
 
+  // 5. Notes & Setup preservation
   if (!merged.notes && incomingTrade.notes) merged.notes = incomingTrade.notes;
   if (!merged.setup && incomingTrade.setup) merged.setup = incomingTrade.setup;
 
   return merged;
 }
 
+/**
+ * Main Deduplication & Upsert Pipeline
+ * Takes current trades and incoming imported trades, drops identical duplicates,
+ * merges exits/pyramids onto matching open positions, and appends new trades.
+ */
 export function deduplicateAndMergeTrades(existingTrades = [], incomingTrades = [], options = {}) {
   const {
     activePortfolioId = 'portfolio-default',
@@ -185,8 +299,10 @@ export function deduplicateAndMergeTrades(existingTrades = [], incomingTrades = 
       const existingStatus = String(existingMatch.status || existingMatch.positionStatus || '').toLowerCase();
       const incomingStatus = String(incoming.status || incoming.positionStatus || '').toLowerCase();
       const hasNewExit = (incoming.avgExitPrice || incoming.e1Price) && !existingMatch.avgExitPrice;
+      const hasNewPyramid = (incoming.p1Price && !existingMatch.p1Price) || (incoming.p2Price && !existingMatch.p2Price);
 
-      if ((existingStatus === 'open' || existingStatus === 'partial') && (incomingStatus === 'closed' || hasNewExit)) {
+      // Check if incoming provides new exit or pyramid data
+      if ((existingStatus === 'open' || existingStatus === 'partial') && (incomingStatus === 'closed' || hasNewExit || hasNewPyramid)) {
         const matchIdx = finalCurrentPortfolio.findIndex(t => t.id === existingMatch.id);
         if (matchIdx !== -1) {
           const merged = mergeTradeUpdates(finalCurrentPortfolio[matchIdx], incoming);
@@ -200,18 +316,23 @@ export function deduplicateAndMergeTrades(existingTrades = [], incomingTrades = 
       continue;
     }
 
+    // Check for in-batch duplicates within the same import file
     const inBatchMatch = findMatchingExistingTrade(incoming, batchIndex);
     if (inBatchMatch) {
       skippedDuplicatesCount++;
       continue;
     }
 
+    const now = Date.now();
     const freshTrade = enrichFn({
       ...incoming,
       portfolioId: activePortfolioId,
       id: incoming.id && !incoming.id.startsWith('trade-import-') && !incoming.id.startsWith('synced_')
         ? incoming.id
-        : `trade_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+        : `trade_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: incoming.createdAt || now,
+      updatedAt: now,
+      clientUpdatedAt: now
     });
 
     finalCurrentPortfolio.push(freshTrade);

@@ -16,12 +16,12 @@ describe('Fix 3: Broker Charges & Zero Taxes Fix', () => {
 
     expect(resKite.hasCharges).toBe(true);
     expect(resKite.brokerage).toBe(0);
-    expect(resKite.stt).toBe(102.4);
+    expect(resKite.stt).toBe(102);
     expect(resKite.exchangeFee).toBe(3.3);
-    expect(resKite.gst).toBe(0.59);
+    expect(resKite.gst).toBe(0.61);
     expect(resKite.sebi).toBe(0.1);
     expect(resKite.stampDuty).toBe(7.5);
-    expect(resKite.total).toBe(113.89);
+    expect(resKite.total).toBe(113.51);
 
     expect(resKite).toEqual(resZerodha);
   });

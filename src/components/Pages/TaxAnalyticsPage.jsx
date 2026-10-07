@@ -32,7 +32,7 @@ import TaxInputDialog from './TaxInputDialog';
 import { db } from '../../services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { formatIndianRupee, formatIndianNumber } from '../../utils/indianCurrencyFormatter';
-import { calculateCharges, getChargesMap } from '../../utils/brokerChargesService';
+import { calculateCharges, getChargesMap, loadBrokerCharges } from '../../utils/brokerChargesService';
 import { getStoredCapitalChanges, getPreviousYearEndingCapital } from '../../utils/fundManagementCalculations';
 import { matchLots } from '../../utils/foxCalculationEngine';
 
@@ -90,9 +90,9 @@ function isTradeRealized(t) {
   return status === 'closed' || status === 'partial' || pl !== 0 || exitedQty > 0;
 }
 
-function getTradeCharges(t) {
+function getTradeCharges(t, externalChargesMap = null) {
   if (t.charges && t.charges.hasCharges) return t.charges;
-  const chargesMap = getChargesMap();
+  const chargesMap = externalChargesMap || getChargesMap();
   if (t.broker && chargesMap && Object.keys(chargesMap).length > 0) {
     const buyTurnover = Number(t.entry || t.avgEntry || 0) * Number(t.qty || t.initialQty || 0);
     const sellTurnover = Number(t.avgExitPrice || t.cmp || 0) * Number(t.exitedQty || t.qty || 0);
@@ -257,13 +257,31 @@ export default function TaxAnalyticsPage({
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const downloadDropdownRef = useRef(null);
 
+  const [chargesMap, setChargesMap] = useState(() => getChargesMap());
+  const [isChargesLoaded, setIsChargesLoaded] = useState(() => {
+    const initial = getChargesMap();
+    return Boolean(initial && Object.keys(initial).length > 0);
+  });
+
+  useEffect(() => {
+    loadBrokerCharges().then(map => {
+      setChargesMap(map);
+      setIsChargesLoaded(true);
+    }).catch(() => {
+      setIsChargesLoaded(true);
+    });
+  }, []);
+
   const unavailableChargesInfo = useMemo(() => {
+    if (!isChargesLoaded && (!chargesMap || Object.keys(chargesMap).length === 0)) {
+      return { count: 0, reasons: '' };
+    }
     let count = 0;
     const reasons = new Set();
     (trades || []).forEach(t => {
       const isRealized = (t.status === 'Closed' || Number(t.exitedQty) > 0);
       if (isRealized) {
-        const c = getTradeCharges(t);
+        const c = getTradeCharges(t, chargesMap);
         if (!c.hasCharges && c.reason) {
           count++;
           reasons.add(c.reason);
@@ -274,7 +292,7 @@ export default function TaxAnalyticsPage({
       count,
       reasons: Array.from(reasons).join(', ')
     };
-  }, [trades]);
+  }, [trades, chargesMap, isChargesLoaded]);
 
   const handleInfoMouseEnter = () => {
     if (infoTimeoutRef.current) clearTimeout(infoTimeoutRef.current);
@@ -537,7 +555,7 @@ export default function TaxAnalyticsPage({
       };
 
       monthTrades.forEach((t) => {
-        const c = getTradeCharges(t);
+        const c = getTradeCharges(t, chargesMap);
         autoTradeCharges.stt += Number(c.stt || 0);
         autoTradeCharges.stampDuty += Number(c.stampDuty || 0);
         autoTradeCharges.exchangeCharges += Number(c.exchangeFee || c.exchangeCharges || 0);
@@ -641,7 +659,7 @@ export default function TaxAnalyticsPage({
       monthlyBreakdown: breakdown,
       chartData: breakdown,
     };
-  }, [trades, taxesData, detailedTaxesData, isAutoChargesEnabled, selectedYear, periodMode, dateAttribution, portfolioValue, monthSequence, capitalChanges, prevYearEndingCapital]);
+  }, [trades, taxesData, detailedTaxesData, isAutoChargesEnabled, selectedYear, periodMode, dateAttribution, portfolioValue, monthSequence, capitalChanges, prevYearEndingCapital, chargesMap]);
 
   // 4. Calculate Tax Summary Metrics
   const summaryMetrics = useMemo(() => {

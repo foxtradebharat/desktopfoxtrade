@@ -94,6 +94,8 @@ export {
   exchangeAuthCode,
   storeDirectToken,
   subscribeToTokenExpired,
+  subscribeToTokenUpdate,
+  ensureGsiLoaded,
   withAutoRefresh,
   initTokenKeepalive,
   getTokenStatus,

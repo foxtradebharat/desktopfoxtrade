@@ -24,13 +24,16 @@ import { findNearestCandleIndex, getCandleTimestampSeconds } from '../../service
 
 export default function StockChartsPage({ 
   trades = [], 
+  allTrades = [],
   selectedSymbol: propSymbol, 
   onSelectSymbol, 
   chartOnly = false,
   onOpenAddTrade,
   onOpenQuickLog,
   onOpenImport,
-  onNavigateToJournal
+  onNavigateToJournal,
+  dateRange = 'All Time',
+  resolvedDateFilter = null
 }) {
   // ── 1. Top Metrics Calculation ─────────────────────────────────────────────
   const metrics = useMemo(() => {

@@ -2023,11 +2023,21 @@ function IndependentNotesPanel({ user }) {
 }
 
 // ─── Main NotesPage 2.0 ───────────────────────────────────────────────────────
-export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
+export default function NotesPage({ 
+  trades = [], 
+  allTrades = [], 
+  user, 
+  onOpenPlaybook,
+  dateRange = 'All Time',
+  resolvedDateFilter = null
+}) {
   const [calMode, setCalMode]         = useState('year');
   const [viewMode, setViewMode]       = useState('calendar');
   const [independent, setIndependent] = useState(false);
-  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [currentDate, setCurrentDate] = useState(() => {
+    if (resolvedDateFilter?.from) return new Date(resolvedDateFilter.from);
+    return new Date();
+  });
   const [notes, setNotes]             = useState(() => loadNotes());
   const [selectedDate, setSelectedDate] = useState(null);
   const [searchOpen, setSearchOpen]   = useState(false);
@@ -2039,10 +2049,16 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
   const searchInputRef                = useRef(null);
   const [listFilter, setListFilter]   = useState('all'); // 'all' | 'notes' | 'wins' | 'losses'
   const [listSort, setListSort]       = useState('newest'); // 'newest' | 'oldest' | 'pnl_desc' | 'pnl_asc'
-  const [dateFilter, setDateFilter]   = useState('All Time');
+  const [dateFilter, setDateFilter]   = useState(dateRange || 'All Time');
   const [showFilter, setShowFilter]   = useState(false);
   const filterRef                     = useRef(null);
 
+  // Sync calendar currentDate when date filter changes
+  useEffect(() => {
+    if (resolvedDateFilter?.from) {
+      setCurrentDate(new Date(resolvedDateFilter.from));
+    }
+  }, [resolvedDateFilter]);
 
   const [hoveredData, setHoveredData] = useState(null);
   const [hoverPosition, setHoverPosition] = useState(null);
@@ -2103,8 +2119,9 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
     }
 
     // Extract all years from trades
-    if (Array.isArray(trades)) {
-      trades.forEach(t => {
+    const sourceTrades = (allTrades && allTrades.length > 0) ? allTrades : trades;
+    if (Array.isArray(sourceTrades)) {
+      sourceTrades.forEach(t => {
         if (!t) return;
         [
           t.date, t.entryDate, t.exitDate,
@@ -2468,6 +2485,14 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
         };
       })
       .filter(d => {
+        if (resolvedDateFilter?.from && resolvedDateFilter?.to) {
+          const dDate = strToDate(d.ds);
+          if (dDate) {
+            dDate.setHours(12, 0, 0, 0);
+            if (dDate < resolvedDateFilter.from || dDate > resolvedDateFilter.to) return false;
+          }
+        }
+
         if (listFilter === 'notes' && !d.hasNote) return false;
         if (listFilter === 'wins' && d.pnl <= 0) return false;
         if (listFilter === 'losses' && d.pnl >= 0) return false;
@@ -2496,7 +2521,7 @@ export default function NotesPage({ trades = [], user, onOpenPlaybook }) {
         if (listSort === 'pnl_asc') return a.pnl - b.pnl;
         return b.ds.localeCompare(a.ds);
       });
-  }, [allDates, notes, trades, dailyPnL, listFilter, listSort, searchText]);
+  }, [allDates, notes, trades, dailyPnL, listFilter, listSort, searchText, resolvedDateFilter]);
 
   const pnlColor = (pnl) => pnl > 0 ? '#10b981' : pnl < 0 ? '#ef4444' : 'var(--text-muted)';
 

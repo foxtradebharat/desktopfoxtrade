@@ -34,11 +34,13 @@ export default function CloudSyncPopover({
   onBackupNow,
   onOpenRestoreModal,
   isConnected = false,
+  isSyncing: propIsSyncing,
   syncError = null,
   onShowToast,
   onReconnectDrive
 }) {
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [internalSyncing, setInternalSyncing] = useState(false);
+  const isSyncing = propIsSyncing !== undefined ? propIsSyncing : internalSyncing;
   const [lastSyncTs, setLastSyncTs] = useState(initialSyncTs || (Date.now() - 15 * 60 * 1000));
   const [relativeText, setRelativeText] = useState(() => getRelativeTimeString(lastSyncTs));
 
@@ -55,7 +57,7 @@ export default function CloudSyncPopover({
   // Subscribe to real background sync events from syncEngine
   useEffect(() => {
     const unsub = subscribeToSyncStatus((syncing) => {
-      setIsSyncing(syncing);
+      setInternalSyncing(syncing);
       if (!syncing) {
         setLastSyncTs(Date.now());
         setRelativeText('just now');

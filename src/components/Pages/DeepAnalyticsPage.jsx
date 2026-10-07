@@ -26,6 +26,8 @@ import {
   isPartialTrade,
   sortTradesByEffectiveExitDate,
   computeClosedMetrics,
+  computePartialSummary,
+  getR,
   computeSharpe,
   generateTradingCalendarDays,
   getRealizedExitDate,

@@ -2,9 +2,8 @@ import React, { useState, useEffect, Component, Suspense, lazy } from 'react';
 import LoginPage from './pages/LoginPage';
 import DashboardSkeleton from './components/DashboardSkeleton';
 import { loginWithGoogle, logoutUser, subscribeToAuth } from './services/firebase';
-import { storeDirectToken, clearTokens } from './db/tokenManager';
+import { storeDirectToken, clearTokens, getValidAccessToken, subscribeToTokenUpdate } from './db/tokenManager';
 import { setSyncError } from './db/index';
-import { clearAllLocalTrades } from './services/dbService';
 
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const Dashboard = lazy(() => import('./Dashboard'));
@@ -89,20 +88,28 @@ export default function App() {
 
   const [accessToken, setAccessToken] = useState(() => {
     try {
-      const tok = localStorage.getItem('tradeontip_token');
-      const exp = localStorage.getItem('tradeontip_token_expiry');
-      if (!tok) return null;
-      if (!exp || Date.now() >= Number(exp)) {
-        console.warn('[App] Stored Google Drive token is missing expiry or expired, clearing stale token.');
-        localStorage.removeItem('tradeontip_token');
-        localStorage.removeItem('tradeontip_token_expiry');
-        return null;
-      }
-      return tok;
+      return localStorage.getItem('tradeontip_token') || null;
     } catch {
       return null;
     }
   });
+
+  // Cross-tab and persistent Google Drive token lifecycle management
+  useEffect(() => {
+    // 1. Immediately request / restore valid access token from tokenManager (IndexedDB / GIS)
+    getValidAccessToken()
+      .then(tok => {
+        if (tok) setAccessToken(tok);
+      })
+      .catch(() => {});
+
+    // 2. Subscribe to token updates across all tabs and silent background refreshes
+    const unsubscribe = subscribeToTokenUpdate((newTok) => {
+      setAccessToken(newTok || null);
+    });
+
+    return unsubscribe;
+  }, []);
 
   const [authChecking, setAuthChecking] = useState(() => {
     try {
@@ -159,15 +166,34 @@ export default function App() {
         setUser(u);
         localStorage.setItem('tradeontip_user', JSON.stringify(u));
         setAuthError(null);
+        getValidAccessToken().then(tok => {
+          if (tok) setAccessToken(tok);
+        }).catch(() => {});
         if (window.location.search.includes('landing=true')) {
           window.history.pushState({}, '', '/');
           setShowLanding(false);
         }
       } else {
-        setUser(null);
-        localStorage.removeItem('tradeontip_user');
-        localStorage.removeItem('tradeontip_token');
-        localStorage.removeItem('tradeontip_token_expiry');
+        const savedUserStr = localStorage.getItem('tradeontip_user');
+        if (savedUserStr) {
+          try {
+            const parsed = JSON.parse(savedUserStr);
+            if (parsed && parsed.uid) {
+              setUser(parsed);
+              getValidAccessToken().then(tok => {
+                if (tok) setAccessToken(tok);
+              }).catch(() => {});
+            } else {
+              setUser(null);
+            }
+          } catch (_) {
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+          localStorage.removeItem('tradeontip_token');
+          localStorage.removeItem('tradeontip_token_expiry');
+        }
       }
       setAuthChecking(false);
     });
@@ -242,20 +268,12 @@ export default function App() {
   const handleLogout = async () => {
     await logoutUser();
     await clearTokens().catch(() => {});
-    await clearAllLocalTrades().catch(() => {});
     setUser(null);
     setAccessToken(null);
     setAuthError(null);
     localStorage.removeItem('tradeontip_user');
     localStorage.removeItem('tradeontip_token');
     localStorage.removeItem('tradeontip_token_expiry');
-    try {
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('tradeontip_trades_') || key.startsWith('foxtrade_trades_') || key === 'tradeontip_trades_cache') {
-          localStorage.removeItem(key);
-        }
-      });
-    } catch (_) {}
     window.history.pushState(null, '', '/login');
   };
 
