@@ -26,6 +26,7 @@ import { SUPPORTED_BROKERS, previewTradesFromFile, normalizeDateString } from '.
 import { pairExecutionFills } from '../services/brokerApiService';
 import { useBrokerSync } from '../hooks/useBrokerSync';
 import { saveToken, getToken, getTokenState, getExpiryLabel } from '../services/brokerTokenManager';
+import { fetchLiveCMPForSymbol } from '../services/strikePriceService';
 
 export default function BrokerImportModal({
   isOpen,
@@ -34,7 +35,8 @@ export default function BrokerImportModal({
   onSyncedTrades,
   onOpenBrokerConnectivity,
   activePortfolioId = 'portfolio-default',
-  portfolios = []
+  portfolios = [],
+  liveCMPs = {}
 }) {
   const [modalTab, setModalTab] = useState('file-import'); // 'file-import' | 'api-sync' | 'column-mapper'
   const [currentStep, setCurrentStep] = useState(1); // 1: Upload, 2: Configure, 3: Preview
@@ -161,8 +163,39 @@ export default function BrokerImportModal({
       const preview = await previewTradesFromFile(file, {
         dateFormat,
         consolidate: consolidateFills,
-        activePortfolioId
+        activePortfolioId,
+        liveCMPs
       });
+
+      // Fetch live CMP for any open positions missing CMP
+      if (preview?.trades?.length > 0) {
+        const missingSymbols = [...new Set(
+          preview.trades
+            .filter(t => (t.status === 'Open' || t.status === 'Partial') && (!t.cmp || Number(t.cmp) === 0))
+            .map(t => (t.name || t.symbol || '').trim())
+            .filter(Boolean)
+        )];
+
+        if (missingSymbols.length > 0) {
+          await Promise.allSettled(
+            missingSymbols.map(async (sym) => {
+              try {
+                const p = await fetchLiveCMPForSymbol(sym, true);
+                if (p > 0) {
+                  preview.trades.forEach(t => {
+                    if ((t.name === sym || t.symbol === sym) && (!t.cmp || Number(t.cmp) === 0)) {
+                      t.cmp = p;
+                      if (t.avgEntry && t.qty) {
+                        t.pnl = Math.round(((p - t.avgEntry) * t.qty) * 100) / 100;
+                      }
+                    }
+                  });
+                }
+              } catch (_) {}
+            })
+          );
+        }
+      }
 
       setPreviewData(preview);
       // Select all trades by default
@@ -185,7 +218,8 @@ export default function BrokerImportModal({
       const preview = await previewTradesFromFile(selectedFile, {
         dateFormat: newDateFormat !== undefined ? newDateFormat : dateFormat,
         consolidate: newConsolidate !== undefined ? newConsolidate : consolidateFills,
-        activePortfolioId
+        activePortfolioId,
+        liveCMPs
       });
       setPreviewData(preview);
       const allIds = new Set(preview.trades.map((t, idx) => t.id || `row_${idx}`));

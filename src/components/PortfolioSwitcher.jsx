@@ -32,21 +32,41 @@ export default function PortfolioSwitcher({
 
   const activePortfolio = portfolios.find(p => p.id === activePortfolioId) || portfolios[0] || { id: 'portfolio-default', name: 'My Portfolio' };
 
-  // Calculate live trade counts for each portfolio
-  const allTrades = (trades && trades.length > 0) ? trades : (() => {
+  // Calculate live trade counts for each portfolio accurately
+  const getPortfolioTradeCount = (portfolioId) => {
+    // 1. If this is the active portfolio and trades are loaded in state, use live trades
+    if (portfolioId === activePortfolioId && Array.isArray(trades)) {
+      return trades.filter(t => Boolean((t.name || t.symbol || '').trim())).length;
+    }
+    // 2. Check portfolio-specific cache in localStorage
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.endsWith(`_${portfolioId}`) || key === `tradeontip_trades_v5_${portfolioId}`) && key.startsWith('tradeontip_trades_v5')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              return parsed.filter(t => Boolean((t.name || t.symbol || '').trim())).length;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    // 3. Fallback to master cache
     try {
       const saved = localStorage.getItem('tradeontip_trades_v5');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  })();
-
-  const getPortfolioTradeCount = (portfolioId) => {
-    return allTrades.filter(t => {
-      const pId = t.portfolioId || 'portfolio-default';
-      return pId === portfolioId && Boolean((t.name || t.symbol || '').trim());
-    }).length;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(t => {
+            const pId = t.portfolioId || 'portfolio-default';
+            return pId === portfolioId && Boolean((t.name || t.symbol || '').trim());
+          }).length;
+        }
+      }
+    } catch (_) {}
+    return 0;
   };
 
   // Focus input when editing starts

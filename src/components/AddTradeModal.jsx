@@ -93,7 +93,7 @@ export default function AddTradeModal({
     setShowStockDropdown(false);
     setIsFetchingCmp(true);
     try {
-      const price = await fetchLiveCMPForSymbol(canonical);
+      const price = await fetchLiveCMPForSymbol(canonical, true);
       if (price && !isNaN(price) && price > 0) setCmp(price.toFixed(2));
     } catch {}
     finally {

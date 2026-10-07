@@ -275,11 +275,15 @@ function EditableCell({ value, placeholder = '0.00', isCurrency = false, isInteg
   let formatted = value ? String(value) : placeholder;
   const num = parseFloat(value);
   if (!isNaN(num) && value !== '' && value !== null) {
-    if (isCurrency) {
+    if (isCmp && num === 0) {
+      formatted = '--';
+    } else if (isCurrency) {
       formatted = formatRupee(num);
     } else if (isInteger) {
       formatted = Math.round(num).toString();
     }
+  } else if (isCmp) {
+    formatted = '--';
   }
 
   return (

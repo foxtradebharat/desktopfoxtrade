@@ -1,21 +1,24 @@
 /**
  * tokenManager.js
  * ─────────────────────────────────────────────────────────────────────────────
- * Google OAuth token lifecycle manager.
+ * Google OAuth token lifecycle manager with persistent refresh token storage,
+ * AES-256-GCM encryption, cross-tab synchronization, and proactive auto-refresh.
  *
  * Resilient Cloud Sync Architecture:
  *   - Google Drive access tokens (1 hour) stored in IndexedDB + localStorage.
- *   - Proactive silent refresh 5 minutes before expiry via GIS prompt:'none' (with email hint)
- *     or Cloudflare Worker /api/auth/refresh (30-day refresh token).
+ *   - Persistent refresh tokens encrypted via AES-256-GCM in IDB & Firestore.
+ *   - Never overwrites stored refresh token with empty value (Google only returns on consent).
+ *   - Reuses stored refresh token without prompting on subsequent logins.
+ *   - Automatic refresh via Cloudflare Worker /api/auth/refresh before expiry.
+ *   - Detects `invalid_grant` specifically and transitions status to 'needs_reconnect'.
+ *   - Weekly keepalive check to prevent 6-month idle revocation.
  *   - Cross-tab coordination: BroadcastChannel ('foxtrade_token_channel') + storage events.
- *     When ANY tab refreshes the token, all open tabs immediately receive the fresh token!
- *   - Background tab keepalive: Heartbeat continues running in hidden tabs.
- *   - Web Locks API coordination: Prevents concurrent duplicate refresh requests across tabs.
- *   - Non-destructive resilience: Expired tokens are never aggressively deleted on startup;
- *     instead, silent refresh is attempted first with exponential backoff.
  */
 
 import { getConfig, setConfig, deleteConfig } from './configStore.js';
+import { encryptToken, decryptToken } from '../utils/tokenEncryption.js';
+import { db } from '../services/firebase.js';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +28,9 @@ const TOKEN_BUFFER_MS = 5 * 60 * 1000;
 /** How often the heartbeat runs (ms) */
 const KEEPALIVE_INTERVAL_MS = 3 * 60 * 1000; // every 3 minutes
 
+/** Weekly keepalive interval in ms (7 days) */
+const WEEKLY_KEEPALIVE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Cloudflare Worker URL — set in .env.local as VITE_CF_AUTH_WORKER_URL or VITE_BROKER_PROXY */
 const CF_WORKER_URL = (() => {
   try { return import.meta.env.VITE_CF_AUTH_WORKER_URL || import.meta.env.VITE_BROKER_PROXY || ''; }
@@ -32,10 +38,14 @@ const CF_WORKER_URL = (() => {
 })();
 
 // Keys in IDB app_config
-const KEY_ACCESS_TOKEN  = 'gdrive_access_token';
-const KEY_TOKEN_EXPIRY  = 'gdrive_token_expiry';
-const KEY_REFRESH_TOKEN = 'gdrive_refresh_token';
-const KEY_USER_EMAIL    = 'gdrive_user_email';
+const KEY_ACCESS_TOKEN            = 'gdrive_access_token';
+const KEY_TOKEN_EXPIRY            = 'gdrive_token_expiry';
+const KEY_REFRESH_TOKEN           = 'gdrive_refresh_token';
+const KEY_ENCRYPTED_REFRESH_TOKEN = 'gdrive_encrypted_refresh_token';
+const KEY_USER_EMAIL              = 'gdrive_user_email';
+const KEY_USER_ID                 = 'gdrive_user_uid';
+const KEY_DRIVE_STATUS            = 'gdrive_status';
+const KEY_LAST_KEEPALIVE          = 'gdrive_last_keepalive';
 
 // In-memory state
 let _refreshTimer               = null;
@@ -45,11 +55,21 @@ let _refreshPromise             = null;
 let _keepaliveActive            = false;
 let _gsiLoadPromise             = null;
 let _consecutiveRefreshFailures = 0;
-let _lastSuccessfulRefresh = 0;
+let _lastSuccessfulRefresh      = 0;
+let _cachedPlainRefreshToken    = null;
+
+let _driveStatus = (() => {
+  try {
+    return localStorage.getItem('tradeontip_drive_status') || 'connected';
+  } catch {
+    return 'connected';
+  }
+})();
 
 // Subscribers
-const _expiredListeners = new Set();
-const _updateListeners  = new Set();
+const _expiredListeners     = new Set();
+const _updateListeners      = new Set();
+const _driveStatusListeners = new Set();
 
 // ── Multi-Tab Cross-Communication Channel ──────────────────────────────────────
 const BROADCAST_CHANNEL_NAME = 'foxtrade_token_channel';
@@ -80,6 +100,8 @@ function _initBroadcastChannel() {
         _handleExternalTokenRequest();
       } else if (msg.type === 'TOKEN_REVOKED') {
         _handleExternalTokenRevoked();
+      } else if (msg.type === 'DRIVE_STATUS_CHANGE') {
+        setDriveStatus(msg.status, false);
       }
     };
   } catch (err) {
@@ -87,7 +109,7 @@ function _initBroadcastChannel() {
   }
 }
 
-// Storage event listener fallback (for older browsers or cross-context syncing)
+// Storage event listener fallback (for cross-context syncing)
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === 'tradeontip_token' && e.newValue && e.newValue !== _currentCachedToken) {
@@ -96,6 +118,8 @@ if (typeof window !== 'undefined') {
     } else if (e.key === 'tradeontip_token' && !e.newValue) {
       _currentCachedToken = null;
       _handleExternalTokenRevoked();
+    } else if (e.key === 'tradeontip_drive_status' && e.newValue) {
+      setDriveStatus(e.newValue, false);
     }
   });
 }
@@ -124,6 +148,10 @@ function _broadcastTokenRevoked() {
 
 function _broadcastRequestToken() {
   _broadcastMessage({ type: 'REQUEST_TOKEN' });
+}
+
+function _broadcastStatusChange(status) {
+  _broadcastMessage({ type: 'DRIVE_STATUS_CHANGE', status });
 }
 
 async function _handleExternalTokenUpdate(accessToken, expiry, email) {
@@ -168,13 +196,79 @@ function _handleExternalTokenRevoked() {
   _notifyTokenUpdate(null);
 }
 
-// ── GIS Script Loader ─────────────────────────────────────────────────────────
+// ── Drive Status & Subscriptions ──────────────────────────────────────────────
 
 /**
- * Ensure the Google Identity Services script is loaded into the page.
- * Idempotent — safe to call multiple times.
- * @returns {Promise<void>}
+ * Get current Drive connection status ('connected' | 'needs_reconnect' | 'disconnected').
  */
+export function getDriveStatus() {
+  return _driveStatus;
+}
+
+/**
+ * Update Drive connection status and notify subscribers.
+ */
+export function setDriveStatus(status, broadcast = true) {
+  if (!status) return;
+  _driveStatus = status;
+  try {
+    localStorage.setItem('tradeontip_drive_status', status);
+  } catch {}
+  setConfig(KEY_DRIVE_STATUS, status).catch(() => {});
+  _driveStatusListeners.forEach(cb => { try { cb(status); } catch (_) {} });
+  if (broadcast) {
+    _broadcastStatusChange(status);
+  }
+}
+
+/**
+ * Subscribe to Drive status changes.
+ */
+export function subscribeToDriveStatus(callback) {
+  _driveStatusListeners.add(callback);
+  callback(_driveStatus);
+  return () => _driveStatusListeners.delete(callback);
+}
+
+/**
+ * Handle invalid_grant: set user.driveStatus = 'needs_reconnect', clear stored token,
+ * and prompt user to reconnect.
+ */
+export async function handleInvalidGrant(userId = null) {
+  console.warn('[TokenManager] Google Drive access revoked or token invalid (invalid_grant). Flagging needs_reconnect.');
+  setDriveStatus('needs_reconnect');
+
+  // Update Firestore user record
+  const uid = userId || (await getConfig(KEY_USER_ID).catch(() => null));
+  if (uid && !uid.startsWith('demo-') && db) {
+    try {
+      await setDoc(doc(db, 'users', uid), {
+        driveStatus: 'needs_reconnect',
+        updatedAt: Date.now(),
+      }, { merge: true });
+    } catch (err) {
+      console.warn('[TokenManager] Failed to update Firestore driveStatus:', err.message);
+    }
+  }
+
+  // Clear local access and refresh tokens
+  _cachedPlainRefreshToken = null;
+  await deleteConfig(KEY_ACCESS_TOKEN).catch(() => {});
+  await deleteConfig(KEY_TOKEN_EXPIRY).catch(() => {});
+  await deleteConfig(KEY_REFRESH_TOKEN).catch(() => {});
+  await deleteConfig(KEY_ENCRYPTED_REFRESH_TOKEN).catch(() => {});
+
+  try {
+    localStorage.removeItem('tradeontip_token');
+    localStorage.removeItem('tradeontip_token_expiry');
+  } catch {}
+
+  _notifyTokenExpired();
+  _notifyTokenUpdate(null);
+}
+
+// ── GIS Script Loader ─────────────────────────────────────────────────────────
+
 export function ensureGsiLoaded() {
   if (typeof window === 'undefined') return Promise.resolve();
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -210,12 +304,6 @@ export function ensureGsiLoaded() {
 
 // ── Public Subscriptions ──────────────────────────────────────────────────────
 
-/**
- * Subscribe to token-expired events.
- * Fires ONLY when all silent refresh paths have genuinely failed on an expired session.
- * @param {() => void} callback
- * @returns {() => void} unsubscribe function
- */
 export function subscribeToTokenExpired(callback) {
   _expiredListeners.add(callback);
   return () => _expiredListeners.delete(callback);
@@ -225,14 +313,8 @@ function _notifyTokenExpired() {
   _expiredListeners.forEach(cb => { try { cb(); } catch (_) {} });
 }
 
-/**
- * Subscribe to token updates (fires when a fresh token is acquired, refreshed, or received from another tab).
- * @param {(accessToken: string|null) => void} callback
- * @returns {() => void} unsubscribe function
- */
 export function subscribeToTokenUpdate(callback) {
   _updateListeners.add(callback);
-  // Immediately notify with current token if available
   getConfig(KEY_ACCESS_TOKEN).then(tok => {
     if (tok) callback(tok);
   }).catch(() => {});
@@ -243,19 +325,96 @@ function _notifyTokenUpdate(token) {
   _updateListeners.forEach(cb => { try { cb(token); } catch (_) {} });
 }
 
+// ── Stored Refresh Token Management ───────────────────────────────────────────
+
+/**
+ * Check if the user already has a valid stored refresh token (in memory, IDB, or Firestore).
+ * Used so we NEVER prompt a user to re-authorize on login if they already connected once.
+ */
+export async function hasStoredRefreshToken(userId = null) {
+  if (_cachedPlainRefreshToken) return true;
+
+  const idbEnc = await getConfig(KEY_ENCRYPTED_REFRESH_TOKEN).catch(() => null);
+  if (idbEnc) return true;
+
+  const idbPlain = await getConfig(KEY_REFRESH_TOKEN).catch(() => null);
+  if (idbPlain) return true;
+
+  const uid = userId || (await getConfig(KEY_USER_ID).catch(() => null));
+  if (uid && !uid.startsWith('demo-') && db) {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists() && snap.data()?.encryptedRefreshToken) {
+        return true;
+      }
+    } catch {}
+  }
+
+  return false;
+}
+
+/**
+ * Retrieve decrypted refresh token from memory, IDB, or Firestore.
+ */
+export async function getStoredRefreshToken(userId = null) {
+  if (_cachedPlainRefreshToken) return _cachedPlainRefreshToken;
+
+  // 1. Check IDB encrypted token
+  const idbEnc = await getConfig(KEY_ENCRYPTED_REFRESH_TOKEN).catch(() => null);
+  if (idbEnc) {
+    const dec = await decryptToken(idbEnc);
+    if (dec) {
+      _cachedPlainRefreshToken = dec;
+      return dec;
+    }
+  }
+
+  // 2. Check legacy IDB plain token
+  const idbPlain = await getConfig(KEY_REFRESH_TOKEN).catch(() => null);
+  if (idbPlain) {
+    _cachedPlainRefreshToken = idbPlain;
+    // Migrate to encrypted
+    encryptToken(idbPlain).then(enc => {
+      if (enc) setConfig(KEY_ENCRYPTED_REFRESH_TOKEN, enc).catch(() => {});
+    }).catch(() => {});
+    return idbPlain;
+  }
+
+  // 3. Fallback to Firestore user document
+  const uid = userId || (await getConfig(KEY_USER_ID).catch(() => null));
+  if (uid && !uid.startsWith('demo-') && db) {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data?.encryptedRefreshToken) {
+          const dec = await decryptToken(data.encryptedRefreshToken);
+          if (dec) {
+            _cachedPlainRefreshToken = dec;
+            await setConfig(KEY_ENCRYPTED_REFRESH_TOKEN, data.encryptedRefreshToken).catch(() => {});
+            return dec;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[TokenManager] Error reading refresh token from Firestore:', e);
+    }
+  }
+
+  return null;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Store tokens after OAuth (called from login / refresh).
+ * Store tokens after OAuth.
  *
- * @param {object} params
- * @param {string} params.accessToken
- * @param {string} [params.refreshToken]
- * @param {number} [params.expiresIn]
- * @param {string} [params.email]
- * @returns {Promise<void>}
+ * Rules:
+ *   - NEVER overwrite a stored refresh_token with an empty/null value.
+ *   - Stores refresh_token encrypted with AES-256-GCM in IDB & Firestore.
+ *   - Updates driveStatus to 'connected'.
  */
-export async function storeTokens({ accessToken, refreshToken, expiresIn = 3600, email }) {
+export async function storeTokens({ accessToken, refreshToken, expiresIn = 3600, email, userId }) {
   if (!accessToken) return;
   const isSame = accessToken === _currentCachedToken;
   _currentCachedToken = accessToken;
@@ -263,8 +422,36 @@ export async function storeTokens({ accessToken, refreshToken, expiresIn = 3600,
   const expiry = Date.now() + expiresIn * 1000;
   await setConfig(KEY_ACCESS_TOKEN, accessToken);
   await setConfig(KEY_TOKEN_EXPIRY, expiry);
-  if (refreshToken) await setConfig(KEY_REFRESH_TOKEN, refreshToken);
-  if (email)        await setConfig(KEY_USER_EMAIL,    email);
+  if (email)  await setConfig(KEY_USER_EMAIL, email);
+  if (userId) await setConfig(KEY_USER_ID,    userId);
+
+  // CRITICAL RULE: Never overwrite a stored refresh_token with an empty value.
+  // Google only returns a refresh_token on initial consent.
+  if (refreshToken && typeof refreshToken === 'string' && refreshToken.trim() !== '') {
+    _cachedPlainRefreshToken = refreshToken;
+    await setConfig(KEY_REFRESH_TOKEN, refreshToken);
+
+    try {
+      const encrypted = await encryptToken(refreshToken);
+      if (encrypted) {
+        await setConfig(KEY_ENCRYPTED_REFRESH_TOKEN, encrypted);
+
+        // Store encrypted in Firestore under users/{userId}
+        const uid = userId || (await getConfig(KEY_USER_ID).catch(() => null));
+        if (uid && !uid.startsWith('demo-') && db) {
+          setDoc(doc(db, 'users', uid), {
+            encryptedRefreshToken: encrypted,
+            driveStatus: 'connected',
+            tokenUpdatedAt: Date.now(),
+          }, { merge: true }).catch(err => {
+            console.warn('[TokenManager] Firestore token sync error:', err.message);
+          });
+        }
+      }
+    } catch (encErr) {
+      console.warn('[TokenManager] Refresh token encryption notice:', encErr.message);
+    }
+  }
 
   try {
     if (localStorage.getItem('tradeontip_token') !== accessToken) {
@@ -275,45 +462,34 @@ export async function storeTokens({ accessToken, refreshToken, expiresIn = 3600,
     }
   } catch {}
 
+  setDriveStatus('connected');
   _consecutiveRefreshFailures = 0;
   _lastSuccessfulRefresh = Date.now();
 
   if (!isSame) {
-    // Broadcast token update to other tabs
     _broadcastTokenUpdate(accessToken, expiry, email);
-
-    // Notify local subscribers
     _notifyTokenUpdate(accessToken);
   }
 
-  // Schedule proactive auto-refresh
   _scheduleAutoRefresh(expiry);
-
-  // Ensure keepalive is running
   initTokenKeepalive();
 }
 
 /**
- * Get a valid access token, refreshing automatically if needed.
- * Safe for multi-tab environments.
- *
- * @returns {Promise<string|null>} access token or null if not authenticated
+ * Get a valid access token, proactively refreshing using the stored refresh_token if needed.
  */
-export async function getValidAccessToken() {
+export async function getValidAccessToken(userId = null) {
   let token  = await getConfig(KEY_ACCESS_TOKEN).catch(() => null);
   let expiry = await getConfig(KEY_TOKEN_EXPIRY).catch(() => null);
 
-  // Fallback to localStorage if IDB hasn't loaded or is empty
   if (!token && typeof localStorage !== 'undefined') {
     token = localStorage.getItem('tradeontip_token');
     const expStr = localStorage.getItem('tradeontip_token_expiry');
     if (expStr) expiry = Number(expStr);
   }
 
-  if (!token) return null;
-
   // Token is still fresh — return directly
-  if (expiry && (expiry - Date.now()) > TOKEN_BUFFER_MS) {
+  if (token && expiry && (expiry - Date.now()) > TOKEN_BUFFER_MS) {
     return token;
   }
 
@@ -322,9 +498,9 @@ export async function getValidAccessToken() {
     return _refreshPromise;
   }
 
-  console.log('[TokenManager] Access token expiring soon or expired, refreshing...');
+  console.log('[TokenManager] Access token expiring soon or expired, refreshing via refresh_token...');
   _isRefreshing   = true;
-  _refreshPromise = _doRefresh(token, expiry);
+  _refreshPromise = _doRefresh(token, expiry, userId);
 
   try {
     return await _refreshPromise;
@@ -335,50 +511,21 @@ export async function getValidAccessToken() {
 }
 
 /**
- * Wrapper for Drive calls that automatically retries once on 401.
- *
- * @param {(token: string) => Promise<Response>} driveCall
- * @returns {Promise<Response>}
+ * Refresh access token using CF Worker /api/auth/refresh (preferred) or GIS fallback.
+ * Checks and catches `invalid_grant` specifically.
  */
-export async function withAutoRefresh(driveCall) {
-  let token = await getValidAccessToken();
-  if (!token) throw new Error('Not authenticated with Google Drive.');
-
-  const response = await driveCall(token);
-
-  if (response.status === 401) {
-    console.warn('[TokenManager] Drive API returned 401 — force-refreshing token and retrying...');
-    const newToken = await refreshAccessToken(/* forceRefresh */ true);
-    if (!newToken) {
-      _notifyTokenExpired();
-      throw new Error('Google Drive session expired. Please reconnect Google Drive.');
-    }
-    return driveCall(newToken);
-  }
-
-  return response;
-}
-
-/**
- * Refresh the access token using CF Worker (preferred) or GIS silent refresh.
- *
- * @param {boolean} [force]
- * @returns {Promise<string|null>} new access token or null on failure
- */
-export async function refreshAccessToken(force = false) {
-  // If we recently refreshed successfully within the last 10 seconds and have a valid cached token, return it
-  if (Date.now() - _lastSuccessfulRefresh < 10000 && _currentCachedToken) {
+export async function refreshAccessToken(force = false, userId = null) {
+  if (!force && Date.now() - _lastSuccessfulRefresh < 10000 && _currentCachedToken) {
     return _currentCachedToken;
   }
 
-  // If we already have a refresh running, await it
   if (_isRefreshing && _refreshPromise) {
     return _refreshPromise;
   }
 
-  // ── Path 1: CF Worker (refresh token exchange) ───────────────────────────
+  // ── Path 1: CF Worker (using AES-GCM decrypted refresh token) ───────────────
   if (CF_WORKER_URL) {
-    const refreshToken = await getConfig(KEY_REFRESH_TOKEN);
+    const refreshToken = await getStoredRefreshToken(userId);
     if (refreshToken) {
       try {
         const resp = await fetch(`${CF_WORKER_URL}/api/auth/refresh`, {
@@ -387,33 +534,34 @@ export async function refreshAccessToken(force = false) {
           body:    JSON.stringify({ refreshToken }),
         });
 
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.access_token) {
-            _consecutiveRefreshFailures = 0;
-            await storeTokens({
-              accessToken:  data.access_token,
-              refreshToken: data.refresh_token || refreshToken,
-              expiresIn:    data.expires_in || 3600,
-            });
-            console.log('[TokenManager] Token refreshed via CF Worker ✓');
-            return data.access_token;
-          }
-        } else {
-          const errText = await resp.text().catch(() => '');
-          console.warn('[TokenManager] CF Worker refresh failed:', resp.status, errText);
-          if (resp.status === 400 || resp.status === 401) {
-            _notifyTokenExpired();
-            return null;
-          }
+        const data = await resp.json().catch(() => ({}));
+
+        if (resp.ok && data.access_token) {
+          _consecutiveRefreshFailures = 0;
+          await storeTokens({
+            accessToken:  data.access_token,
+            refreshToken: data.refresh_token || refreshToken, // persist rotated refresh token if provided
+            expiresIn:    data.expires_in || 3600,
+            userId,
+          });
+          console.log('[TokenManager] Token refreshed successfully via CF Worker ✓');
+          return data.access_token;
         }
+
+        // Detect invalid_grant: Google revoked access or user password changed
+        if (data.code === 'invalid_grant' || data.driveStatus === 'needs_reconnect' || (data.error && data.error.includes('invalid_grant'))) {
+          await handleInvalidGrant(userId);
+          return null;
+        }
+
+        console.warn('[TokenManager] CF Worker refresh returned non-ok:', resp.status, data);
       } catch (err) {
         console.warn('[TokenManager] CF Worker refresh error:', err.message);
       }
     }
   }
 
-  // ── Path 2: GIS silent refresh (Identity Services prompt:'none' + hint) ──
+  // ── Path 2: GIS silent refresh (fallback) ───────────────────────────────────
   const silentToken = await _silentGisRefresh();
   if (silentToken) {
     _consecutiveRefreshFailures = 0;
@@ -422,105 +570,68 @@ export async function refreshAccessToken(force = false) {
 
   _consecutiveRefreshFailures++;
 
-  // Check if current token in IDB / localStorage is still technically valid
   const currentExpiry = (await getConfig(KEY_TOKEN_EXPIRY).catch(() => null)) ||
     (typeof localStorage !== 'undefined' ? Number(localStorage.getItem('tradeontip_token_expiry')) : null);
   const isStillValid = currentExpiry && (currentExpiry - Date.now()) > 0;
 
   if (isStillValid) {
-    // Proactive refresh failed, but token has NOT expired yet!
-    // Never show an error banner to the user. Schedule a retry in 45s.
-    console.log(`[TokenManager] Proactive refresh attempt ${_consecutiveRefreshFailures} failed, token still valid for ${Math.round((currentExpiry - Date.now()) / 1000)}s. Retrying in 45s...`);
-    setTimeout(() => {
-      refreshAccessToken().catch(() => {});
-    }, 45_000);
-    const existingTok = await getConfig(KEY_ACCESS_TOKEN).catch(() => null);
-    return existingTok;
+    console.log(`[TokenManager] Proactive refresh attempt ${_consecutiveRefreshFailures} failed, token still valid. Retrying in 45s...`);
+    setTimeout(() => { refreshAccessToken(false, userId).catch(() => {}); }, 45_000);
+    return getConfig(KEY_ACCESS_TOKEN).catch(() => null);
   }
 
-  // If token is genuinely expired, retry up to 2 times before declaring disconnect
   if (_consecutiveRefreshFailures < 3) {
-    console.warn(`[TokenManager] Silent refresh attempt ${_consecutiveRefreshFailures} failed on expired token. Retrying in 6s...`);
-    setTimeout(() => {
-      refreshAccessToken().catch(() => {});
-    }, 6_000);
+    console.warn(`[TokenManager] Refresh attempt ${_consecutiveRefreshFailures} failed on expired token. Retrying in 6s...`);
+    setTimeout(() => { refreshAccessToken(false, userId).catch(() => {}); }, 6_000);
     return null;
   }
 
-  console.warn('[TokenManager] All silent refresh paths failed after multiple attempts — notifying token expired.');
+  console.warn('[TokenManager] All refresh paths failed — notifying token expired.');
   _notifyTokenExpired();
   return null;
 }
 
 /**
  * Clear all stored tokens (called on explicit user sign-out).
- * @returns {Promise<void>}
  */
 export async function clearTokens() {
   if (_refreshTimer)   { clearTimeout(_refreshTimer);   _refreshTimer   = null; }
   if (_keepaliveTimer) { clearInterval(_keepaliveTimer); _keepaliveTimer = null; }
   _keepaliveActive = false;
+  _cachedPlainRefreshToken = null;
 
   await deleteConfig(KEY_ACCESS_TOKEN);
   await deleteConfig(KEY_TOKEN_EXPIRY);
   await deleteConfig(KEY_REFRESH_TOKEN);
+  await deleteConfig(KEY_ENCRYPTED_REFRESH_TOKEN);
   await deleteConfig(KEY_USER_EMAIL);
 
   try {
     localStorage.removeItem('tradeontip_token');
     localStorage.removeItem('tradeontip_token_expiry');
     localStorage.removeItem('tradeontip_gdrive_token');
+    localStorage.removeItem('tradeontip_drive_status');
   } catch {}
 
+  setDriveStatus('disconnected', false);
   _broadcastTokenRevoked();
   _notifyTokenUpdate(null);
 }
 
-/**
- * Check if user is authenticated with Drive.
- * @returns {Promise<boolean>}
- */
 export async function isAuthenticated() {
   const token = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
     (typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_token') : null);
   return !!token;
 }
 
-/**
- * Get stored user email.
- * @returns {Promise<string|null>}
- */
 export async function getStoredEmail() {
   return getConfig(KEY_USER_EMAIL);
 }
 
 /**
- * Get current token health status.
- * @returns {Promise<{hasToken: boolean, hasRefreshToken: boolean, expiresIn: number|null, isExpired: boolean, canSilentRefresh: boolean}>}
- */
-export async function getTokenStatus() {
-  const token        = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_token') : null);
-  const expiry       = (await getConfig(KEY_TOKEN_EXPIRY).catch(() => null)) ||
-    (typeof localStorage !== 'undefined' ? Number(localStorage.getItem('tradeontip_token_expiry')) : null);
-  const refreshToken = await getConfig(KEY_REFRESH_TOKEN).catch(() => null);
-  const now          = Date.now();
-  return {
-    hasToken:        !!token,
-    hasRefreshToken: !!refreshToken,
-    expiresIn:       expiry ? Math.max(0, Math.floor((expiry - now) / 1000)) : null,
-    isExpired:       expiry ? now >= expiry : !token ? true : false,
-    canSilentRefresh: !!(CF_WORKER_URL && refreshToken) || !!(typeof window !== 'undefined' && window.google?.accounts?.oauth2),
-  };
-}
-
-/**
  * Exchange auth code via CF Worker.
- * @param {string} authCode
- * @param {string} [email]
- * @returns {Promise<boolean>}
  */
-export async function exchangeAuthCode(authCode, email) {
+export async function exchangeAuthCode(authCode, email, userId) {
   if (!CF_WORKER_URL) return false;
   try {
     const resp = await fetch(`${CF_WORKER_URL}/api/auth/exchange`, {
@@ -537,9 +648,15 @@ export async function exchangeAuthCode(authCode, email) {
           refreshToken: data.refresh_token,
           expiresIn:    data.expires_in || 3600,
           email,
+          userId,
         });
-        console.log('[TokenManager] Auth code exchanged for refresh token ✓');
+        console.log('[TokenManager] Auth code exchanged for persistent refresh token ✓');
         return true;
+      }
+    } else {
+      const errData = await resp.json().catch(() => ({}));
+      if (errData.code === 'invalid_grant') {
+        handleInvalidGrant(userId);
       }
     }
     return false;
@@ -549,20 +666,100 @@ export async function exchangeAuthCode(authCode, email) {
   }
 }
 
-/**
- * Store a direct access token.
- * @param {string} accessToken
- * @param {string} [email]
- * @returns {Promise<void>}
- */
-export async function storeDirectToken(accessToken, email) {
-  await storeTokens({ accessToken, expiresIn: 3600, email });
+export async function storeDirectToken(accessToken, email, userId) {
+  await storeTokens({ accessToken, expiresIn: 3600, email, userId });
 }
 
 /**
- * Initialize persistent token keepalive across all tabs and background windows.
- * @returns {() => void} cleanup function
+ * Get current token health status (for UI indicators).
+ * @returns {Promise<{hasToken: boolean, hasRefreshToken: boolean, expiresIn: number|null, isExpired: boolean, canSilentRefresh: boolean}>}
  */
+export async function getTokenStatus() {
+  const token        = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_token') : null);
+  const expiry       = (await getConfig(KEY_TOKEN_EXPIRY).catch(() => null)) ||
+    (typeof localStorage !== 'undefined' ? Number(localStorage.getItem('tradeontip_token_expiry')) : null);
+  const hasRefresh   = await hasStoredRefreshToken().catch(() => false);
+  const now          = Date.now();
+  return {
+    hasToken:        !!token,
+    hasRefreshToken: !!hasRefresh,
+    expiresIn:       expiry ? Math.max(0, Math.floor((expiry - now) / 1000)) : null,
+    isExpired:       expiry ? now >= expiry : !token ? true : false,
+    canSilentRefresh: !!(CF_WORKER_URL && hasRefresh) || !!(typeof window !== 'undefined' && window.google?.accounts?.oauth2),
+  };
+}
+
+/**
+ * Get a valid token, and if a Drive API call returns 401, automatically
+ * force-refresh and retry ONCE. Use this as the wrapper for all Drive calls.
+ *
+ * @param {(token: string) => Promise<Response>} driveCall — fn that takes a token and returns a fetch Response
+ * @returns {Promise<Response>}
+ */
+export async function withAutoRefresh(driveCall) {
+  let token = await getValidAccessToken();
+  if (!token) throw new Error('Not authenticated with Google Drive.');
+
+  const response = await driveCall(token);
+
+  // On 401: force-refresh token and retry ONCE
+  if (response.status === 401) {
+    console.warn('[TokenManager] Drive API returned 401 — force-refreshing token and retrying...');
+    const newToken = await refreshAccessToken(/* forceRefresh */ true);
+    if (!newToken) {
+      _notifyTokenExpired();
+      throw new Error('Google Drive session expired. Please reconnect Google Drive.');
+    }
+    return driveCall(newToken);
+  }
+
+  return response;
+}
+
+/**
+ * Weekly keepalive check: makes a cheap drive.about.get call
+ * to ensure the refresh token does not expire from 6 months of inactivity.
+ */
+export async function checkWeeklyKeepalive(userId = null) {
+  const lastPing = Number((await getConfig(KEY_LAST_KEEPALIVE).catch(() => null)) || 0);
+  const now = Date.now();
+
+  if (lastPing && (now - lastPing) < WEEKLY_KEEPALIVE_INTERVAL_MS) {
+    return true; // Already pinged within last 7 days
+  }
+
+  console.log('[TokenManager] Running weekly Google Drive keepalive check...');
+  const refreshToken = await getStoredRefreshToken(userId);
+
+  if (CF_WORKER_URL && refreshToken) {
+    try {
+      const resp = await fetch(`${CF_WORKER_URL}/api/auth/keepalive`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ refreshToken }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.status === 'connected') {
+        await setConfig(KEY_LAST_KEEPALIVE, now);
+        setDriveStatus('connected');
+        return true;
+      }
+      if (data.code === 'invalid_grant' || data.driveStatus === 'needs_reconnect') {
+        await handleInvalidGrant(userId);
+        return false;
+      }
+    } catch (err) {
+      console.warn('[TokenManager] Weekly keepalive error:', err.message);
+    }
+  }
+
+  return true;
+}
+
+// ── Multi-Tab & Visibility Keepalive ──────────────────────────────────────────
+
 export function initTokenKeepalive() {
   _initBroadcastChannel();
   ensureGsiLoaded().catch(() => {});
@@ -570,12 +767,13 @@ export function initTokenKeepalive() {
   if (_keepaliveActive) return () => {};
   _keepaliveActive = true;
 
-  // Proactively ask if another active tab already has a fresh token if we lack one
   if (!_currentCachedToken) {
     _broadcastRequestToken();
   }
 
-  // ── Heartbeat (runs in foreground & background tabs) ───────────────────
+  // Weekly check on init
+  checkWeeklyKeepalive().catch(() => {});
+
   if (_keepaliveTimer) clearInterval(_keepaliveTimer);
   _keepaliveTimer = setInterval(async () => {
     const token = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
@@ -587,13 +785,9 @@ export function initTokenKeepalive() {
 
     if (expiry && (expiry - Date.now()) <= TOKEN_BUFFER_MS) {
       console.log('[TokenManager] Keepalive: token expiring within buffer — refreshing proactively...');
-      // Use Web Locks API if available to coordinate across multiple tabs
       if (typeof navigator !== 'undefined' && navigator.locks) {
         navigator.locks.request('foxtrade_token_refresh', { ifAvailable: true }, async (lock) => {
-          if (!lock) {
-            console.log('[TokenManager] Another tab is already performing token refresh, standing by.');
-            return;
-          }
+          if (!lock) return;
           await refreshAccessToken().catch(() => {});
         }).catch(() => refreshAccessToken().catch(() => {}));
       } else {
@@ -602,7 +796,6 @@ export function initTokenKeepalive() {
     }
   }, KEEPALIVE_INTERVAL_MS);
 
-  // ── visibilitychange: re-check on tab focus / wake ─────────────────────
   const onVisibilityChange = async () => {
     if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
     const token  = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
@@ -615,46 +808,14 @@ export function initTokenKeepalive() {
       return;
     }
     if (expiry && (expiry - Date.now()) <= TOKEN_BUFFER_MS) {
-      console.log('[TokenManager] Keepalive: tab focused with expiring token — refreshing...');
       refreshAccessToken().catch(() => {});
     } else if (expiry) {
       _scheduleAutoRefresh(expiry);
     }
   };
 
-  // ── window focus event: also triggers on switching browser tabs or windows ───
-  const onWindowFocus = async () => {
-    const token  = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
-      (typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_token') : null);
-    const expiry = (await getConfig(KEY_TOKEN_EXPIRY).catch(() => null)) ||
-      (typeof localStorage !== 'undefined' ? Number(localStorage.getItem('tradeontip_token_expiry')) : null);
-
-    if (!token) return;
-    if (expiry && (expiry - Date.now()) <= TOKEN_BUFFER_MS) {
-      refreshAccessToken().catch(() => {});
-    }
-  };
-
-  // ── online event: refresh when browser reconnects from offline ─────────
-  const onOnline = async () => {
-    const token  = (await getConfig(KEY_ACCESS_TOKEN).catch(() => null)) ||
-      (typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_token') : null);
-    const expiry = (await getConfig(KEY_TOKEN_EXPIRY).catch(() => null)) ||
-      (typeof localStorage !== 'undefined' ? Number(localStorage.getItem('tradeontip_token_expiry')) : null);
-
-    if (!token) return;
-    if (expiry && (expiry - Date.now()) <= TOKEN_BUFFER_MS) {
-      console.log('[TokenManager] Keepalive: back online with expiring token — refreshing...');
-      refreshAccessToken().catch(() => {});
-    }
-  };
-
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange);
-  }
-  if (typeof window !== 'undefined') {
-    window.addEventListener('focus', onWindowFocus);
-    window.addEventListener('online', onOnline);
   }
 
   return () => {
@@ -663,21 +824,17 @@ export function initTokenKeepalive() {
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('focus', onWindowFocus);
-      window.removeEventListener('online', onOnline);
-    }
   };
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────────────
 
-async function _doRefresh(fallbackToken, expiry) {
-  const newToken = await refreshAccessToken();
+async function _doRefresh(fallbackToken, expiry, userId) {
+  const newToken = await refreshAccessToken(false, userId);
   if (newToken) return newToken;
 
   if (expiry && Date.now() >= expiry) {
-    console.warn('[TokenManager] Token has expired and could not be refreshed silently.');
+    console.warn('[TokenManager] Token has expired and could not be refreshed.');
     return null;
   }
 
@@ -689,7 +846,7 @@ function _scheduleAutoRefresh(expiry) {
 
   const msUntilRefresh = expiry - Date.now() - TOKEN_BUFFER_MS;
   if (msUntilRefresh <= 0) {
-    refreshAccessToken().catch(err => console.warn('[TokenManager] Auto-refresh error:', err.message));
+    refreshAccessToken().catch(() => {});
     return;
   }
 
@@ -711,19 +868,16 @@ async function _silentGisRefresh() {
       await ensureGsiLoaded();
 
       if (!window.google?.accounts?.oauth2) {
-        console.warn('[TokenManager] GIS oauth2 not available');
         resolve(null);
         return;
       }
 
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
       if (!clientId) {
-        console.warn('[TokenManager] No VITE_GOOGLE_CLIENT_ID configured');
         resolve(null);
         return;
       }
 
-      // Retrieve user email hint
       let userEmail = await getConfig(KEY_USER_EMAIL).catch(() => null);
       if (!userEmail) {
         try {
@@ -747,12 +901,7 @@ async function _silentGisRefresh() {
         client_id: clientId,
         scope:     'https://www.googleapis.com/auth/drive.file',
         callback:  async (response) => {
-          if (response?.error) {
-            console.warn('[TokenManager] GIS silent refresh error:', response.error, response.error_description);
-            safeResolve(null);
-            return;
-          }
-          if (!response?.access_token) {
+          if (response?.error || !response?.access_token) {
             safeResolve(null);
             return;
           }
@@ -765,10 +914,7 @@ async function _silentGisRefresh() {
           });
           safeResolve(response.access_token);
         },
-        error_callback: (err) => {
-          console.warn('[TokenManager] GIS client error callback:', err);
-          safeResolve(null);
-        }
+        error_callback: () => safeResolve(null),
       });
 
       const requestConfig = { prompt: 'none' };
@@ -778,16 +924,11 @@ async function _silentGisRefresh() {
 
       client.requestAccessToken(requestConfig);
 
-      // 12s safety timeout
       setTimeout(() => {
-        if (!resolved) {
-          console.warn('[TokenManager] GIS silent refresh timed out after 12s');
-          safeResolve(null);
-        }
-      }, 12_000);
+        if (!resolved) safeResolve(null);
+      }, 10_000);
 
-    } catch (err) {
-      console.warn('[TokenManager] GIS silent refresh exception:', err);
+    } catch {
       resolve(null);
     }
   });

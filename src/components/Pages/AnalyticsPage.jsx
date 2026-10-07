@@ -561,24 +561,27 @@ function getTradeActualCloseDateStr(t) {
         totalCharges = Number(t.brokerage);
         netPnl = grossPnl - totalCharges;
       } else if (!t.isManual && t.originalSource !== 'manual' && t.brokerage === undefined) {
-        const buyQty = Number(t.qty || t.initialQty || 1);
-        const exitQty = Number(t.exitedQty || t.qty || buyQty);
-        const buyPrice = Number(t.avgEntry || t.entry || 0);
-        const exitPrice = Number(t.avgExitPrice || t.avgExit || t.cmp || buyPrice);
-        const buyTurnover = buyPrice * buyQty;
-        const sellTurnover = exitPrice * exitQty;
-        const totalTurnover = buyTurnover + sellTurnover;
+        const isAutoChargesEnabled = typeof localStorage !== 'undefined' && localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
+        if (isAutoChargesEnabled) {
+          const buyQty = Number(t.qty || t.initialQty || 1);
+          const exitQty = Number(t.exitedQty || t.qty || buyQty);
+          const buyPrice = Number(t.avgEntry || t.entry || 0);
+          const exitPrice = Number(t.avgExitPrice || t.avgExit || t.cmp || buyPrice);
+          const buyTurnover = buyPrice * buyQty;
+          const sellTurnover = exitPrice * exitQty;
+          const totalTurnover = buyTurnover + sellTurnover;
 
-        if (totalTurnover > 0) {
-          const isIntraday = t.segment === 'intraday' || /orb|vwap|scalp|5m|15m/i.test(t.setup || '');
-          const stt = isIntraday ? (sellTurnover * 0.00025) : ((buyTurnover * 0.001) + (sellTurnover * 0.001));
-          const brokerage = Math.min(20, buyTurnover * 0.0003) + Math.min(20, sellTurnover * 0.0003);
-          const txn = totalTurnover * 0.0000345;
-          const sebi = totalTurnover * 0.000001;
-          const stamp = buyTurnover * 0.00015;
-          const gst = (brokerage + txn + sebi) * 0.18;
-          totalCharges = Math.round((stt + brokerage + txn + sebi + stamp + gst) * 100) / 100;
-          netPnl = Math.round((grossPnl - totalCharges) * 100) / 100;
+          if (totalTurnover > 0) {
+            const isIntraday = t.segment === 'intraday' || /orb|vwap|scalp|5m|15m/i.test(t.setup || '');
+            const stt = isIntraday ? (sellTurnover * 0.00025) : ((buyTurnover * 0.001) + (sellTurnover * 0.001));
+            const brokerage = Math.min(20, buyTurnover * 0.0003) + Math.min(20, sellTurnover * 0.0003);
+            const txn = totalTurnover * 0.0000345;
+            const sebi = totalTurnover * 0.000001;
+            const stamp = buyTurnover * 0.00015;
+            const gst = (brokerage + txn + sebi) * 0.18;
+            totalCharges = Math.round((stt + brokerage + txn + sebi + stamp + gst) * 100) / 100;
+            netPnl = Math.round((grossPnl - totalCharges) * 100) / 100;
+          }
         }
       }
 
@@ -1038,8 +1041,9 @@ function getTradeActualCloseDateStr(t) {
   // ─── 2. Metric Calculations for Column 1 & 2 ─────────
   const metrics = useMemo(() => {
     const totalTradesCount = enrichedTrades.length;
-    const closedMetrics = computeClosedMetrics(enrichedTrades);
-    const partialSummary = computePartialSummary(enrichedTrades);
+    const isGross = pnlMode === 'gross';
+    const closedMetrics = computeClosedMetrics(enrichedTrades, { useGross: isGross });
+    const partialSummary = computePartialSummary(enrichedTrades, { useGross: isGross });
 
     let sumPosMove = 0;
     let countPosMove = 0;
@@ -1161,7 +1165,7 @@ function getTradeActualCloseDateStr(t) {
       highestR: closedMetrics.highestR,
       lowestR: closedMetrics.lowestR
     };
-  }, [enrichedTrades, activeCapital, baseCapital]);
+  }, [enrichedTrades, activeCapital, baseCapital, pnlMode]);
 
   // ─── 3. Top Performers (Highest & Lowest Extreme Cards) ────────────────────
   const { highestTrade, lowestTrade } = useMemo(() => {

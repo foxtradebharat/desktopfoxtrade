@@ -328,17 +328,17 @@ export default function TaxAnalyticsPage({
     }
   }, [activeTooltipKey, isDownloadOpen]);
 
-  // 1. Fetch saved monthly taxes & itemized breakdown from Firebase & localStorage
+  // 1. Fetch saved monthly taxes & itemized breakdown from localStorage & Firebase
   useEffect(() => {
-    if (!user?.uid || user.uid.startsWith('demo-')) {
-      try {
-        const cached = localStorage.getItem(`foxtrade_monthly_taxes_${selectedYear}`);
-        if (cached) setTaxesData(JSON.parse(cached));
-        const cachedDetailed = localStorage.getItem(`foxtrade_monthly_taxes_detailed_${selectedYear}`);
-        if (cachedDetailed) setDetailedTaxesData(JSON.parse(cachedDetailed));
-      } catch {}
-      return;
-    }
+    try {
+      const cached = localStorage.getItem(`foxtrade_monthly_taxes_${selectedYear}`);
+      if (cached) setTaxesData(JSON.parse(cached));
+      const cachedDetailed = localStorage.getItem(`foxtrade_monthly_taxes_detailed_${selectedYear}`);
+      if (cachedDetailed) setDetailedTaxesData(JSON.parse(cachedDetailed));
+    } catch {}
+
+    if (!user?.uid || user.uid.startsWith('demo-')) return;
+
     getDoc(doc(db, 'journals', user.uid))
       .then((d) => {
         if (d.exists()) {
@@ -384,6 +384,7 @@ export default function TaxAnalyticsPage({
     try {
       localStorage.setItem(`foxtrade_monthly_taxes_${selectedYear}`, JSON.stringify(updatedTaxes));
       localStorage.setItem(`foxtrade_monthly_taxes_detailed_${selectedYear}`, JSON.stringify(updatedDetailed));
+      window.dispatchEvent(new CustomEvent('tradeontip_taxes_updated', { detail: { year: selectedYear } }));
     } catch {}
 
     if (user?.uid && !user.uid.startsWith('demo-')) {

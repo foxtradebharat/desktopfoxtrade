@@ -56,6 +56,7 @@ import {
   subscribeToTokenExpired,
   subscribeToTokenUpdate,
 } from './tokenManager.js';
+import { getDriveClient, subscribeToDriveStatus } from '../services/driveClient.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -139,9 +140,19 @@ export function getLastSyncError() {
   return _lastSyncError;
 }
 
-// Automatically bridge token expiration into sync error state
+// Automatically bridge token expiration and drive status into sync error state
 subscribeToTokenExpired(() => {
   setSyncError('Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.');
+});
+
+subscribeToDriveStatus((status) => {
+  if (status === 'needs_reconnect') {
+    setSyncError('Google Drive session expired or access was revoked. Please click "Reconnect Google Drive".');
+  } else if (status === 'connected') {
+    if (_lastSyncError && _lastSyncError.includes('Reconnect Google Drive')) {
+      setSyncError(null);
+    }
+  }
 });
 
 // Automatically clear sync error state as soon as a fresh valid token is active
@@ -219,63 +230,33 @@ async function parseDriveResponseError(resp, actionName) {
         resp.status === 401 ||
         msg.includes('invalid authentication credentials') ||
         msg.includes('OAuth 2') ||
-        msg.includes('invalid_token')
+        msg.includes('invalid_token') ||
+        msg.includes('invalid_grant')
       ) {
-        return 'Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.';
+        return 'Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.';
       }
       return msg;
     }
   } catch {}
   if (resp.status === 401) {
-    return 'Google Drive session expired (1-hour token limit). Please click "Reconnect Google Drive" to refresh your session.';
+    return 'Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.';
   }
   return `${actionName} failed: ${detail}`;
 }
 
-// ── Drive fetch wrapper with transparent 401 retry ─────────────────────────────
+// ── Drive fetch wrapper via Centralized Drive Client ──────────────────────────
 
 /**
- * Resilient fetch wrapper for all Google Drive API requests.
- * Automatically handles Bearer Authorization and transparently retries ONCE
- * after force-refreshing the token if Google returns 401 Unauthorized.
+ * Resilient fetch wrapper routing through the centralized DriveClient.
+ * Automatically handles token refresh, transient error retry with backoff,
+ * and invalid_grant error detection.
  */
 async function driveFetch(url, options = {}, token = null) {
-  let currentToken = token || (await getValidAccessToken().catch(() => null));
-  if (!currentToken || currentToken === 'demo-token') {
-    throw new Error('Not authenticated with Google Drive.');
+  const client = getDriveClient();
+  const resp = await client.fetch(url, options);
+  if (resp.ok) {
+    setSyncError(null);
   }
-
-  const baseHeaders = options.headers || {};
-  let reqHeaders;
-  if (typeof Headers !== 'undefined' && baseHeaders instanceof Headers) {
-    reqHeaders = new Headers(baseHeaders);
-    reqHeaders.set('Authorization', `Bearer ${currentToken}`);
-  } else {
-    reqHeaders = {
-      ...baseHeaders,
-      Authorization: `Bearer ${currentToken}`,
-    };
-  }
-
-  let resp = await fetch(url, { ...options, headers: reqHeaders });
-
-  // On 401 Unauthorized: automatically force-refresh token and retry ONCE
-  if (resp.status === 401) {
-    console.warn('[SyncEngine] Drive API returned 401 — force-refreshing token and retrying once...');
-    const refreshedToken = await refreshAccessToken(true).catch(() => null);
-    if (refreshedToken) {
-      if (typeof Headers !== 'undefined' && reqHeaders instanceof Headers) {
-        reqHeaders.set('Authorization', `Bearer ${refreshedToken}`);
-      } else {
-        reqHeaders.Authorization = `Bearer ${refreshedToken}`;
-      }
-      resp = await fetch(url, { ...options, headers: reqHeaders });
-      if (resp.ok) {
-        setSyncError(null);
-      }
-    }
-  }
-
   return resp;
 }
 

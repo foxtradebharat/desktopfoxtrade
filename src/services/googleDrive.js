@@ -20,13 +20,29 @@ import {
   getStoredEmail,
   exchangeAuthCode,
   ensureGsiLoaded,
+  hasStoredRefreshToken,
+  getDriveStatus,
+  setDriveStatus,
+  subscribeToDriveStatus,
 } from '../db/tokenManager.js';
+import { getDriveClient } from './driveClient.js';
 import { saveToDrive, loadFromDrive, clearAllDriveBackups as clearAllDriveBackupsEngine, deleteBackupForPortfolio as deleteBackupForPortfolioEngine } from '../db/syncEngine.js';
 import { bulkPutTrades }              from '../db/tradeStore.js';
 import { loginWithGoogle }            from './firebase.js';
 
-// Re-export tokenManager functions for direct use
-export { getValidAccessToken, clearTokens, isAuthenticated, getStoredEmail, ensureGsiLoaded };
+// Re-export tokenManager and driveClient functions for direct use
+export {
+  getValidAccessToken,
+  clearTokens,
+  isAuthenticated,
+  getStoredEmail,
+  ensureGsiLoaded,
+  hasStoredRefreshToken,
+  getDriveStatus,
+  setDriveStatus,
+  subscribeToDriveStatus,
+  getDriveClient,
+};
 
 /**
  * Load the Google Identity Services script.
@@ -70,9 +86,10 @@ export async function requestAccessToken() {
 
 /**
  * Request an offline authorization code and exchange it via Cloudflare Worker
- * to obtain a 30-day refresh token.
+ * to obtain a persistent refresh token.
+ * Uses prompt: 'consent' to guarantee Google issues a refresh_token.
  */
-export async function requestOfflineRefreshToken(email) {
+export async function requestOfflineRefreshToken(email, userId) {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   if (!clientId) return false;
 
@@ -85,11 +102,11 @@ export async function requestOfflineRefreshToken(email) {
         client_id: clientId,
         scope: 'https://www.googleapis.com/auth/drive.file',
         ux_mode: 'popup',
-        prompt: 'select_account',
+        prompt: 'consent',
         callback: async (response) => {
           if (response.code) {
-            console.log('[GoogleDrive] Received offline auth code, exchanging via CF Worker...');
-            const success = await exchangeAuthCode(response.code, email);
+            console.log('[GoogleDrive] Received offline auth code with consent, exchanging via CF Worker...');
+            const success = await exchangeAuthCode(response.code, email, userId);
             resolve(success);
           } else {
             resolve(false);

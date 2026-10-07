@@ -30,11 +30,16 @@ export function detectBrokerFromHeaders(headers = []) {
   const lowerH = headers.map(h => String(h || '').toLowerCase().trim());
   const flat = lowerH.join('|');
 
-  // Check unique markers and mandatory fields
+  // 1. High priority check: Full Journal exports (FoxTrade, Stocky Mind, Nexus)
+  if (flat.includes('trade no.') || flat.includes('tradeno') || flat.includes('position status') || flat.includes('p1 price') || flat.includes('initial qty/lot')) {
+    return { id: 'foxtrade', name: 'FoxTrade Journal' };
+  }
+
+  // 2. Check unique markers and mandatory fields
   for (const broker of SUPPORTED_BROKERS) {
     const hasMarker = broker.markers.some(m => flat.includes(m));
-    const hasMandatory = broker.mandatory.every(m => flat.includes(m));
-    if (hasMarker || hasMandatory) {
+    const hasMandatory = broker.mandatory.length > 0 ? broker.mandatory.every(m => flat.includes(m)) : true;
+    if (hasMarker && hasMandatory) {
       return broker;
     }
   }
@@ -44,7 +49,6 @@ export function detectBrokerFromHeaders(headers = []) {
   if (flat.includes('scrip code') && flat.includes('side')) return { id: 'upstox', name: 'Upstox' };
   if (flat.includes('trade price') && flat.includes('trade value')) return { id: 'dhan', name: 'Dhan HQ' };
   if (flat.includes('order execution time')) return { id: 'zerodha', name: 'Zerodha Kite' };
-  if (flat.includes('tradeno') || flat.includes('trade no')) return { id: 'foxtrade', name: 'FoxTrade Journal' };
 
   return { id: 'unknown', name: 'Custom CSV / Excel' };
 }

@@ -26,6 +26,8 @@ export {
   putTrade,
   getTrades,
   getTradesWithDeleted,
+  getAllTrades,
+  getTradeCount,
   getTradeById,
   deleteTrade,
   bulkPutTrades,
@@ -104,6 +106,11 @@ export {
   withAutoRefresh,
   initTokenKeepalive,
   getTokenStatus,
+  hasStoredRefreshToken,
+  getDriveStatus,
+  setDriveStatus,
+  subscribeToDriveStatus,
+  handleInvalidGrant,
 } from './tokenManager.js';
 
 // ── Image Store ───────────────────────────────────────────────────────────────

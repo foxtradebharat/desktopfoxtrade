@@ -17,6 +17,18 @@ export const getTradePnl = (t) => {
   return num(t.netPnl ?? t.pnl ?? t.pl);
 };
 
+// Gross P&L accessor. Specifically used when gross metrics / win rates are evaluated.
+export const getTradeGrossPnl = (t) => {
+  if (!t) return 0;
+  return num(t.grossPnl ?? t.pnl ?? t.pl);
+};
+
+// Net P&L accessor. Used when post-tax / net figures are specifically requested.
+export const getTradeNetPnl = (t) => {
+  if (!t) return 0;
+  return num(t.netPnl ?? t.pnl ?? t.pl);
+};
+
 // Status-only helpers. Enriched trades always carry status ('Open'|'Partial'|'Closed').
 export const isClosedTrade = (t) =>
   String(t?.status || t?.positionStatus || '').toLowerCase() === 'closed';
@@ -172,7 +184,7 @@ export function sortTradesByEffectiveExitDate(trades = []) {
  * Single source of truth for closed trades performance metrics.
  * Fix 4.1: Harmonized across Analytics and Deep Analytics pages.
  */
-export function computeClosedMetrics(trades) {
+export function computeClosedMetrics(trades, options = {}) {
   if (!Array.isArray(trades)) {
     return {
       closedCount: 0,
@@ -193,8 +205,9 @@ export function computeClosedMetrics(trades) {
     };
   }
 
+  const pnlAccessor = options.useGross ? getTradeGrossPnl : getTradePnl;
   const closed = trades.filter(isClosedTrade);
-  const pnl = closed.map(getTradePnl);
+  const pnl = closed.map(pnlAccessor);
   const wins = pnl.filter(p => p > 0);
   const losses = pnl.filter(p => p < 0);
   const grossWin = sum(wins);
@@ -234,12 +247,13 @@ export function computeClosedMetrics(trades) {
 }
 
 // D2: partial exits reported separately, never mixed into closed metrics
-export function computePartialSummary(trades) {
+export function computePartialSummary(trades, options = {}) {
   if (!Array.isArray(trades)) return { count: 0, realizedPnl: 0 };
+  const pnlAccessor = options.useGross ? getTradeGrossPnl : getTradePnl;
   const partial = trades.filter(isPartialTrade);
   return {
     count: partial.length,
-    realizedPnl: sum(partial.map(getTradePnl))
+    realizedPnl: sum(partial.map(pnlAccessor))
   };
 }
 

@@ -5,6 +5,9 @@ compatibility_date = "2024-01-01"
 [vars]
 ALLOWED_ORIGIN = "http://localhost:3000"
 
+[triggers]
+crons = ["0 0 * * 1"] # Weekly Monday at midnight UTC
+
 # Production secrets — set these via:
 #   wrangler secret put GOOGLE_CLIENT_ID
 #   wrangler secret put GOOGLE_CLIENT_SECRET

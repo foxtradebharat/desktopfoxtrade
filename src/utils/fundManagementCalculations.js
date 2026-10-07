@@ -564,7 +564,8 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
 
       // Group matched realized P/L by exit month
       const matchesByMonth = {};
-      const tradeTaxes = Number(t.taxes || t.charges?.total || t.brokerage || 0);
+      const isAutoTaxes = typeof localStorage !== 'undefined' && localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
+      const tradeTaxes = Number(t.taxes || (isAutoTaxes ? (t.charges?.total || 0) : 0) || t.brokerage || 0);
       const totalMatches = matches.length || 1;
 
       matches.forEach(m => {
@@ -663,7 +664,8 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
           monthlyTradeStats[mIdx] = { netPl: 0, grossPl: 0, taxes: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
         }
         const tradePl = (t.pnl !== undefined && t.pnl !== null && !isNaN(parseFloat(t.pnl))) ? parseFloat(t.pnl) : 0;
-        const tradeTaxes = Number(t.taxes || t.charges?.total || t.brokerage || 0);
+        const isAutoTaxesFallback = typeof localStorage !== 'undefined' && localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
+        const tradeTaxes = Number(t.taxes || (isAutoTaxesFallback ? (t.charges?.total || 0) : 0) || t.brokerage || 0);
         const tradeGross = Number.isFinite(Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl)) ? Number(t.grossRealizedPL ?? t.grossPL ?? t.grossPnl) : (tradePl + tradeTaxes);
         monthlyTradeStats[mIdx].netPl += tradePl;
         monthlyTradeStats[mIdx].grossPl += tradeGross;
@@ -707,9 +709,23 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     const withdrawnNotes = capitalChanges[idx]?.withdrawnNotes || '';
 
     const stats = monthlyTradeStats[idx] || { netPl: 0, grossPl: 0, taxes: 0, trades: 0, wins: 0, losses: 0, gains: [], lossVals: [], rrList: [], holdingDays: [] };
-    const netPl = Math.round(stats.netPl * 100) / 100;
+    
+    // Check manual monthly taxes saved via Tax Input Dialog / Tax Analytics
+    let manualMonthTax = 0;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const storedTaxes = JSON.parse(localStorage.getItem(`foxtrade_monthly_taxes_${numYear}`) || '{}');
+        if (storedTaxes[idx] !== undefined && storedTaxes[idx] !== null) {
+          manualMonthTax = Number(storedTaxes[idx]) || 0;
+        }
+      } catch (_) {}
+    }
+
+    const isAutoTaxes = typeof localStorage !== 'undefined' && localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true';
+    const tradeTaxes = isAutoTaxes ? Math.round((stats.taxes || 0) * 100) / 100 : 0;
+    const taxes = Math.round((manualMonthTax > 0 ? manualMonthTax : tradeTaxes) * 100) / 100;
     const grossPl = Math.round((stats.grossPl !== undefined ? stats.grossPl : stats.netPl) * 100) / 100;
-    const taxes = Math.round((stats.taxes || 0) * 100) / 100;
+    const netPl = Math.round((grossPl - taxes) * 100) / 100;
     const tradeCount = stats.trades;
     // Win rate: Total wins divided by total monthly trade count
     const winPct = tradeCount > 0 ? (stats.wins / tradeCount) * 100 : 0;
@@ -1113,6 +1129,16 @@ export function getCapital(optionsOrTrades = {}, maybeBaseCapital = 0, maybeCapi
       if (add > 0) deposits += add;
       if (w > 0) withdrawals += w;
     });
+
+    // If baseCapital was already derived from or matches the initial deposit/added capital,
+    // do not double-count that initial deposit into the deposits sum.
+    if (baseCapital > 0 && deposits > 0) {
+      const firstAddEntry = entries.find(e => Number(e?.added || e?.deposit || 0) > 0);
+      const firstAdd = Number(firstAddEntry?.added || firstAddEntry?.deposit || 0);
+      if (firstAdd > 0 && Math.abs(firstAdd - baseCapital) < 0.01) {
+        deposits -= firstAdd;
+      }
+    }
   }
 
   // 3. Resolve Realized P&L (up to today, including current month)

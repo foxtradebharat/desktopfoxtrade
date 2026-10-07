@@ -9,6 +9,7 @@
 
 import { fetchStockPrice } from './yahooService.js';
 import { getCanonicalSymbol } from '../utils/securityMaster.js';
+import { tvQuoteStreamService } from './tvQuoteStreamService.js';
 
 const INDEX_TICKERS = new Set([
   'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'CNX500', 'CNXSCAP',
@@ -263,19 +264,35 @@ export function getCachedCMP(symbol) {
   if (!symbol) return 0;
   const canonical = getCanonicalSymbol ? getCanonicalSymbol(symbol) : String(symbol).trim().toUpperCase();
   const entry = _liveCMPMemoryCache.get(canonical);
-  if (entry && (Date.now() - entry.time < 5 * 60 * 1000) && entry.price > 0) {
+  // Real-time freshness: maximum 15 seconds cache window
+  if (entry && (Date.now() - entry.time < 15 * 1000) && entry.price > 0) {
     return entry.price;
   }
   return 0;
 }
 
-export async function fetchLiveCMPForSymbol(symbol) {
+export async function fetchLiveCMPForSymbol(symbol, forceRefresh = false) {
   if (!symbol) return 0;
   const canonical = getCanonicalSymbol ? getCanonicalSymbol(symbol) : String(symbol).trim().toUpperCase();
 
-  const cached = getCachedCMP(canonical);
-  if (cached > 0) return cached;
+  // 1. Check TradingView live WebSocket quote session (sub-second real-time push)
+  try {
+    const tvQuote = tvQuoteStreamService.getCachedQuote(canonical);
+    if (tvQuote && tvQuote.price > 0 && (Date.now() - (tvQuote.timestamp || 0) < 30000)) {
+      _liveCMPMemoryCache.set(canonical, { price: tvQuote.price, time: Date.now() });
+      return tvQuote.price;
+    }
+    // Register interest in symbol for future WebSocket ticks
+    tvQuoteStreamService.subscribeSymbols([canonical]);
+  } catch (_) {}
 
+  // 2. Check fresh in-memory cache if not forcing refresh
+  if (!forceRefresh) {
+    const cached = getCachedCMP(canonical);
+    if (cached > 0) return cached;
+  }
+
+  // 3. Tier-2 Strike Money REST 1m Candle Tick API
   try {
     const strike = await fetchStrikePrice(canonical);
     if (strike?.price && Number(strike.price) > 0) {
@@ -285,6 +302,7 @@ export async function fetchLiveCMPForSymbol(symbol) {
     }
   } catch (_) {}
 
+  // 4. Tier-3 Yahoo Finance Official Settled/EOD Quote
   try {
     const yahoo = await fetchStockPrice(canonical);
     if (yahoo?.price && Number(yahoo.price) > 0) {

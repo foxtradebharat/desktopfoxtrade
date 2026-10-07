@@ -2,7 +2,8 @@ import React, { useState, useEffect, Component, Suspense, lazy } from 'react';
 import LoginPage from './pages/LoginPage';
 import DashboardSkeleton from './components/DashboardSkeleton';
 import { loginWithGoogle, logoutUser, subscribeToAuth } from './services/firebase';
-import { storeDirectToken, clearTokens, getValidAccessToken, subscribeToTokenUpdate } from './db/tokenManager';
+import { storeDirectToken, clearTokens, getValidAccessToken, subscribeToTokenUpdate, hasStoredRefreshToken } from './db/tokenManager';
+import { requestOfflineRefreshToken } from './services/googleDrive';
 import { setSyncError } from './db/index';
 
 const LandingPage = lazy(() => import('./pages/LandingPage'));
@@ -240,9 +241,21 @@ export default function App() {
           setAccessToken(res.accessToken);
           localStorage.setItem('tradeontip_token', res.accessToken);
           localStorage.setItem('tradeontip_token_expiry', String(Date.now() + 3500 * 1000));
-          await storeDirectToken(res.accessToken, res.user.email).catch(() => {});
+          await storeDirectToken(res.accessToken, res.user.email, res.user.uid).catch(() => {});
           setSyncError(null);
         }
+
+        // Reuse stored refresh token without consent prompt; only prompt if missing
+        const hasRefreshToken = await hasStoredRefreshToken(res.user.uid).catch(() => false);
+        if (!hasRefreshToken) {
+          console.log('[App] No stored refresh token found for user, requesting offline consent...');
+          requestOfflineRefreshToken(res.user.email, res.user.uid).catch(err => {
+            console.warn('[App] Offline refresh token request notice:', err);
+          });
+        } else {
+          console.log('[App] Stored refresh token exists for user, reusing without consent prompt ✓');
+        }
+
         // Direct transition into dashboard
         window.history.pushState({}, '', '/');
         setShowLanding(false);

@@ -249,6 +249,50 @@ body {
   background: #4b5563;
 }
 
+/* Stock Charts Winner/Loser Scrollable Grid (Matches Nexus UI/UX exactly) */
+.stock-charts-grid-wrapper {
+  position: relative;
+  outline: none;
+  cursor: pointer;
+}
+@media (min-width: 640px) {
+  .stock-charts-grid-wrapper {
+    cursor: auto;
+  }
+}
+
+.stock-charts-scroll-container {
+  overflow: hidden;
+  transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  scrollbar-width: thin;
+  padding-right: 6px;
+  max-height: 152px;
+}
+
+.stock-charts-grid-wrapper:hover .stock-charts-scroll-container,
+.stock-charts-grid-wrapper:focus-within .stock-charts-scroll-container {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.stock-charts-fade-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  pointer-events: none;
+  transition: all 0.5s ease-in-out;
+  opacity: 1;
+  background: linear-gradient(to top, var(--bg-primary, #f8f9fa), color-mix(in srgb, var(--bg-primary, #f8f9fa) 80%, transparent), transparent);
+}
+
+.stock-charts-grid-wrapper:hover .stock-charts-fade-overlay,
+.stock-charts-grid-wrapper:focus-within .stock-charts-fade-overlay {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
 button {
   font-family: inherit;
   cursor: pointer;

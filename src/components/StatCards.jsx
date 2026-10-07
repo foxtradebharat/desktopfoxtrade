@@ -2194,25 +2194,42 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span
-                title="Realized, net of charges. Closed and partial exits only. Unrealized P&L of open positions is not included. Open-position P&L uses the last entered prices and is shown before exit charges. This is a journal estimate, not a broker statement."
-                style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.05em' }}
+                title="Current drawdown from all-time peak cumulative portfolio impact (Pre-tax)."
+                style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '-0.02em', textTransform: 'uppercase' }}
               >
-                CURRENT DD (Realized)
+                CURRENT DD <span style={{ textTransform: 'none', fontWeight: 500 }}>(Pre-tax)</span>
               </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <div style={{
                   width: '22px', height: '22px',
-                  color: '#ef4444', opacity: 0.85,
+                  color: (Number(metrics?.currentDrawdown ?? 0) < 0) ? '#ef4444' : '#10b981', opacity: 0.85,
                   display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
-                  {React.createElement(getCardIcon('currentDd', 'trending-down'), { size: 15, color: '#ef4444' })}
+                  {React.createElement(getCardIcon('currentDd', 'trending-down'), { size: 15, color: (Number(metrics?.currentDrawdown ?? 0) < 0) ? '#ef4444' : '#10b981' })}
                 </div>
                 <button
                   onClick={() => setIsDrawdownModalOpen(true)}
-                  title="Drawdown Breakdown — Realized, net of charges. Closed and partial exits only. Open-position P&L uses the last entered prices and is shown before exit charges. This is a journal estimate, not a broker statement."
-                  aria-label="Click for Drawdown Breakdown"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                  <Info size={14} color="var(--text-muted)" />
+                  title="Open Drawdown Breakdown"
+                  aria-label="Open Drawdown Breakdown"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '9999px',
+                    border: '1px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    padding: 0
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--text-muted)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+                >
+                  i
                 </button>
               </div>
             </div>
@@ -2231,79 +2248,21 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
                 const ddNum = Number(metrics?.currentDrawdown ?? 0);
                 const v = Number(ddNum.toFixed(2));
                 const text = v === 0 ? '0.00' : v.toFixed(2);
-                const color = v === 0 ? 'var(--color-green, #10b981)' : '#ef4444';
-
-                const live = metrics?.liveDdResult;
-                let liveText = null;
-                let liveColor = 'var(--text-muted)';
-                let liveAmtFormatted = null;
-                let oldestPriceFormatted = null;
-
-                if (live) {
-                  const liveV = Number(Number(live.livePct || 0).toFixed(2));
-                  liveText = liveV === 0 ? '0.00' : liveV.toFixed(2);
-                  if (live.isStale) {
-                    liveColor = 'var(--text-muted)';
-                  } else {
-                    liveColor = liveV === 0 ? 'var(--color-green, #10b981)' : '#ef4444';
-                  }
-                  if (live.liveAmount && Math.abs(live.liveAmount) > 0) {
-                    liveAmtFormatted = formatDrawdownAmount(Math.abs(live.liveAmount));
-                  }
-                  if (live.oldestCmpUpdatedAt) {
-                    try {
-                      const d = new Date(live.oldestCmpUpdatedAt);
-                      oldestPriceFormatted = d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    } catch {}
-                  }
-                }
-
-                const unpriced = Number(metrics?.unpricedOpenCount || 0);
+                const isUnder = v < 0;
+                const color = isUnder ? '#ef4444' : 'var(--color-green, #10b981)';
 
                 return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {/* Row 1: Realized */}
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)' }}>Realized:</span>
-                      <span style={{ fontSize: '18px', fontWeight: 700, color, letterSpacing: '-0.02em', lineHeight: '1.1' }}>
-                        {formatValue(text, '', '%')}
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                    <span style={{ fontSize: '20px', fontWeight: 700, color, letterSpacing: '-0.02em', lineHeight: '1.1', fontFamily: 'monospace' }}>
+                      {formatValue(text, '', '%')}
+                    </span>
+                    {(trades || []).length > 0 && isUnder && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
+                      <span 
+                        title={`₹${formatDrawdownAmount(metrics.currentDrawdownAmount)}`}
+                        style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, fontFamily: 'monospace' }}
+                      >
+                        (₹{formatDrawdownAmount(metrics.currentDrawdownAmount)})
                       </span>
-                      {(trades || []).length > 0 && Number(metrics?.currentDrawdownAmount || 0) > 0 && (
-                        <span 
-                          title={`₹${formatDrawdownAmount(metrics.currentDrawdownAmount)}`}
-                          style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450 }}
-                        >
-                          (₹{formatDrawdownAmount(metrics.currentDrawdownAmount)})
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Row 2: Live (incl. open P&L) - hidden if live is null */}
-                    {live && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', borderTop: '1px solid color-mix(in srgb, var(--border-color) 40%, transparent)', paddingTop: '4px' }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)' }}>Live (incl. open P&L):</span>
-                          <span style={{ fontSize: '15px', fontWeight: 700, color: liveColor, letterSpacing: '-0.02em', lineHeight: '1.1' }}>
-                            {formatValue(liveText, '', '%')}
-                          </span>
-                          {liveAmtFormatted && (
-                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 450 }}>
-                              (₹{liveAmtFormatted})
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                          {oldestPriceFormatted && <span>prices as of {oldestPriceFormatted}</span>}
-                          {live.isStale && <span style={{ color: '#f59e0b', fontWeight: 500 }}>(stale prices)</span>}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Unpriced open positions alert */}
-                    {unpriced > 0 && (
-                      <div style={{ fontSize: '10px', color: '#f59e0b', lineHeight: 1.2 }}>
-                        {unpriced} open {unpriced === 1 ? 'position has' : 'positions have'} no price and {unpriced === 1 ? 'is' : 'are'} excluded
-                      </div>
                     )}
                   </div>
                 );

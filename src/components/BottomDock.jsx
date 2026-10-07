@@ -350,8 +350,8 @@ export default function BottomDock({
                           });
                         }
                       }
-                      // Asynchronously acquire 30-day refresh token via CF Worker
-                      requestOfflineRefreshToken(res.user?.email).catch(() => {});
+                      // Asynchronously acquire persistent refresh token via CF Worker
+                      requestOfflineRefreshToken(res.user?.email, res.user?.uid).catch(() => {});
                     }
                   } catch (e) {
                     console.warn('[BottomDock] Reconnect Google Drive error:', e);

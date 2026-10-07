@@ -48,7 +48,7 @@ export default function StockChartsPage({
     const decidedTrades = closedTrades.filter(t => (t.pnl || 0) !== 0);
     const winRate = decidedTrades.length > 0 ? (winCount / decidedTrades.length) * 100 : (closedCount > 0 ? (winCount / closedCount) * 100 : 0);
     const totalPnl = trades.reduce((acc, t) => acc + (t.pnl || 0), 0);
-    const avgPnl = closedCount > 0 ? closedTrades.reduce((acc, t) => acc + (t.pnl || 0), 0) / closedCount : (totalTrades > 0 ? totalPnl / totalTrades : 0);
+    const avgPnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
 
     return {
       totalTrades,
@@ -1777,7 +1777,7 @@ export default function StockChartsPage({
             {metrics.totalPnl >= 0 ? `+₹${metrics.totalPnl.toLocaleString('en-IN')}` : `-₹${Math.abs(metrics.totalPnl).toLocaleString('en-IN')}`}
           </div>
           <div style={{ fontSize: '10px', fontWeight: 500, color: 'var(--text-muted, #a1a1aa)', marginTop: '1px' }}>
-            AVG: {metrics.avgPnl >= 0 ? `+₹${metrics.avgPnl}` : `-₹${Math.abs(metrics.avgPnl)}`}
+            AVG: {metrics.avgPnl >= 0 ? `+₹${metrics.avgPnl.toLocaleString('en-IN')}` : `-₹${Math.abs(metrics.avgPnl).toLocaleString('en-IN')}`}
           </div>
         </div>
 
@@ -1957,100 +1957,117 @@ export default function StockChartsPage({
           </div>
         </div>
 
-        {/* 3-Column Card Grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: '12px'
-        }}>
-          {(viewTab === 'winners' ? topWinners : topLosers).slice(0, 12).map((item, idx) => {
-            const sym = sourceMode === 'trades' ? (item.name || item.symbol) : item.symbol;
-            const isSelected = selectedSymbol && selectedSymbol.toUpperCase() === sym.toUpperCase();
-            const pnl = item.pnl || 0;
-            const isGain = pnl >= 0;
+        {/* Scrollable Container identical to Nexus:
+            - Default collapsed height: 152px (~2 rows) with bottom gradient fade
+            - On hover or focus-within: expands max-h to 500px, overflow-y-auto becomes active with thin scrollbar
+            - Holds unlimited trades (even 1000+ trades) smoothly
+        */}
+        <div
+          className="stock-charts-grid-wrapper group/grid relative outline-none"
+          tabIndex={0}
+        >
+          <div
+            className="stock-charts-scroll-container overflow-hidden thin-scrollbar pr-2 snap-y"
+          >
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gap: '12px',
+              paddingBottom: '8px'
+            }}>
+              {(viewTab === 'winners' ? topWinners : topLosers).map((item, idx) => {
+                const sym = sourceMode === 'trades' ? (item.name || item.symbol) : item.symbol;
+                const isSelected = selectedSymbol && selectedSymbol.toUpperCase() === sym.toUpperCase();
+                const pnl = item.pnl || 0;
+                const isGain = pnl >= 0;
 
-            return (
-              <div
-                key={item.id || idx}
-                onClick={() => handleSelectSymbol(sym)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '10px 14px',
-                  borderRadius: '12px',
-                  border: isSelected ? '1.5px solid #3b82f6' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
-                  backgroundColor: 'var(--bg-card, #ffffff)',
-                  cursor: 'pointer',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  height: '62px',
-                  boxShadow: 'var(--shadow-card, 0 1px 2px rgba(0,0,0,0.02))',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                {/* Left Accent Stripe */}
-                <div style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: '3px',
-                  backgroundColor: isGain ? '#10b981' : '#ef4444'
-                }} />
-
-                {/* Left Side: Trade #, Logo, Symbol & Setup */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, paddingLeft: '4px' }}>
-                  {sourceMode === 'trades' && (
-                    <div style={{
-                      width: '24px',
-                      height: '24px',
-                      borderRadius: '50%',
-                      backgroundColor: 'rgba(0,0,0,0.03)',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      color: 'var(--text-muted, #71717a)',
+                return (
+                  <div
+                    key={item.id || idx}
+                    onClick={() => handleSelectSymbol(sym)}
+                    style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0
-                    }}>
-                      {item.tradeNo || (idx + 1)}
-                    </div>
-                  )}
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      borderRadius: '12px',
+                      border: isSelected ? '1.5px solid #3b82f6' : '1px solid color-mix(in srgb, var(--border-color) 65%, transparent)',
+                      backgroundColor: 'var(--bg-card, #ffffff)',
+                      cursor: 'pointer',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      height: '62px',
+                      boxShadow: 'var(--shadow-card, 0 1px 2px rgba(0,0,0,0.02))',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {/* Left Accent Stripe */}
+                    <div style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: '3px',
+                      backgroundColor: isGain ? '#10b981' : '#ef4444'
+                    }} />
 
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <SymbolLogo symbol={sym} size={16} />
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary, #111827)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {sym}
-                      </span>
+                    {/* Left Side: Trade #, Logo, Symbol & Setup */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, paddingLeft: '4px' }}>
+                      {sourceMode === 'trades' && (
+                        <div style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          backgroundColor: 'rgba(0,0,0,0.03)',
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          color: 'var(--text-muted, #71717a)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}>
+                          {item.tradeNo || (idx + 1)}
+                        </div>
+                      )}
+
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <SymbolLogo symbol={sym} size={16} />
+                          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary, #111827)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {sym}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted, #71717a)', fontWeight: 400, marginTop: '2px' }}>
+                          {sourceMode === 'trades' ? (item.setup || 'General') : `${item.count} Trades · ${item.winCount}W`}
+                        </div>
+                      </div>
                     </div>
 
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted, #71717a)', fontWeight: 400, marginTop: '2px' }}>
-                      {sourceMode === 'trades' ? (item.setup || 'General') : `${item.count} Trades · ${item.winCount}W`}
+                    {/* Right Side: P&L Amount & Date */}
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        fontFamily: 'monospace',
+                        color: isGain ? '#059669' : '#dc2626'
+                      }}>
+                        {isGain ? `+₹${pnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+                      </div>
+
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted, #a1a1aa)', fontWeight: 400, marginTop: '2px' }}>
+                        {item.date || 'Active'}
+                      </div>
                     </div>
                   </div>
-                </div>
+                );
+              })}
+            </div>
+          </div>
 
-                {/* Right Side: P&L Amount & Date */}
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    fontFamily: 'monospace',
-                    color: isGain ? '#059669' : '#dc2626'
-                  }}>
-                    {isGain ? `+₹${pnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `-₹${Math.abs(pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
-                  </div>
-
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted, #a1a1aa)', fontWeight: 400, marginTop: '2px' }}>
-                    {item.date || 'Active'}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {/* Bottom Gradient Overlay (Matches Nexus fade out when collapsed) */}
+          <div className="stock-charts-fade-overlay" />
         </div>
       </div>
       )}

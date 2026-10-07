@@ -385,13 +385,11 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     .replace(/-EQ$/i, '');
 
   const explicitCmp = parseCleanNum(t.cmp ?? t.ltp ?? t.currentPrice, 0);
-  const isClosedTrade = String(t.status || '').toLowerCase() === 'closed' || (parseCleanNum(t.exitPrice ?? t.exit) > 0 && parseCleanNum(t.openQty ?? 0) <= 0 && parseCleanNum(t.exitedQty ?? 0) > 0);
-  const livePrice = !isClosedTrade
-    ? (options.liveCMPs?.[cleanSym] ?? options.liveCMPs?.[upperRaw] ?? options.liveCMPs?.[rawSym])
-    : undefined;
-  const cmp = explicitCmp > 0
-    ? explicitCmp
-    : ((livePrice !== undefined && Number(livePrice) > 0) ? Number(livePrice) : 0);
+  const livePrice = options.liveCMPs?.[cleanSym] ?? options.liveCMPs?.[upperRaw] ?? options.liveCMPs?.[rawSym];
+  const exitFallback = parseCleanNum(t.avgExitPrice ?? t.exitPrice ?? t.exit, 0);
+  const cmp = (livePrice !== undefined && Number(livePrice) > 0)
+    ? Number(livePrice)
+    : (explicitCmp > 0 ? explicitCmp : (exitFallback > 0 ? exitFallback : 0));
 
   // 1. Build Entry Legs List (Initial + P1..P5)
   const entryLegs = [];
@@ -552,6 +550,27 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
   const capitalAtRisk = heatResult.heatPct;
   const riskAmount = heatResult.riskAmount;
 
+  // Profit Protected & Profit Risk (Nexus Exact Spec)
+  let profitProtected = 0;
+  let profitRisk = 0;
+  if (status !== 'Closed' && openQty > 0 && tsl > 0) {
+    if (isBuy) {
+      if (tsl > avgEntry) {
+        profitProtected = Math.round((tsl - avgEntry) * openQty * 100) / 100;
+      }
+      if (cmp > 0) {
+        profitRisk = Math.round(Math.max(0, cmp - tsl) * openQty * 100) / 100;
+      }
+    } else {
+      if (tsl < avgEntry) {
+        profitProtected = Math.round((avgEntry - tsl) * openQty * 100) / 100;
+      }
+      if (cmp > 0) {
+        profitRisk = Math.round(Math.max(0, tsl - cmp) * openQty * 100) / 100;
+      }
+    }
+  }
+
   // 12. Holding Days
   // Preserves explicit trade holdingDays if already present, otherwise calculates from lots
   const calculatedHoldingDays = calculateWeightedHoldingDays(matches, remainingLots);
@@ -581,9 +600,14 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
 
   let charges = null;
   let chargesUnavailableReason = null;
-  let netPnl = grossRealizedPL; // default: gross = net when no broker
+  let netPnl = grossRealizedPL; // default: gross = net when no broker or auto-taxes disabled
+
+  const isAutoTaxesActive = options.autoTaxesEnabled !== undefined
+    ? Boolean(options.autoTaxesEnabled)
+    : (typeof localStorage !== 'undefined' && localStorage.getItem('foxtrade_auto_taxes_enabled') === 'true');
 
   if (
+    isAutoTaxesActive &&
     broker !== 'not_defined' &&
     status === 'Closed' &&
     totalQtyExited > 0 &&
@@ -600,6 +624,10 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
       chargesUnavailableReason = rawCharges.reason;
       charges = null;
     }
+  } else if (!isAutoTaxesActive && status === 'Closed' && totalQtyExited > 0) {
+    // When auto-taxes are disabled, charges are null and net PnL is identical to gross PnL (matching Nexus behavior)
+    charges = null;
+    netPnl = grossRealizedPL;
   } else if (broker === 'not_defined' && status === 'Closed' && totalQtyExited > 0) {
     chargesUnavailableReason = 'broker_not_defined';
   }
@@ -683,7 +711,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     entry,
     qty,
     initialQty: qty,
-    cmp: (status === 'Closed' || openQty <= 0) ? (explicitCmp > 0 ? explicitCmp : 0) : cmp,
+    cmp: cmp > 0 ? cmp : (explicitCmp > 0 ? explicitCmp : 0),
     sl,
     tsl,
     avgEntry: Math.round(avgEntry * 100) / 100,
@@ -715,6 +743,8 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     capitalAtRisk,
     openHeat: capitalAtRisk,
     riskAmount,
+    profitProtected,
+    profitRisk,
     holdingDays,
     pfImpact: Math.round(pfImpact * 100) / 100,
     flags: validation.flags,
@@ -727,6 +757,7 @@ export function enrichTradeWithFoxFormulas(t, portfolioCapital = 100000, options
     alpha,
     heat,
     slToCost,
+    totalCapitalAllocated: Number(t.totalCapitalAllocated) > 0 ? Number(t.totalCapitalAllocated) : (portfolioCapital > 0 ? portfolioCapital : 500000),
     matches: matches || []
   };
 }

@@ -399,6 +399,15 @@ export default function FundManagementPage({
   };
 
   const [showPreTax, setShowPreTax] = useState(false);
+  const [taxVersion, setTaxVersion] = useState(0);
+
+  useEffect(() => {
+    const handleTaxesUpdated = () => {
+      setTaxVersion(v => v + 1);
+    };
+    window.addEventListener('tradeontip_taxes_updated', handleTaxesUpdated);
+    return () => window.removeEventListener('tradeontip_taxes_updated', handleTaxesUpdated);
+  }, []);
 
   // Compute monthly matrix dynamically from current trades and capital changes
   const monthlyData = useMemo(() => {
@@ -406,7 +415,7 @@ export default function FundManagementPage({
       portfolioId: activePortfolioId,
       allTrades: (allTrades && allTrades.length > 0) ? allTrades : trades
     });
-  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId]);
+  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId, taxVersion]);
 
   // Compute yearly fund summary and footer total metrics
   const yearlySummary = useMemo(() => {
@@ -414,7 +423,7 @@ export default function FundManagementPage({
       portfolioId: activePortfolioId,
       allTrades: (allTrades && allTrades.length > 0) ? allTrades : trades
     });
-  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId]);
+  }, [trades, allTrades, capitalChanges, selectedYear, activePortfolioId, taxVersion]);
 
   // Start direct inline editing for a cell
   const startEditing = (monthIdx, field) => {

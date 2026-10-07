@@ -242,23 +242,14 @@ export default function RestoreBackupModal({
         driveList = await listDriveBackups(token);
       }
 
-      // Also create a local backup snapshot entry if trades exist in IDB
-      const list = [...driveList];
-      if (currentTrades && currentTrades.length > 0) {
-        list.unshift({
-          id: 'local-snapshot',
-          name: `local-snapshot-${activePortfolioId}.json`,
-          size: JSON.stringify(currentTrades).length,
-          modifiedTime: new Date().toISOString(),
-          isLocal: true,
-          portfolioId: activePortfolioId,
-          tradeCount: currentTrades.length
-        });
-      }
-
-      setBackups(list);
-      if (list.length > 0 && !selectedBackup) {
-        handleSelectBackup(list[0]);
+      setBackups(driveList);
+      if (driveList.length > 0) {
+        if (!selectedBackup || !driveList.some(b => b.id === selectedBackup.id)) {
+          handleSelectBackup(driveList[0]);
+        }
+      } else {
+        setSelectedBackup(null);
+        setSelectedBackupData(null);
       }
     } catch (err) {
       console.warn('[RestoreBackupModal] Error listing backups:', err);
@@ -378,39 +369,71 @@ export default function RestoreBackupModal({
     }
   };
 
+  // Export Current Active Local State to user's computer
+  const handleExportCurrentLocal = async () => {
+    try {
+      const calNotes = await getCalendarNotes().catch(() => ({}));
+      const indNotes = await getIndependentNotes().catch(() => []);
+      const foxyChats = await getConfig('foxy_ai_chats', []).catch(() => []);
+      const foxyCommitments = await getConfig('foxy_trader_commitments', []).catch(() => []);
+      let settings = null;
+      try { settings = JSON.parse(localStorage.getItem('tradeontip_settings') || '{}'); } catch {}
+      let baseCapital = null;
+      try { baseCapital = Number(localStorage.getItem('tradeontip_base_capital') || 0); } catch {}
+      
+      const localPayload = {
+        version: '3.0',
+        schemaVersion: 2,
+        portfolioId: activePortfolioId,
+        exportedAt: new Date().toISOString(),
+        trades: currentTrades,
+        notes: calNotes,
+        independentNotes: indNotes,
+        foxyChats,
+        foxyCommitments,
+        journalSettings: settings,
+        baseCapital,
+        metadata: {
+          tradeCount: currentTrades.filter(t => !t.deletedAt).length,
+          isLocalSnapshot: true,
+        }
+      };
+      const blob = new Blob([JSON.stringify(localPayload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `foxtrade-active-${activePortfolioId}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (onShowToast) {
+        onShowToast({
+          title: 'Export Complete',
+          message: `Saved ${currentTrades.length} active trades as JSON file`,
+          type: 'success'
+        });
+      }
+    } catch (err) {
+      console.error('[RestoreBackupModal] Export error:', err);
+      if (onShowToast) {
+        onShowToast({
+          title: 'Export Failed',
+          message: err.message || 'Could not export local database',
+          type: 'error'
+        });
+      }
+    }
+  };
+
   // Download Backup File to User's Computer
   const handleDownloadBackup = async (e, backup) => {
     e.stopPropagation();
     try {
       let blob;
-      if (backup.isLocal) {
-        const calNotes = await getCalendarNotes().catch(() => ({}));
-        const indNotes = await getIndependentNotes().catch(() => []);
-        const foxyChats = await getConfig('foxy_ai_chats', []).catch(() => []);
-        const foxyCommitments = await getConfig('foxy_trader_commitments', []).catch(() => []);
-        let settings = null;
-        try { settings = JSON.parse(localStorage.getItem('tradeontip_settings') || '{}'); } catch {}
-        let baseCapital = null;
-        try { baseCapital = Number(localStorage.getItem('tradeontip_base_capital') || 0); } catch {}
-        
-        const localPayload = {
-          version: '3.0',
-          schemaVersion: 2,
-          portfolioId: activePortfolioId,
-          exportedAt: new Date().toISOString(),
-          trades: currentTrades,
-          notes: calNotes,
-          independentNotes: indNotes,
-          foxyChats,
-          foxyCommitments,
-          journalSettings: settings,
-          baseCapital,
-          metadata: {
-            tradeCount: currentTrades.filter(t => !t.deletedAt).length,
-            isLocalSnapshot: true,
-          }
-        };
-        blob = new Blob([JSON.stringify(localPayload, null, 2)], { type: 'application/json' });
+      if (backup.isLocalUpload && backup.data) {
+        blob = new Blob([JSON.stringify(backup.data, null, 2)], { type: 'application/json' });
       } else {
         const token = await getValidAccessToken().catch(() => accessToken);
         const data = await downloadBackupFileById(backup.id, token);
@@ -433,7 +456,7 @@ export default function RestoreBackupModal({
   // Delete Backup from Drive
   const handleDeleteBackup = async (e, backup) => {
     e.stopPropagation();
-    if (backup.isLocal || backup.isLocalUpload) {
+    if (backup.isLocalUpload) {
       setBackups(prev => prev.filter(b => b.id !== backup.id));
       if (selectedBackup?.id === backup.id) {
         setSelectedBackup(null);
@@ -822,9 +845,62 @@ export default function RestoreBackupModal({
             flexDirection: 'column',
             backgroundColor: 'var(--bg-primary, #fafafa)'
           }}>
+            {/* Active Local Database Card */}
+            {currentTrades && currentTrades.length > 0 && (
+              <div style={{
+                margin: '12px 12px 6px 12px',
+                padding: '10px 12px',
+                borderRadius: '10px',
+                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.24)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px'
+              }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', flexShrink: 0 }} />
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      Active Local State
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted, #6b7280)', marginTop: '2px', paddingLeft: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {currentTrades.length} trades • {activePortfolioName}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleExportCurrentLocal}
+                  title="Download active local database as JSON file"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '5px 8px',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                    color: '#059669',
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.22)'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.12)'}
+                >
+                  <Download size={11} />
+                  <span>Export JSON</span>
+                </button>
+              </div>
+            )}
+
             {/* Left Header */}
             <div style={{
-              padding: '12px 16px',
+              padding: '10px 16px 8px 16px',
               borderBottom: '1px solid var(--border-color, #e5e7eb)',
               display: 'flex',
               alignItems: 'center',
@@ -926,11 +1002,11 @@ export default function RestoreBackupModal({
                               width: '8px',
                               height: '8px',
                               borderRadius: '50%',
-                              backgroundColor: backup.isLocal ? '#10b981' : '#3b82f6',
+                              backgroundColor: backup.isLocalUpload ? '#8b5cf6' : '#3b82f6',
                               flexShrink: 0
                             }} />
                             <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {backup.isLocal ? 'Current Local State' : (backup.name || 'FoxTrade Backup')}
+                              {backup.name || 'FoxTrade Backup'}
                             </span>
                           </div>
                           
@@ -969,27 +1045,25 @@ export default function RestoreBackupModal({
                             <Download size={13} />
                           </button>
 
-                          {!backup.isLocal && (
-                            <button
-                              onClick={(e) => handleDeleteBackup(e, backup)}
-                              title="Delete backup"
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                padding: '4px',
-                                borderRadius: '6px',
-                                color: 'var(--text-muted, #9ca3af)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}
-                              onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
-                              onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted, #9ca3af)'}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => handleDeleteBackup(e, backup)}
+                            title="Delete backup"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              borderRadius: '6px',
+                              color: 'var(--text-muted, #9ca3af)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted, #9ca3af)'}
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         </div>
                       </div>
                     </div>

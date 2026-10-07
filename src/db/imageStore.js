@@ -17,6 +17,7 @@
  */
 
 import { idbGet, idbPut, idbDelete, idbGetByIndex, STORES } from './foxtradeDB.js';
+import { getDriveClient } from '../services/driveClient.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TARGET_SIZE_BYTES = 256 * 1024; // 256 KB target
@@ -79,19 +80,18 @@ async function compressImage(blob) {
 // ── Drive folder helpers ──────────────────────────────────────────────────────
 
 async function getOrCreateFolder(accessToken, name, parentId = null) {
+  const driveClient = getDriveClient();
   const parentQ = parentId ? ` and '${parentId}' in parents` : '';
   const q       = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
-  const resp    = await fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const resp    = await driveClient.fetch(`${DRIVE_API}?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
   const { files } = await resp.json();
   if (files?.[0]?.id) return files[0].id;
 
   const body = { name, mimeType: 'application/vnd.google-apps.folder' };
   if (parentId) body.parents = [parentId];
-  const create = await fetch(DRIVE_API, {
+  const create = await driveClient.fetch(DRIVE_API, {
     method:  'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(body),
   });
   return (await create.json()).id;
@@ -179,11 +179,11 @@ export async function deleteImage(imageId, accessToken) {
   const record = await idbGet(STORES.CHART_IMAGES, imageId);
 
   // Delete from Drive if synced
-  if (record?.driveFileId && accessToken) {
+  if (record?.driveFileId) {
     try {
-      await fetch(`${DRIVE_API}/${record.driveFileId}`, {
-        method:  'DELETE',
-        headers: { Authorization: `Bearer ${accessToken}` },
+      const driveClient = getDriveClient();
+      await driveClient.fetch(`${DRIVE_API}/${record.driveFileId}`, {
+        method: 'DELETE',
       });
     } catch (err) {
       console.warn('[ImageStore] Drive delete failed:', err.message);
@@ -226,15 +226,15 @@ export async function syncPendingImages(accessToken, portfolioId) {
     return { uploaded: 0, failed: unsynced.length };
   }
 
+  const driveClient = getDriveClient();
+
   for (const img of unsynced) {
     try {
       // Check if file already exists in Drive (prevents duplicate files on retry)
       const searchQ = encodeURIComponent(
         `name='${img.filename}' and '${folderId}' in parents and trashed=false`
       );
-      const searchResp = await fetch(`${DRIVE_API}?q=${searchQ}&fields=files(id)&pageSize=1`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const searchResp = await driveClient.fetch(`${DRIVE_API}?q=${searchQ}&fields=files(id)&pageSize=1`);
       const existingFile = searchResp.ok
         ? (await searchResp.json()).files?.[0] || null
         : null;
@@ -245,9 +245,9 @@ export async function syncPendingImages(accessToken, portfolioId) {
         const metadata = { name: img.filename };
         form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
         form.append('file',     img.blob);
-        const resp = await fetch(
+        const resp = await driveClient.fetch(
           `${DRIVE_UPLOAD_API}/${existingFile.id}?uploadType=multipart&fields=id`,
-          { method: 'PATCH', headers: { Authorization: `Bearer ${accessToken}` }, body: form }
+          { method: 'PATCH', body: form }
         );
         if (!resp.ok) throw new Error(`Update failed: ${resp.status}`);
         const { id: driveFileId } = await resp.json();
@@ -262,9 +262,8 @@ export async function syncPendingImages(accessToken, portfolioId) {
         const metadata = { name: img.filename, parents: [folderId] };
         form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
         form.append('file',     img.blob);
-        const resp = await fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id`, {
+        const resp = await driveClient.fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id`, {
           method:  'POST',
-          headers: { Authorization: `Bearer ${accessToken}` },
           body:    form,
         });
         if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);

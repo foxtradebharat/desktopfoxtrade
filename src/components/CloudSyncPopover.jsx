@@ -11,6 +11,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { subscribeToSyncStatus } from '../db/index.js';
+import { subscribeToDriveStatus } from '../services/driveClient.js';
 
 function getRelativeTimeString(timestampMs) {
   if (!timestampMs) return 'recently';
@@ -44,14 +45,23 @@ export default function CloudSyncPopover({
   const [lastSyncTs, setLastSyncTs] = useState(initialSyncTs || (Date.now() - 15 * 60 * 1000));
   const [relativeText, setRelativeText] = useState(() => getRelativeTimeString(lastSyncTs));
 
+  const [driveStatus, setDriveStatusLocal] = useState('connected');
+
+  useEffect(() => {
+    const unsub = subscribeToDriveStatus((st) => setDriveStatusLocal(st));
+    return unsub;
+  }, []);
+
   const isAuthError = Boolean(
-    syncError && (
+    driveStatus === 'needs_reconnect' ||
+    (syncError && (
       syncError.toLowerCase().includes('expired') ||
       syncError.toLowerCase().includes('authentication') ||
       syncError.toLowerCase().includes('oauth') ||
       syncError.toLowerCase().includes('401') ||
-      syncError.toLowerCase().includes('token')
-    )
+      syncError.toLowerCase().includes('token') ||
+      syncError.toLowerCase().includes('revoked')
+    ))
   );
 
   // Subscribe to real background sync events from syncEngine

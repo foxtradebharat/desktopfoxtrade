@@ -117,6 +117,34 @@ export async function getTradesWithDeleted(portfolioId) {
 }
 
 /**
+ * Get all active trades across all portfolios.
+ * @returns {Promise<object[]>}
+ */
+export async function getAllTrades() {
+  const db = await getDB();
+  const tx = db.transaction(STORES.TRADES, 'readonly');
+  const st = tx.objectStore(STORES.TRADES);
+  return new Promise((resolve, reject) => {
+    const req = st.getAll();
+    req.onsuccess = () => {
+      const records = req.result || [];
+      resolve(records.filter(t => !t.deletedAt));
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Get active trade count for a specific portfolio.
+ * @param {string} portfolioId
+ * @returns {Promise<number>}
+ */
+export async function getTradeCount(portfolioId) {
+  const trades = await getTrades(portfolioId);
+  return trades.length;
+}
+
+/**
  * Get a single trade by its ID.
  * @param {string} tradeId
  * @returns {Promise<object|null>}
