@@ -299,7 +299,7 @@ export default function AccountSettingsPopover({
           }}
         >
           <Trash2 size={15} color="#ef4444" />
-          <span>Clear All Data</span>
+          <span>Clear Portfolio Data</span>
         </div>
       </div>
     </div>

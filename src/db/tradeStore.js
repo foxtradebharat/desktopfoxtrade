@@ -202,14 +202,25 @@ export async function bulkPutTrades(portfolioId, trades, skipQueue = false) {
  */
 export async function clearTrades(portfolioId) {
   const db  = await getDB();
-  const all = await idbGetByIndex(STORES.TRADES, 'portfolioId', portfolioId);
+  const tx  = db.transaction(STORES.TRADES, 'readwrite');
+  const st  = tx.objectStore(STORES.TRADES);
 
   return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORES.TRADES, 'readwrite');
-    const st  = tx.objectStore(STORES.TRADES);
-    all.forEach(t => st.delete(t.id));
-    tx.oncomplete = () => resolve(all.length);
-    tx.onerror    = () => reject(tx.error);
+    const req = st.getAll();
+    req.onsuccess = () => {
+      const records = req.result || [];
+      let count = 0;
+      const targetPid = portfolioId || 'portfolio-default';
+      records.forEach(t => {
+        const tPid = t.portfolioId || 'portfolio-default';
+        if (tPid === targetPid || (targetPid === 'portfolio-default' && (tPid === 'default' || !t.portfolioId))) {
+          st.delete(t.id);
+          count++;
+        }
+      });
+      tx.oncomplete = () => resolve(count);
+    };
+    req.onerror = () => reject(tx.error);
   });
 }
 

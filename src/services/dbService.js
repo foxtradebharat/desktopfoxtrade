@@ -138,6 +138,19 @@ export async function saveUserTrades(uid, trades, portfolioId) {
   if (!uid) return false;
   const pid = portfolioId || _activePortfolio || 'default';
 
+  // If trades array is empty, clear this portfolio's records from IDB
+  if (!trades || trades.length === 0) {
+    await clearTrades(pid);
+    _currentTrades = [];
+    _notifyListeners([]);
+    return true;
+  }
+
+  // Clear any explicit "cleared" tombstone flag on fresh writes
+  try {
+    localStorage.removeItem(`tradeontip_cleared_${pid}`);
+  } catch (_) {}
+
   // 1. Write to IndexedDB
   await bulkPutTrades(pid, trades, false);
 
@@ -193,6 +206,16 @@ export async function getUserTrades(uid, portfolioId) {
   if (trades.length > 0) {
     _currentTrades = await getTradesWithDeleted(pid);
     return trades;
+  }
+
+  // If this portfolio was explicitly cleared, never resurrect trades via migration or cloud
+  let wasCleared = false;
+  try {
+    wasCleared = localStorage.getItem(`tradeontip_cleared_${pid}`) === 'true';
+  } catch (_) {}
+  if (wasCleared) {
+    _currentTrades = [];
+    return [];
   }
 
   // 2. Migration: check if we have v1 data in old IndexedDB or localStorage
@@ -257,6 +280,24 @@ export async function clearUserTrades(portfolioId) {
   const pid = portfolioId || _activePortfolio || 'default';
   _currentTrades = [];
   return clearTrades(pid);
+}
+
+/**
+ * Hard-clear old foxtrade_db v1 IndexedDB so legacy migration never resurrects old trades.
+ * @param {string} uid
+ */
+export async function clearOldV1IDB(uid) {
+  if (!uid || typeof indexedDB === 'undefined') return;
+  try {
+    const req = indexedDB.open('foxtrade_db', 1);
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      if (db.objectStoreNames.contains('trades')) {
+        const tx = db.transaction('trades', 'readwrite');
+        tx.objectStore('trades').delete(uid);
+      }
+    };
+  } catch (_) {}
 }
 
 /**

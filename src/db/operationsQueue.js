@@ -250,3 +250,33 @@ export async function getQueueStats() {
     total:   all.length,
   };
 }
+
+/**
+ * Hard-delete queued operations for a specific portfolio.
+ * Used when user clears all data for that portfolio.
+ *
+ * @param {string} portfolioId
+ * @returns {Promise<number>} count of deleted operations
+ */
+export async function clearOpsForPortfolio(portfolioId) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.OPERATIONS_QUEUE, 'readwrite');
+    const st = tx.objectStore(STORES.OPERATIONS_QUEUE);
+    const req = st.getAll();
+    req.onsuccess = () => {
+      const records = req.result || [];
+      let count = 0;
+      const targetPid = portfolioId || 'portfolio-default';
+      records.forEach(op => {
+        const opPid = op.portfolioId || 'portfolio-default';
+        if (!portfolioId || opPid === targetPid || (targetPid === 'portfolio-default' && opPid === 'default')) {
+          st.delete(op.qid);
+          count++;
+        }
+      });
+      tx.oncomplete = () => resolve(count);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}

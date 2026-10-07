@@ -13,6 +13,9 @@ export {
   getDB,
   resetDB,
   STORES,
+  idbGet,
+  idbPut,
+  idbDelete,
   idbClearStore,
   purgeExpiredOhlcCache,
   idbCountByCompoundIndex,
@@ -54,6 +57,7 @@ export {
   markOpDone,
   markOpFailed,
   clearDoneOps,
+  clearOpsForPortfolio,
   getPendingCount,
   requeueFailedOps,
   getQueueStats,
@@ -80,6 +84,7 @@ export {
   listDriveBackups,
   downloadBackupFileById,
   deleteBackupFileById,
+  deleteBackupForPortfolio,
   clearAllDriveBackups,
 } from './syncEngine.js';
 

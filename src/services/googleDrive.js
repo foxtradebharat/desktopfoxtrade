@@ -21,7 +21,7 @@ import {
   exchangeAuthCode,
   ensureGsiLoaded,
 } from '../db/tokenManager.js';
-import { saveToDrive, loadFromDrive, clearAllDriveBackups as clearAllDriveBackupsEngine } from '../db/syncEngine.js';
+import { saveToDrive, loadFromDrive, clearAllDriveBackups as clearAllDriveBackupsEngine, deleteBackupForPortfolio as deleteBackupForPortfolioEngine } from '../db/syncEngine.js';
 import { bulkPutTrades }              from '../db/tradeStore.js';
 import { loginWithGoogle }            from './firebase.js';
 
@@ -157,5 +157,17 @@ export async function clearAllDriveBackups(token) {
   const validToken = await getValidAccessToken().catch(() => token);
   if (!validToken) return false;
   return clearAllDriveBackupsEngine(validToken);
+}
+
+/**
+ * Delete backup file for a specific portfolio from Google Drive.
+ * @param {string} token
+ * @param {string} portfolioId
+ * @returns {Promise<boolean>}
+ */
+export async function deleteBackupForPortfolio(token, portfolioId) {
+  const validToken = await getValidAccessToken().catch(() => token);
+  if (!validToken) return false;
+  return deleteBackupForPortfolioEngine(portfolioId, validToken);
 }
 

@@ -1117,3 +1117,36 @@ export async function clearAllDriveBackups(accessToken) {
   }
 }
 
+/**
+ * Delete backup files for a specific portfolio from Google Drive.
+ * Used when user clears all data for that specific portfolio.
+ *
+ * @param {string} portfolioId
+ * @param {string} accessToken
+ * @returns {Promise<boolean>}
+ */
+export async function deleteBackupForPortfolio(portfolioId, accessToken) {
+  if (!accessToken || accessToken === 'demo-token' || !portfolioId) return false;
+  try {
+    const files = await listDriveBackups(accessToken);
+    const matching = files.filter(f => f.portfolioId === portfolioId || f.name.includes(portfolioId));
+    if (matching.length > 0) {
+      await Promise.all(matching.map(f => deleteBackupFileById(f.id, accessToken)));
+    }
+    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
+    const exact = await findBackupFile(accessToken, fileName);
+    if (exact) {
+      await deleteBackupFileById(exact.id, accessToken);
+    }
+    const legacyFileName = `foxtrade-journal-backup-${portfolioId}.json.gz`;
+    const legacyExact = await findBackupFile(accessToken, legacyFileName);
+    if (legacyExact) {
+      await deleteBackupFileById(legacyExact.id, accessToken);
+    }
+    return true;
+  } catch (err) {
+    console.warn('[SyncEngine] deleteBackupForPortfolio error:', err);
+    return false;
+  }
+}
+

@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { db } from './services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { saveUserTrades, getUserTrades, subscribeToUserTrades, setDriveContext, clearAllLocalTrades } from './services/dbService';
+import { saveUserTrades, getUserTrades, subscribeToUserTrades, setDriveContext, clearUserTrades, clearOldV1IDB } from './services/dbService';
 import { fetchStockPrice } from './services/yahooService';
 import { fetchLiveCMPForSymbol, getCachedCMP } from './services/strikePriceService';
 import { liveMarketFeed } from './services/liveMarketFeed';
-import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups } from './services/googleDrive';
-import { subscribeToTokenUpdate, getValidAccessToken } from './db/index';
+import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups, deleteBackupForPortfolio } from './services/googleDrive';
+import { subscribeToTokenUpdate, getValidAccessToken, clearOpsForPortfolio, getDB, STORES, idbDelete } from './db/index';
 import TopBar from './components/TopBar';
 import Toolbar from './components/Toolbar';
 import StatCards from './components/StatCards';
@@ -508,12 +508,22 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   const handleExecuteClearAllData = async () => {
     try {
-      // 1. Identify all keys to remove while strictly preserving user auth, portfolios, settings, and broker tokens
+      const targetPortfolioId = activePortfolioId || 'portfolio-default';
+      const targetPfName = portfolios.find(p => p.id === targetPortfolioId)?.name || 'My Portfolio';
+
+      // 1. Mark persistent cleared flag so IDB/v1/Drive never resurrects deleted trades for this portfolio
+      try {
+        localStorage.setItem(`tradeontip_cleared_${targetPortfolioId}`, 'true');
+        localStorage.setItem('tradeontip_data_cleared', 'true');
+      } catch (_) {}
+
+      // 2. Remove all portfolio-specific localStorage keys (capital, ledger, taxes for this portfolio)
       const keysToRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (!key) continue;
 
+        // Strictly preserve user authentication, portfolio definitions, settings, and broker tokens
         const isPreserved = 
           key === 'tradeontip_user' ||
           key === 'tradeontip_token' ||
@@ -534,84 +544,112 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           key.startsWith('tradeontip_icici_');
 
         if (!isPreserved) {
-          if (
-            key.includes('trade') ||
-            key.includes('monthly_capital') ||
-            key.includes('base_capital') ||
-            key.includes('notes') ||
-            key.includes('tax') ||
-            key.includes('cache') ||
-            key.includes('notification') ||
-            key.includes('foxtrade')
-          ) {
+          const isTargetPortfolioKey = 
+            key.includes(`_${targetPortfolioId}_`) ||
+            key.endsWith(`_${targetPortfolioId}`) ||
+            key.includes(targetPortfolioId) ||
+            (targetPortfolioId === 'portfolio-default' && (
+              key.startsWith('tradeontip_monthly_capital_') ||
+              key.startsWith('tradeontip_ledger_entries_') ||
+              key === 'tradeontip_base_capital'
+            ));
+
+          if (isTargetPortfolioKey) {
             keysToRemove.push(key);
           }
         }
       }
+      keysToRemove.forEach(k => {
+        try { localStorage.removeItem(k); } catch (_) {}
+      });
 
-      keysToRemove.forEach(k => localStorage.removeItem(k));
+      // Explicitly set empty datasets for this portfolio
+      const portfolioTradesKey = user?.uid 
+        ? `tradeontip_trades_v5_${user.uid}_${targetPortfolioId}` 
+        : `tradeontip_trades_v5_${targetPortfolioId}`;
+      try {
+        localStorage.setItem(portfolioTradesKey, JSON.stringify([]));
+        localStorage.setItem('tradeontip_trades_cache', JSON.stringify([]));
+        localStorage.setItem(`tradeontip_monthly_capital_${targetPortfolioId}_2026`, JSON.stringify({}));
+        localStorage.setItem(`tradeontip_ledger_entries_${targetPortfolioId}_2026`, JSON.stringify([]));
+        if (targetPortfolioId === 'portfolio-default') {
+          localStorage.setItem('tradeontip_monthly_capital_2026', JSON.stringify({}));
+          localStorage.setItem('tradeontip_ledger_entries_2026', JSON.stringify([]));
+          localStorage.setItem('tradeontip_base_capital', '0');
+        }
 
-      // Explicitly store empty datasets so on reload it initializes completely empty
-      if (user?.uid) {
-        localStorage.setItem(`tradeontip_trades_v5_${user.uid}`, JSON.stringify([]));
+        // Also clean master cache by filtering out target portfolio
+        const masterKey = user?.uid ? `tradeontip_trades_v5_${user.uid}` : 'tradeontip_trades_v5';
+        const rawMaster = localStorage.getItem(masterKey);
+        if (rawMaster) {
+          const parsedMaster = JSON.parse(rawMaster);
+          if (Array.isArray(parsedMaster)) {
+            const remaining = parsedMaster.filter(t => (t.portfolioId || 'portfolio-default') !== targetPortfolioId);
+            localStorage.setItem(masterKey, JSON.stringify(remaining));
+          } else {
+            localStorage.setItem(masterKey, JSON.stringify([]));
+          }
+        }
+      } catch (_) {}
+
+      // 3. Clear IndexedDB local trade store for this specific portfolio
+      await clearUserTrades(targetPortfolioId).catch(() => {});
+      await clearOpsForPortfolio(targetPortfolioId).catch(() => {});
+      try {
+        const idb = await getDB();
+        if (idb.objectStoreNames.contains(STORES.SYNC_CURSORS)) {
+          await idbDelete(STORES.SYNC_CURSORS, targetPortfolioId).catch(() => {});
+        }
+        if (idb.objectStoreNames.contains(STORES.MONTHLY_PERF)) {
+          await idbDelete(STORES.MONTHLY_PERF, targetPortfolioId).catch(() => {});
+        }
+      } catch (_) {}
+
+      // 4. Hard-clear old foxtrade_db v1 so migration never brings deleted trades back
+      await clearOldV1IDB(user?.uid).catch(() => {});
+
+      // 5. Clear Google Drive backup for this specific portfolio
+      const validDriveToken = accessToken || (await getValidAccessToken().catch(() => null));
+      if (validDriveToken && validDriveToken !== 'demo-token') {
+        await deleteBackupForPortfolio(validDriveToken, targetPortfolioId).catch(err => console.warn('[Drive Clear Error]:', err));
+        await uploadBackupToDrive(validDriveToken, [], targetPortfolioId, true).catch(err => console.warn('[Drive Overwrite Error]:', err));
       }
-      localStorage.setItem('tradeontip_trades_v5', JSON.stringify([]));
-      localStorage.setItem('tradeontip_trades_cache', JSON.stringify([]));
-      localStorage.setItem('tradeontip_data_cleared', 'true');
-      localStorage.setItem('tradeontip_monthly_capital_2026', JSON.stringify({}));
-      localStorage.setItem(`tradeontip_monthly_capital_${activePortfolioId}_2026`, JSON.stringify({}));
-      localStorage.setItem('tradeontip_base_capital', '0');
-      localStorage.setItem('tradeontip_notes', JSON.stringify({}));
-      localStorage.setItem('tradeontip_quick_notes', JSON.stringify([]));
-      localStorage.removeItem('tradeontip_image_cache');
-      localStorage.removeItem('tradeontip_stock_cache');
-      localStorage.removeItem('tradeontip_stock_cache_ts');
-      localStorage.removeItem('tradeontip_notifications');
 
-      // 2. Clear Firestore if user is authenticated (safe catch so permission errors never block)
+      // 6. Clear Firestore if user is authenticated (preserving trades from other portfolios)
       if (user?.uid && !user.uid.startsWith('demo-')) {
         try {
-          await setDoc(doc(db, 'journals', user.uid), {
-            trades: [],
-            notes: {},
-            monthlyTaxes: {},
-            lastUpdated: new Date().toISOString()
-          }, { merge: true }).catch(() => {});
+          const userDocRef = doc(db, 'journals', user.uid);
+          const snap = await getDoc(userDocRef).catch(() => null);
+          if (snap && snap.exists()) {
+            const data = snap.data();
+            const currentFirestoreTrades = Array.isArray(data.trades) ? data.trades : [];
+            const remainingFirestoreTrades = currentFirestoreTrades.filter(t => (t.portfolioId || 'portfolio-default') !== targetPortfolioId);
+            await setDoc(userDocRef, {
+              trades: remainingFirestoreTrades,
+              lastUpdated: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          }
         } catch (_) {}
       }
 
-      // 3. Clear Google Drive backups if connected (purge & overwrite)
-      const validDriveToken = accessToken || (await getValidAccessToken().catch(() => null));
-      if (validDriveToken && validDriveToken !== 'demo-token') {
-        await clearAllDriveBackups(validDriveToken).catch(err => console.warn('[Drive Clear Error]:', err));
-        await uploadBackupToDrive(validDriveToken, [], activePortfolioId, true).catch(err => console.warn('[Drive Clear Error]:', err));
-      }
-
-      // 4. Clear IndexedDB local trade store
-      await clearAllLocalTrades().catch(() => {});
-
-      // 5. Clear active React states
+      // 7. Update active React states immediately
+      lastSavedTradesJsonRef.current = '[]';
       setTrades([]);
       setCapitalChanges({});
       setLiveCMPs({});
       setIsClearDataModalOpen(false);
 
-      // Dispatch capital update event so other open tabs/components sync
+      // 8. Dispatch capital update event so other open tabs/components sync
       window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-        detail: { portfolioId: activePortfolioId, year: '2026', data: {} }
+        detail: { portfolioId: targetPortfolioId, year: '2026', data: {} }
       }));
 
-      // 6. Show success toast notification
+      // 9. Show success toast notification
       setToastNotification({
         type: 'success',
-        title: 'All Data Cleared',
-        description: 'Trading journal, tax, fund management, and notes data have been reset.'
+        title: 'Portfolio Cleared',
+        description: `All trades and data for "${targetPfName}" have been reset.`
       });
-
-      // 7. Cleanly reload to re-initialize clean default state
-      setTimeout(() => {
-        window.location.reload();
-      }, 400);
     } catch (err) {
       console.error('Error clearing data:', err);
       throw err;
@@ -781,24 +819,30 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     if (!user?.uid) { setLoadingTrades(false); return; }
 
     let isMounted = true;
+    const portfolioTradesKey = `tradeontip_trades_v5_${user.uid}_${activePortfolioId}`;
     const userTradesKey = `tradeontip_trades_v5_${user.uid}`;
+    const wasCleared = localStorage.getItem(`tradeontip_cleared_${activePortfolioId}`) === 'true';
 
     // 1. Check local cache first for instant UI response (stale-while-revalidate)
-    const cached = localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
-    let hasCachedTrades = false;
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          hasCachedTrades = true;
-          setTrades(prev => (prev && prev.length > 0 ? prev : parsed));
-        }
-      } catch (_) {}
-    }
+    if (!wasCleared) {
+      const cached = localStorage.getItem(portfolioTradesKey) || localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
+      let hasCachedTrades = false;
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            hasCachedTrades = true;
+            setTrades(prev => (prev && prev.length > 0 ? prev : parsed));
+          }
+        } catch (_) {}
+      }
 
-    // Only set loading to true if we don't already have trades in cache or state
-    if (!hasCachedTrades && (!trades || trades.length === 0)) {
-      setLoadingTrades(true);
+      // Only set loading to true if we don't already have trades in cache or state
+      if (!hasCachedTrades && (!trades || trades.length === 0)) {
+        setLoadingTrades(true);
+      }
+    } else {
+      setTrades([]);
     }
 
     // 2. Load from IndexedDB (or fallback migration / cloud restore)
@@ -806,30 +850,40 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       .then(async (dbTrades) => {
         if (!isMounted) return;
         if (Array.isArray(dbTrades) && dbTrades.length > 0) {
-          setTrades(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(dbTrades)) {
-              return dbTrades;
-            }
-            return prev;
-          });
+          setTrades(dbTrades);
           try {
+            localStorage.setItem(portfolioTradesKey, JSON.stringify(dbTrades));
             localStorage.setItem(userTradesKey, JSON.stringify(dbTrades));
             localStorage.setItem('tradeontip_trades_cache', JSON.stringify(dbTrades));
           } catch (_) {}
-        } else if (accessTokenRef.current) {
-          // If local IDB was empty, check Google Drive backup directly
-          try {
-            const driveTrades = await downloadBackupFromDrive(accessTokenRef.current, activePortfolioId);
-            if (isMounted && Array.isArray(driveTrades) && driveTrades.length > 0) {
-              setTrades(driveTrades);
-              try {
-                localStorage.setItem(userTradesKey, JSON.stringify(driveTrades));
-                localStorage.setItem('tradeontip_trades_cache', JSON.stringify(driveTrades));
-              } catch (_) {}
-              await saveUserTrades(user.uid, driveTrades, activePortfolioId);
+        } else {
+          // Local IDB has 0 trades for this portfolio
+          let restored = false;
+          if (!wasCleared && accessTokenRef.current) {
+            // Only restore from Google Drive if NOT explicitly cleared!
+            try {
+              const driveTrades = await downloadBackupFromDrive(accessTokenRef.current, activePortfolioId);
+              if (isMounted && Array.isArray(driveTrades) && driveTrades.length > 0) {
+                setTrades(driveTrades);
+                try {
+                  localStorage.setItem(portfolioTradesKey, JSON.stringify(driveTrades));
+                  localStorage.setItem(userTradesKey, JSON.stringify(driveTrades));
+                  localStorage.setItem('tradeontip_trades_cache', JSON.stringify(driveTrades));
+                } catch (_) {}
+                await saveUserTrades(user.uid, driveTrades, activePortfolioId);
+                restored = true;
+              }
+            } catch (err) {
+              console.warn('[Google Drive Mount Load Error]:', err);
             }
-          } catch (err) {
-            console.warn('[Google Drive Mount Load Error]:', err);
+          }
+
+          if (!restored && isMounted) {
+            setTrades([]);
+            try {
+              localStorage.setItem(portfolioTradesKey, JSON.stringify([]));
+              localStorage.setItem('tradeontip_trades_cache', JSON.stringify([]));
+            } catch (_) {}
           }
         }
       })

@@ -157,7 +157,7 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
                 lineHeight: 1.3
               }}
             >
-              Clear All Data
+              {portfolioName ? `Clear Portfolio Data: ${portfolioName}` : 'Clear Portfolio Data'}
             </h3>
             <p
               style={{
@@ -168,8 +168,8 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
               }}
             >
               {portfolioName
-                ? `This action will reset your "${portfolioName}" data and cannot be undone.`
-                : 'This action will reset your workspace data and cannot be undone.'}
+                ? `This action will permanently clear trades and records in "${portfolioName}".`
+                : 'This action will permanently reset trades and records for this portfolio.'}
             </p>
           </div>
         </div>
@@ -187,7 +187,7 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
           }}
         >
           <div style={{ fontWeight: 600, color: 'var(--text-primary, #111827)', marginBottom: '6px' }}>
-            This will clear ALL your data including:
+            This will clear data for {portfolioName ? `"${portfolioName}"` : 'this portfolio'} including:
           </div>
           <ul
             style={{
@@ -199,11 +199,9 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
               gap: '3px'
             }}
           >
-            <li>Trading journal</li>
-            <li>Tax data</li>
-            <li>Fund Management data</li>
-            <li>Notes</li>
-            <li>Cache and stored images</li>
+            <li>Trading journal trades for this portfolio</li>
+            <li>Fund management and capital records</li>
+            <li>Tax & performance calculation cache</li>
           </ul>
           <div
             style={{
@@ -215,7 +213,7 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
               fontStyle: 'italic'
             }}
           >
-            Only portfolio structure and broker tokens will be preserved.
+            Other portfolios, portfolio profiles, and broker connections will be preserved.
           </div>
         </div>
 
@@ -375,7 +373,7 @@ export default function ClearAllDataModal({ isOpen, onClose, onConfirm, portfoli
             }}
           >
             <Trash2 size={14} color="#ffffff" />
-            <span>{isSubmitting ? 'Deleting...' : 'Delete'}</span>
+            <span>{isSubmitting ? 'Deleting...' : 'Delete & Clear'}</span>
           </button>
         </div>
       </div>
