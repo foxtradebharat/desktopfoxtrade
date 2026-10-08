@@ -1586,7 +1586,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       return acc;
     }, 0);
 
-    const riskDenominator = currentPfCapital > 0 ? currentPfCapital : (baseFundCapital > 0 ? baseFundCapital : 0);
+    const riskDenominator = currentPfCapital > 0 ? currentPfCapital : 0;
     const capitalAtRiskPct = riskDenominator > 0
       ? ((totalRisk / riskDenominator) * 100).toFixed(2)
       : '0.00';
@@ -1633,8 +1633,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       : '0.00';
 
     // ── Gross PF Impact % (All-Time): Compounded CAGR from Fund Management ──
-    const grossPFImpact = (baseFundCapital > 0 && grossRealizedPL !== 0)
-      ? ((grossRealizedPL / baseFundCapital) * 100).toFixed(2)
+    const grossPFImpact = (currentPfCapital > 0 && grossRealizedPL !== 0)
+      ? ((grossRealizedPL / currentPfCapital) * 100).toFixed(2)
       : '0.00';
 
     // ── Current Drawdown (Realized): Daily cash-flow-adjusted calculation against true peak equity ──
