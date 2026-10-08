@@ -940,17 +940,52 @@ export async function loadFromDrive(portfolioId, accessToken) {
     if (payload.fundManagement && typeof payload.fundManagement === 'object') {
       try {
         await setConfig(`fund_management_${portfolioId}`, payload.fundManagement).catch(() => {});
+        const sourcePid = payload.portfolioId;
+
+        const remapFundKey = (k) => {
+          if (!k) return k;
+          const monthlyMatch = k.match(/^tradeontip_monthly_capital_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
+          if (monthlyMatch) {
+            return `tradeontip_monthly_capital_${portfolioId}_${monthlyMatch[2]}${monthlyMatch[3] || ''}`;
+          }
+          const ledgerMatch = k.match(/^tradeontip_ledger_entries_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
+          if (ledgerMatch) {
+            return `tradeontip_ledger_entries_${portfolioId}_${ledgerMatch[2]}${ledgerMatch[3] || ''}`;
+          }
+          if (sourcePid && k.includes(sourcePid)) {
+            return k.replace(sourcePid, portfolioId);
+          }
+          return k;
+        };
+
         Object.entries(payload.fundManagement).forEach(([key, val]) => {
           if (key && val) {
-            localStorage.setItem(key, JSON.stringify(val));
+            const targetKey = remapFundKey(key);
+            let remappedVal = val;
+            if (Array.isArray(val) && targetKey.includes('tradeontip_ledger_entries_')) {
+              remappedVal = val.map((entry, idx) => ({
+                ...entry,
+                id: entry.id ? `${entry.id.replace(/portfolio-[a-zA-Z0-9_-]+/, portfolioId)}` : `entry_${portfolioId}_${idx}`,
+                portfolioId
+              }));
+            }
+            localStorage.setItem(targetKey, JSON.stringify(remappedVal));
           }
         });
+
         if (payload.baseCapital && Number(payload.baseCapital) > 0) {
-          localStorage.setItem('tradeontip_base_capital', String(payload.baseCapital));
+          localStorage.setItem(`tradeontip_base_capital_${portfolioId}`, String(payload.baseCapital));
+          if (portfolioId === 'portfolio-default') {
+            localStorage.setItem('tradeontip_base_capital', String(payload.baseCapital));
+          }
           await setConfig(`base_capital_${portfolioId}`, Number(payload.baseCapital)).catch(() => {});
         }
+
+        const currentMonthly = JSON.parse(
+          localStorage.getItem(`tradeontip_monthly_capital_${portfolioId}_2026`) || '{}'
+        );
         window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-          detail: { portfolioId, year: '2026', data: payload.fundManagement[`tradeontip_monthly_capital_${portfolioId}_2026`] || {} }
+          detail: { portfolioId, year: '2026', data: currentMonthly }
         }));
       } catch (e) {
         console.warn('[SyncEngine] Restore fund management failed:', e);

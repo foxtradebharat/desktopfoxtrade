@@ -484,16 +484,25 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
   let baseCapital = Number(options?.baseCapital || 0);
   if (!(baseCapital > 0)) {
     try {
-      const activePfId = (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || options?.portfolioId || 'portfolio-default';
-      const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
-      if (rawPortfolios) {
-        const pfs = JSON.parse(rawPortfolios);
-        const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
-        if (match && Number(match.baseCapital) > 0) {
-          baseCapital = Number(match.baseCapital);
+      const activePfId = options?.portfolioId || portfolioId || (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default';
+      // 1. Check portfolio-specific base capital first
+      if (typeof localStorage !== 'undefined') {
+        const pfSaved = Number(localStorage.getItem(`tradeontip_base_capital_${activePfId}`) || 0);
+        if (pfSaved > 0) baseCapital = pfSaved;
+      }
+      // 2. Check portfolio entry in tradeontip_portfolios
+      if (!(baseCapital > 0)) {
+        const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
+        if (rawPortfolios) {
+          const pfs = JSON.parse(rawPortfolios);
+          const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
+          if (match && Number(match.baseCapital) > 0) {
+            baseCapital = Number(match.baseCapital);
+          }
         }
       }
-      if (!(baseCapital > 0) && typeof localStorage !== 'undefined') {
+      // 3. Fallback to global tradeontip_base_capital ONLY for portfolio-default
+      if (!(baseCapital > 0) && activePfId === 'portfolio-default' && typeof localStorage !== 'undefined') {
         const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
         if (saved > 0) baseCapital = saved;
       }
@@ -1088,16 +1097,25 @@ export function getCapital(optionsOrTrades = {}, maybeBaseCapital = 0, maybeCapi
   // 1. Resolve Base Capital fallback if baseCapital is not provided / <= 0
   if (!(baseCapital > 0)) {
     try {
-      const activePfId = (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || portfolioId;
-      const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
-      if (rawPortfolios) {
-        const pfs = JSON.parse(rawPortfolios);
-        const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
-        if (match && Number(match.baseCapital) > 0) {
-          baseCapital = Number(match.baseCapital);
+      const activePfId = portfolioId || (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default';
+      // 1. Check portfolio-specific base capital first
+      if (typeof localStorage !== 'undefined') {
+        const pfSaved = Number(localStorage.getItem(`tradeontip_base_capital_${activePfId}`) || 0);
+        if (pfSaved > 0) baseCapital = pfSaved;
+      }
+      // 2. Check portfolio entry in tradeontip_portfolios
+      if (!(baseCapital > 0)) {
+        const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
+        if (rawPortfolios) {
+          const pfs = JSON.parse(rawPortfolios);
+          const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
+          if (match && Number(match.baseCapital) > 0) {
+            baseCapital = Number(match.baseCapital);
+          }
         }
       }
-      if (!(baseCapital > 0) && typeof localStorage !== 'undefined') {
+      // 3. Fallback to global tradeontip_base_capital ONLY for portfolio-default
+      if (!(baseCapital > 0) && activePfId === 'portfolio-default' && typeof localStorage !== 'undefined') {
         const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
         if (saved > 0) baseCapital = saved;
       }

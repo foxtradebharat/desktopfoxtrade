@@ -607,30 +607,109 @@ export default function RestoreBackupModal({
 
       // 2. MONTHLY PERFORMANCE & FUND MANAGEMENT STRATEGY
       if (monthlyStrategy !== 'skip') {
-        // Fund management monthly capital entries
+        const sourcePortfolioId = backupPayload?.portfolioId;
+
+        // Dynamic key remapper: maps any source portfolio ID or un-scoped key to targetPortfolio
+        const remapFundKeyToTarget = (key) => {
+          if (!key) return key;
+          // Handle monthly capital keys
+          const monthlyMatch = key.match(/^tradeontip_monthly_capital_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
+          if (monthlyMatch) {
+            const yr = monthlyMatch[2];
+            const suffix = monthlyMatch[3] || '';
+            return `tradeontip_monthly_capital_${targetPortfolio}_${yr}${suffix}`;
+          }
+          // Handle ledger entries keys
+          const ledgerMatch = key.match(/^tradeontip_ledger_entries_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
+          if (ledgerMatch) {
+            const yr = ledgerMatch[2];
+            const suffix = ledgerMatch[3] || '';
+            return `tradeontip_ledger_entries_${targetPortfolio}_${yr}${suffix}`;
+          }
+          // Generic replacement if source portfolio ID is present
+          if (sourcePortfolioId && key.includes(sourcePortfolioId)) {
+            return key.replace(sourcePortfolioId, targetPortfolio);
+          }
+          return key;
+        };
+
+        // Fund management monthly capital and ledger entries
         if (backupPayload?.fundManagement && typeof backupPayload.fundManagement === 'object') {
           Object.entries(backupPayload.fundManagement).forEach(([k, v]) => {
+            const targetKey = remapFundKeyToTarget(k);
+            let remappedValue = v;
+
+            // Remap inner portfolioId in ledger entries
+            if (Array.isArray(v) && targetKey.includes('tradeontip_ledger_entries_')) {
+              remappedValue = v.map((entry, idx) => ({
+                ...entry,
+                id: entry.id ? `${entry.id.replace(/portfolio-[a-zA-Z0-9_-]+/, targetPortfolio)}` : `entry_${targetPortfolio}_${idx}`,
+                portfolioId: targetPortfolio
+              }));
+            }
+
             if (monthlyStrategy === 'overwrite') {
-              localStorage.setItem(k, JSON.stringify(v));
+              localStorage.setItem(targetKey, JSON.stringify(remappedValue));
             } else if (monthlyStrategy === 'merge') {
               try {
-                const existing = JSON.parse(localStorage.getItem(k) || '{}');
-                localStorage.setItem(k, JSON.stringify({ ...v, ...existing }));
+                const existing = JSON.parse(localStorage.getItem(targetKey) || (Array.isArray(remappedValue) ? '[]' : '{}'));
+                if (Array.isArray(remappedValue)) {
+                  // Merge ledger arrays uniquely by id/date/amount
+                  const existingList = Array.isArray(existing) ? existing : [];
+                  const seen = new Set(existingList.map(e => `${e.date}_${e.amount}_${e.type}`));
+                  const combined = [...existingList];
+                  remappedValue.forEach(entry => {
+                    const key = `${entry.date}_${entry.amount}_${entry.type}`;
+                    if (!seen.has(key)) {
+                      seen.add(key);
+                      combined.push(entry);
+                    }
+                  });
+                  localStorage.setItem(targetKey, JSON.stringify(combined));
+                } else {
+                  localStorage.setItem(targetKey, JSON.stringify({ ...remappedValue, ...existing }));
+                }
               } catch (_) {
-                localStorage.setItem(k, JSON.stringify(v));
+                localStorage.setItem(targetKey, JSON.stringify(remappedValue));
               }
             }
           });
+        } else if (backupPayload?.capitalChanges && typeof backupPayload.capitalChanges === 'object') {
+          // Backward-compatibility: restore from dashboard exported JSON
+          const curYear = '2026';
+          const targetMonthlyKey = `tradeontip_monthly_capital_${targetPortfolio}_${curYear}`;
+          localStorage.setItem(targetMonthlyKey, JSON.stringify(backupPayload.capitalChanges));
         }
-        if (backupPayload?.baseCapital && Number(backupPayload.baseCapital) > 0) {
-          localStorage.setItem('tradeontip_base_capital', String(backupPayload.baseCapital));
-          await setBaseCapital(targetPortfolio, Number(backupPayload.baseCapital)).catch(() => {});
+
+        // Base capital restore
+        const restoredBaseCap = Number(
+          backupPayload?.baseCapital || 
+          backupPayload?.portfolios?.find(p => p.id === sourcePortfolioId || p.id === targetPortfolio)?.baseCapital || 
+          0
+        );
+        if (restoredBaseCap > 0) {
+          localStorage.setItem(`tradeontip_base_capital_${targetPortfolio}`, String(restoredBaseCap));
+          if (targetPortfolio === 'portfolio-default') {
+            localStorage.setItem('tradeontip_base_capital', String(restoredBaseCap));
+          }
+          await setBaseCapital(targetPortfolio, restoredBaseCap).catch(() => {});
+          
+          // Update portfolio registry in localStorage
+          try {
+            const rawPfs = localStorage.getItem('tradeontip_portfolios');
+            if (rawPfs) {
+              const pfs = JSON.parse(rawPfs);
+              const updatedPfs = pfs.map(p => p.id === targetPortfolio ? { ...p, baseCapital: restoredBaseCap } : p);
+              localStorage.setItem('tradeontip_portfolios', JSON.stringify(updatedPfs));
+            }
+          } catch (_) {}
         }
+
         // Dedicated monthly performance records
         if (Array.isArray(backupPayload?.monthlyPerf)) {
           for (const item of backupPayload.monthlyPerf) {
             if (item && item.year && item.data) {
-              const pid = item.portfolioId || targetPortfolio;
+              const pid = targetPortfolio;
               if (monthlyStrategy === 'overwrite') {
                 await setMonthlyPerf(pid, item.year, item.data).catch(() => {});
               } else if (monthlyStrategy === 'merge') {
@@ -641,8 +720,12 @@ export default function RestoreBackupModal({
             }
           }
         }
+
+        const restoredMonthlyData = JSON.parse(
+          localStorage.getItem(`tradeontip_monthly_capital_${targetPortfolio}_2026`) || '{}'
+        );
         window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-          detail: { portfolioId: targetPortfolio, year: '2026', data: backupPayload?.fundManagement?.[`tradeontip_monthly_capital_${targetPortfolio}_2026`] || {} }
+          detail: { portfolioId: targetPortfolio, year: '2026', data: restoredMonthlyData }
         }));
       }
 
@@ -747,11 +830,21 @@ export default function RestoreBackupModal({
         throw new Error('No trade entries found in this backup');
       }
 
-      // Re-map remote trades to targetPortfolio to prevent cross-portfolio scoping mismatches
-      const remappedRemoteTrades = remoteTrades.map(t => ({
-        ...t,
-        portfolioId: targetPortfolio,
-      }));
+      // Re-map remote trades to targetPortfolio and ensure primary keys are scoped
+      const sourcePortfolioId = backupPayload?.portfolioId;
+      const remappedRemoteTrades = remoteTrades.map((t, idx) => {
+        let cleanId = t.id || `trade-restore-${Date.now()}-${idx}`;
+        if (sourcePortfolioId && sourcePortfolioId !== targetPortfolio && cleanId.includes(sourcePortfolioId)) {
+          cleanId = cleanId.replace(sourcePortfolioId, targetPortfolio);
+        } else if (sourcePortfolioId && sourcePortfolioId !== targetPortfolio && !cleanId.startsWith(`${targetPortfolio}_`)) {
+          cleanId = `${targetPortfolio}_${cleanId}`;
+        }
+        return {
+          ...t,
+          id: cleanId,
+          portfolioId: targetPortfolio,
+        };
+      });
 
       let finalTradesToSave = currentTrades;
       if (journalStrategy === 'merge') {

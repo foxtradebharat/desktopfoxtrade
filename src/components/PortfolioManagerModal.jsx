@@ -14,6 +14,7 @@ import {
   Layers 
 } from 'lucide-react';
 import PortfolioIcon from './PortfolioIcon';
+import { setBaseCapital } from '../db/configStore';
 
 const PORTFOLIOS_STORAGE_KEY = 'tradeontip_portfolios';
 const ACTIVE_PORTFOLIO_KEY = 'tradeontip_active_portfolio_id';
@@ -68,6 +69,7 @@ export default function PortfolioManagerModal({
   // Form states
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [baseCapitalInput, setBaseCapitalInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export default function PortfolioManagerModal({
       setActiveTab('list');
       setName('');
       setDescription('');
+      setBaseCapitalInput('');
       setErrorMsg('');
       setMenuOpenId(null);
     }
@@ -97,14 +100,22 @@ export default function PortfolioManagerModal({
       year: 'numeric'
     });
 
+    const parsedCap = Number(baseCapitalInput.trim() || 0);
+
     const newPortfolio = {
       id: `portfolio-${Date.now()}`,
       name: name.trim(),
       description: description.trim() || 'No description provided.',
-      baseCapital: 100000,
+      baseCapital: parsedCap,
       currency: 'INR',
       createdAt: todayDate
     };
+
+    // Store portfolio-specific base capital cleanly
+    try {
+      localStorage.setItem(`tradeontip_base_capital_${newPortfolio.id}`, String(parsedCap));
+      setBaseCapital(newPortfolio.id, parsedCap).catch(() => {});
+    } catch (_) {}
 
     // Clean local cache for this new portfolio ID before selecting it so it starts completely fresh
     try {
@@ -634,6 +645,29 @@ export default function PortfolioManagerModal({
                       placeholder="Optional brief description"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid var(--border-color, #e4e4e7)',
+                        backgroundColor: 'var(--bg-card, #ffffff)',
+                        color: 'var(--text-primary, #18181b)',
+                        fontSize: '13px',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted, #71717a)', marginBottom: '6px' }}>
+                      STARTING CAPITAL (₹)
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="0 (or enter initial capital)"
+                      value={baseCapitalInput}
+                      onChange={(e) => setBaseCapitalInput(e.target.value)}
                       style={{
                         width: '100%',
                         padding: '10px 14px',

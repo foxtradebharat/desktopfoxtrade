@@ -243,18 +243,50 @@ export default function ExportDropdown({
     }
   };
 
-  // 3. Export Comprehensive Backup (JSON)
-  const handleExportJSON = () => {
-    setIsOpen(false);
-    const backupData = {
-      version: '1.0.0',
+  // Helper to assemble comprehensive, canonical FoxTrade backup payload
+  const buildCanonicalBackupPayload = () => {
+    const activePid = (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default';
+    const fundManagement = {};
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (
+          k.startsWith(`tradeontip_monthly_capital_${activePid}_`) || 
+          k.startsWith(`tradeontip_ledger_entries_${activePid}_`) ||
+          (activePid === 'portfolio-default' && (k.startsWith('tradeontip_monthly_capital_') || k.startsWith('tradeontip_ledger_entries_')))
+        )) {
+          try {
+            fundManagement[k] = JSON.parse(localStorage.getItem(k));
+          } catch (_) {}
+        }
+      }
+    }
+    const baseCap = Number(
+      (typeof localStorage !== 'undefined' && localStorage.getItem(`tradeontip_base_capital_${activePid}`)) ||
+      (portfolios.find(p => p.id === activePid)?.baseCapital) ||
+      (activePid === 'portfolio-default' ? localStorage.getItem('tradeontip_base_capital') : 0) ||
+      0
+    );
+
+    return {
+      version: '3.0',
+      schemaVersion: 3,
+      portfolioId: activePid,
       exportedAt: new Date().toISOString(),
       source: 'FoxTrade Indian Equity Trading Journal',
       trades,
       portfolios,
-      capitalChanges,
+      fundManagement,
+      baseCapital: baseCap,
+      capitalChanges, // Kept for backwards compatibility with v1 parsers
       settings
     };
+  };
+
+  // 3. Export Comprehensive Backup (JSON)
+  const handleExportJSON = () => {
+    setIsOpen(false);
+    const backupData = buildCanonicalBackupPayload();
 
     const jsonStr = JSON.stringify(backupData, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
@@ -271,15 +303,7 @@ export default function ExportDropdown({
   // 4. Export Comprehensive Backup (JSON.GZ)
   const handleExportJSONGZ = async () => {
     setIsOpen(false);
-    const backupData = {
-      version: '1.0.0',
-      exportedAt: new Date().toISOString(),
-      source: 'FoxTrade Indian Equity Trading Journal',
-      trades,
-      portfolios,
-      capitalChanges,
-      settings
-    };
+    const backupData = buildCanonicalBackupPayload();
 
     const jsonStr = JSON.stringify(backupData, null, 2);
 

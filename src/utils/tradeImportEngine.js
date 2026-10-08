@@ -644,6 +644,7 @@ export async function parseTradesFromFile(fileInput, options = {}) {
     const idxBookedPnL    = getIndex(['BOOKED P/L', 'BOOKEDPL', 'BOOKED PNL']);
     const idxCurrentAlloc = getIndex(['CURRENT ALLOCATION (%)', 'CURRENTALLOCATION', 'CURRENT ALLOCATION', 'CURRENTALLOC']);
 
+    const seenBatchIds = new Set();
     for (let i = 0; i < dataRows.length; i++) {
       const cols = dataRows[i];
       const rawName = idxSymbol !== -1 ? String(cols[idxSymbol] || '').trim() : '';
@@ -760,12 +761,26 @@ export async function parseTradesFromFile(fileInput, options = {}) {
       const brokerVal = normalizeBrokerId(rawBroker) || rawBroker;
       const txHistVal = idxTransactionHistory !== -1 && cols[idxTransactionHistory] ? String(cols[idxTransactionHistory]).trim() : undefined;
 
-      const cleanId = (explicitId && !['buy', 'sell', 'true', 'false'].includes(explicitId.toLowerCase()) && explicitId.length > 3)
+      const rawCleanId = (explicitId && !['buy', 'sell', 'true', 'false'].includes(explicitId.toLowerCase()) && explicitId.length > 3)
         ? explicitId
         : `trade_${Date.now()}_${i}`;
 
+      let scopedId = rawCleanId;
+      if (activePortfolioId && !scopedId.startsWith(`${activePortfolioId}_`)) {
+        scopedId = `${activePortfolioId}_${scopedId}`;
+      }
+
+      // Guarantee unique primary key within batch if duplicate IDs exist in the source file
+      let uniqueId = scopedId;
+      let dupIndex = 1;
+      while (seenBatchIds.has(uniqueId)) {
+        dupIndex++;
+        uniqueId = `${scopedId}_dup${dupIndex}`;
+      }
+      seenBatchIds.add(uniqueId);
+
       const rawTrade = {
-        id: cleanId,
+        id: uniqueId,
         tradeNo: isNaN(tradeNoVal) ? (startingTradeNo + i) : tradeNoVal,
         portfolioId: activePortfolioId,
         allExchangeTradeIds: exchangeTradeIdsVal,
