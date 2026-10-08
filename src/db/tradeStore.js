@@ -18,6 +18,7 @@ import { getDB, STORES, idbGet, idbPut, idbDelete, idbGetByIndex, idbBulkPut } f
 import { enqueue } from './operationsQueue.js';
 import { getDeviceId } from './configStore.js';
 import { normalizeBrokerId } from '../utils/brokerIds.js';
+import { buildTradeSignatureKey, extractTradeIdentifiers } from '../utils/tradeDeduplicationEngine.js';
 
 // ── Internal: build IDB-ready trade record ────────────────────────────────────
 
@@ -91,17 +92,173 @@ export async function putTrade(portfolioId, trade) {
 }
 
 /**
+ * Automatically deduplicate trades for a portfolio based on canonical content signature and exchange IDs.
+ * Purges obsolete duplicate IDs from STORES.TRADES in IndexedDB and re-sequences tradeNo cleanly (1..N).
+ *
+ * @param {object[]} trades
+ * @param {string} portfolioId
+ * @returns {Promise<object[]>}
+ */
+export async function deduplicateTradeRecords(trades = [], portfolioId) {
+  if (!Array.isArray(trades) || trades.length <= 1) {
+    return Array.isArray(trades) ? trades.map((t, i) => ({ ...t, tradeNo: t.tradeNo || (i + 1) })) : [];
+  }
+
+  const targetPid = portfolioId || 'portfolio-default';
+  const sigMap = new Map();
+  const idMap = new Map();
+  const obsoleteIds = new Set();
+
+  for (const t of trades) {
+    if (!t) continue;
+    const tPid = t.portfolioId || 'portfolio-default';
+    if (tPid !== targetPid && targetPid !== 'all') {
+      continue;
+    }
+
+    const directId = t.id || t.uid;
+    const sig = buildTradeSignatureKey(t) || directId;
+    const identifiers = extractTradeIdentifiers(t);
+
+    let matchKey = null;
+    let existing = null;
+
+    if (directId && idMap.has(directId)) {
+      matchKey = idMap.get(directId);
+      existing = sigMap.get(matchKey);
+    } else {
+      for (const ident of identifiers) {
+        if (idMap.has(ident)) {
+          matchKey = idMap.get(ident);
+          existing = sigMap.get(matchKey);
+          break;
+        }
+      }
+    }
+
+    if (!existing && sigMap.has(sig)) {
+      matchKey = sig;
+      existing = sigMap.get(sig);
+    }
+
+    if (!existing) {
+      const canonicalKey = sig || directId || `tmp-${Math.random()}`;
+      sigMap.set(canonicalKey, t);
+      if (directId) idMap.set(directId, canonicalKey);
+      identifiers.forEach(ident => idMap.set(ident, canonicalKey));
+    } else {
+      // Conflict / duplicate found: resolve winner
+      const exTs = existing.clientUpdatedAt || existing.updatedAt || 0;
+      const tTs = t.clientUpdatedAt || t.updatedAt || 0;
+      const hasRealBroker = t.broker && t.broker !== 'not_defined';
+      const exHasRealBroker = existing.broker && existing.broker !== 'not_defined';
+
+      let winner = existing;
+      let loser = t;
+
+      if (hasRealBroker && !exHasRealBroker) {
+        winner = t;
+        loser = existing;
+      } else if (!hasRealBroker && exHasRealBroker) {
+        winner = existing;
+        loser = t;
+      } else if (tTs > exTs) {
+        winner = t;
+        loser = existing;
+      }
+
+      // Preserve stable ID
+      const chosenId = (existing.id && !existing.id.startsWith('trade-import-') && !existing.id.startsWith('trade-'))
+        ? existing.id
+        : (winner.id || existing.id);
+
+      // Preserve exit details if one has exits and the other does not
+      const winnerHasExit = winner.status === 'Closed' || winner.avgExitPrice > 0 || winner.e1Price > 0;
+      const loserHasExit = loser.status === 'Closed' || loser.avgExitPrice > 0 || loser.e1Price > 0;
+      const exitFields = (!winnerHasExit && loserHasExit) ? {
+        status: loser.status,
+        avgExitPrice: loser.avgExitPrice,
+        exitDate: loser.exitDate,
+        e1Price: loser.e1Price,
+        e1Qty: loser.e1Qty,
+        e1Date: loser.e1Date,
+        pnl: loser.pnl,
+        grossPnl: loser.grossPnl,
+        netPnl: loser.netPnl,
+        netPaise: loser.netPaise
+      } : {};
+
+      const combinedExIds = Array.from(new Set([
+        ...(Array.isArray(existing.allExchangeTradeIds) ? existing.allExchangeTradeIds : []),
+        ...(Array.isArray(t.allExchangeTradeIds) ? t.allExchangeTradeIds : [])
+      ]));
+
+      const merged = {
+        ...loser,
+        ...winner,
+        ...exitFields,
+        id: chosenId,
+        portfolioId: targetPid,
+        allExchangeTradeIds: combinedExIds
+      };
+
+      sigMap.set(matchKey, merged);
+
+      if (loser.id && loser.id !== chosenId) {
+        obsoleteIds.add(loser.id);
+      }
+      if (winner.id && winner.id !== chosenId) {
+        obsoleteIds.add(winner.id);
+      }
+    }
+  }
+
+  // Purge obsolete duplicate IDs from IndexedDB
+  if (obsoleteIds.size > 0) {
+    try {
+      const db = await getDB();
+      const tx = db.transaction(STORES.TRADES, 'readwrite');
+      const st = tx.objectStore(STORES.TRADES);
+      obsoleteIds.forEach(id => st.delete(id));
+      await new Promise((resolve) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+      console.log(`[tradeStore] Purged ${obsoleteIds.size} duplicate trade records from IndexedDB`);
+    } catch (_) {}
+  }
+
+  // Resequence sequentially 1..N
+  const result = Array.from(sigMap.values())
+    .sort((a, b) => {
+      const dateA = a.date || a.entryDate || '';
+      const dateB = b.date || b.entryDate || '';
+      if (dateA && dateB && dateA !== dateB) {
+        const dA = new Date(dateA).getTime();
+        const dB = new Date(dateB).getTime();
+        if (!isNaN(dA) && !isNaN(dB)) return dA - dB;
+      }
+      return (a.tradeNo ?? 0) - (b.tradeNo ?? 0);
+    })
+    .map((t, idx) => ({
+      ...t,
+      tradeNo: idx + 1
+    }));
+
+  return result;
+}
+
+/**
  * Get all active (non-deleted) trades for a portfolio.
- * Sorted by tradeNo ascending (same order as the journal table).
+ * Automatically deduplicated and sequentially numbered.
  *
  * @param {string} portfolioId
  * @returns {Promise<object[]>}
  */
 export async function getTrades(portfolioId) {
   const all = await idbGetByIndex(STORES.TRADES, 'portfolioId', portfolioId);
-  return all
-    .filter(t => !t.deletedAt)
-    .sort((a, b) => (a.tradeNo ?? 0) - (b.tradeNo ?? 0));
+  const active = all.filter(t => !t.deletedAt);
+  return deduplicateTradeRecords(active, portfolioId);
 }
 
 /**
@@ -113,7 +270,7 @@ export async function getTrades(portfolioId) {
  */
 export async function getTradesWithDeleted(portfolioId) {
   const all = await idbGetByIndex(STORES.TRADES, 'portfolioId', portfolioId);
-  return all.sort((a, b) => (a.tradeNo ?? 0) - (b.tradeNo ?? 0));
+  return deduplicateTradeRecords(all, portfolioId);
 }
 
 /**
@@ -202,7 +359,9 @@ export async function bulkPutTrades(portfolioId, trades, skipQueue = false) {
   const deviceId = await getDeviceId();
   const now      = Date.now();
 
-  const records = trades.map(trade => ({
+  const dedupedTrades = await deduplicateTradeRecords(trades, portfolioId);
+
+  const records = dedupedTrades.map(trade => ({
     ...trade,
     id:              trade.id || trade.uid || `trade-${portfolioId}-${now}-${Math.random().toString(36).slice(2, 7)}`,
     portfolioId,

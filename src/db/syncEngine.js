@@ -57,6 +57,7 @@ import {
   subscribeToTokenUpdate,
 } from './tokenManager.js';
 import { getDriveClient, subscribeToDriveStatus } from '../services/driveClient.js';
+import { buildTradeSignatureKey, extractTradeIdentifiers } from '../utils/tradeDeduplicationEngine.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -311,38 +312,131 @@ async function findBackupFile(accessToken, fileName) {
  * @param {object[]} remote — trades from Drive backup
  * @returns {object[]} merged trade array
  */
-export function mergeTradeArrays(local, remote) {
-  const map = new Map();
+export function mergeTradeArrays(local = [], remote = []) {
+  const localList = Array.isArray(local) ? local : [];
+  const remoteList = Array.isArray(remote) ? remote : [];
 
-  // Seed with local
-  for (const t of local) map.set(t.id, t);
+  const idMap = new Map();
+  const identMap = new Map();
 
-  // Merge remote
-  for (const remoteTrade of remote) {
-    const localTrade = map.get(remoteTrade.id);
-
-    if (!localTrade) {
-      // New trade from other device — include it
-      map.set(remoteTrade.id, remoteTrade);
-      continue;
-    }
-
-    const localTs  = localTrade.clientUpdatedAt  || localTrade.updatedAt  || 0;
-    const remoteTs = remoteTrade.clientUpdatedAt || remoteTrade.updatedAt || 0;
+  function resolveWinner(a, b) {
+    if (!a) return b;
+    if (!b) return a;
 
     // Deletion always wins (tombstone propagation)
-    const winner = (remoteTrade.deletedAt && !localTrade.deletedAt)
-      ? { ...localTrade, deletedAt: remoteTrade.deletedAt }
-      : (localTrade.deletedAt && !remoteTrade.deletedAt)
-        ? localTrade
-        : remoteTs > localTs
-          ? remoteTrade
-          : localTrade;
+    if (a.deletedAt || b.deletedAt) {
+      return {
+        ...a,
+        ...b,
+        deletedAt: a.deletedAt || b.deletedAt,
+        version: Math.max(a.version || 1, b.version || 1) + 1
+      };
+    }
 
-    map.set(remoteTrade.id, winner);
+    const aTs = a.clientUpdatedAt || a.updatedAt || 0;
+    const bTs = b.clientUpdatedAt || b.updatedAt || 0;
+    const baseWinner = bTs > aTs ? b : a;
+    const secondary = bTs > aTs ? a : b;
+
+    // Preserve non-empty broker
+    const broker = (baseWinner.broker && baseWinner.broker !== 'not_defined')
+      ? baseWinner.broker
+      : (secondary.broker && secondary.broker !== 'not_defined') ? secondary.broker : baseWinner.broker;
+
+    // Preserve exit details if one has exits and the other does not
+    const hasExit = baseWinner.status === 'Closed' || baseWinner.avgExitPrice > 0 || baseWinner.e1Price > 0;
+    const secHasExit = secondary.status === 'Closed' || secondary.avgExitPrice > 0 || secondary.e1Price > 0;
+    const exitData = (!hasExit && secHasExit) ? {
+      status: secondary.status,
+      avgExitPrice: secondary.avgExitPrice,
+      exitDate: secondary.exitDate,
+      e1Price: secondary.e1Price,
+      e1Qty: secondary.e1Qty,
+      e1Date: secondary.e1Date,
+      pnl: secondary.pnl,
+      grossPnl: secondary.grossPnl,
+      netPnl: secondary.netPnl,
+      netPaise: secondary.netPaise
+    } : {};
+
+    // Combine exchange IDs
+    const exIds = new Set([
+      ...(Array.isArray(a.allExchangeTradeIds) ? a.allExchangeTradeIds : []),
+      ...(Array.isArray(b.allExchangeTradeIds) ? b.allExchangeTradeIds : [])
+    ]);
+
+    const chosenId = (a.id && !a.id.startsWith('trade-import-')) ? a.id : b.id;
+
+    return {
+      ...secondary,
+      ...baseWinner,
+      ...exitData,
+      broker,
+      allExchangeTradeIds: Array.from(exIds),
+      id: chosenId
+    };
   }
 
-  return Array.from(map.values());
+  function register(trade) {
+    if (!trade) return;
+    const id = trade.id || trade.uid;
+    if (id) idMap.set(id, trade);
+
+    const idents = extractTradeIdentifiers(trade);
+    idents.forEach(ident => {
+      identMap.set(ident, trade);
+    });
+  }
+
+  function findMatch(trade) {
+    if (!trade) return null;
+    const id = trade.id || trade.uid;
+    if (id && idMap.has(id)) return idMap.get(id);
+
+    const idents = extractTradeIdentifiers(trade);
+    for (const ident of idents) {
+      if (identMap.has(ident)) return identMap.get(ident);
+    }
+    return null;
+  }
+
+  // 1. Seed local
+  for (const t of localList) {
+    const existing = findMatch(t);
+    if (!existing) {
+      register(t);
+    } else {
+      const winner = resolveWinner(existing, t);
+      if (existing.id && existing.id !== winner.id) idMap.delete(existing.id);
+      register(winner);
+    }
+  }
+
+  // 2. Merge remote
+  for (const rt of remoteList) {
+    const existing = findMatch(rt);
+    if (!existing) {
+      register(rt);
+    } else {
+      const winner = resolveWinner(existing, rt);
+      if (existing.id && existing.id !== winner.id) idMap.delete(existing.id);
+      register(winner);
+    }
+  }
+
+  // Final pass: ensure strict uniqueness by signature to prevent any duplicate entries
+  const dedupedMap = new Map();
+  for (const trade of idMap.values()) {
+    const sig = buildTradeSignatureKey(trade) || trade.id;
+    if (!dedupedMap.has(sig)) {
+      dedupedMap.set(sig, trade);
+    } else {
+      const winner = resolveWinner(dedupedMap.get(sig), trade);
+      dedupedMap.set(sig, winner);
+    }
+  }
+
+  return Array.from(dedupedMap.values());
 }
 
 /**
