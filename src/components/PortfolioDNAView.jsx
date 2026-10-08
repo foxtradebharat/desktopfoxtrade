@@ -118,9 +118,9 @@ export default function PortfolioDNAView({
     return (trades || []).filter(t => (t.status === 'Open' || t.status === 'Partial') && (parseFloat(t.openQty ?? t.qty) || 0) > 0);
   }, [trades]);
 
-  const activePfCapital = Number(metrics?.portfolioCapital) > 0
-    ? Number(metrics.portfolioCapital)
-    : getCapital({ baseCapital: portfolioCapital, trades });
+  const activePfCapital = Number(metrics?.currentPfCapital || metrics?.portfolioCapital) > 0
+    ? Number(metrics.currentPfCapital || metrics.portfolioCapital)
+    : getCapital({ trades, portfolioId: (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default', year: '2026' });
 
   // Filter and sort active positions
   const displayedPositions = useMemo(() => {

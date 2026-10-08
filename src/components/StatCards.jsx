@@ -428,7 +428,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
   }, [openTradesList]);
 
   const openPositionsBreakdown = useMemo(() => {
-    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades });
+    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades, year: '2026' });
     return openTradesList.map(t => ({
       id: t.id,
       symbol: t.symbol,
@@ -442,10 +442,10 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
 
   // Available Cash
   const availableCashValue = useMemo(() => {
-    const baseCap = metrics?.portfolioCapital || getCapital({ trades });
+    const baseCap = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades, year: '2026' });
     const invested = (metrics?.totalInvested !== undefined) ? metrics.totalInvested : (totalInvestedInOpen || 0);
     return Math.max(0, baseCap - invested);
-  }, [metrics?.portfolioCapital, metrics?.totalInvested, totalInvestedInOpen, trades]);
+  }, [metrics?.currentPfCapital, metrics?.portfolioCapital, metrics?.totalInvested, totalInvestedInOpen, trades]);
 
   // Active open trade displayed in % INVESTED card header
   const activeInvestedTrade = useMemo(() => {
@@ -455,7 +455,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
 
   const activeTradeAllocationPct = useMemo(() => {
     if (!activeInvestedTrade) return '0.00';
-    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades });
+    const pfCapital = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades, year: '2026' });
     return pfCapital > 0 ? ((activeInvestedTrade.invested / pfCapital) * 100).toFixed(2) : '0.00';
   }, [activeInvestedTrade, metrics?.currentPfCapital, metrics?.portfolioCapital, trades]);
 
@@ -477,7 +477,7 @@ export default function StatCards({ metrics, hideValues, trades = [], settings =
 
   // Dynamic Month-by-Month PF Impact Breakdown Calculation
   const monthlyBreakdownData = useMemo(() => {
-    const baseCap = metrics?.portfolioCapital || metrics?.currentPfCapital || getCapital({ trades });
+    const baseCap = metrics?.currentPfCapital || metrics?.portfolioCapital || getCapital({ trades, year: '2026' });
     const capitalChanges = selectedPfYear !== 'ALL TIME' ? getStoredCapitalChanges('portfolio-default', selectedPfYear) : {};
     const perfChain = selectedPfYear !== 'ALL TIME' ? calculateMonthlyPerformance(trades || [], capitalChanges, selectedPfYear) : null;
 

@@ -1114,28 +1114,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // ── Helper to calculate and enrich trade with exact FoxTrade formulas ────────
   const enrichTradeWithLegs = (t) => {
-    const PORTFOLIO_CAPITAL = portfolioCapital || 0;
-    const initialFundCapital = (() => {
-      try {
-        const changes = capitalChanges || {};
-        for (let m = 0; m < 12; m++) {
-          const added = Number(changes[m]?.added || 0);
-          if (added > 0) return added;
-        }
-      } catch {}
-      return 0;
-    })();
-    const tradeAlloc = Number(t?.totalCapitalAllocated || 0);
-    const BASE_CAPITAL = initialFundCapital > 0 
-      ? initialFundCapital 
-      : (PORTFOLIO_CAPITAL > 0 ? PORTFOLIO_CAPITAL : (tradeAlloc > 0 ? tradeAlloc : 200000));
-
     const tradeCapital = getCapital({
-      baseCapital: BASE_CAPITAL,
       trades: portfolioTrades,
       capitalChanges,
-      portfolioId: activePortfolioId
-    });
+      portfolioId: activePortfolioId,
+      year: '2026'
+    }) || portfolioCapital || Number(portfolios.find(p => p.id === activePortfolioId)?.baseCapital || 0) || 0;
 
     return enrichTradeWithFoxFormulas(t, tradeCapital, {
       liveCMPs,

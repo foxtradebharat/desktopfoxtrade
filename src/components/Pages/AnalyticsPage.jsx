@@ -1033,10 +1033,11 @@ function getTradeActualCloseDateStr(t) {
   // ─── Shared Active Capital Denominator (Base Capital + Deposits - Withdrawals + Realized P&L) ───
   const activeCapital = useMemo(() => {
     return getCapital({
-      baseCapital,
-      trades: enrichedTrades
-    });
-  }, [baseCapital, enrichedTrades]);
+      trades: enrichedTrades,
+      portfolioId: (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default',
+      year: new Date().getFullYear().toString()
+    }) || Number(portfolioCapital || 0) || Number(baseCapital || 0);
+  }, [baseCapital, enrichedTrades, portfolioCapital]);
 
   // ─── 2. Metric Calculations for Column 1 & 2 ─────────
   const metrics = useMemo(() => {
