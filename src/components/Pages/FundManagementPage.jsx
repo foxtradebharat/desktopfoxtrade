@@ -1158,7 +1158,7 @@ export default function FundManagementPage({
 
                     {/* Starting Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      {row.startingCapital !== null ? (row.startingCapital === 0 ? '₹ 0' : `₹ ${row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '₹ 0'}
+                      {row.startingCapital !== null ? (row.startingCapital === 0 ? '₹ 0' : `₹ ${row.startingCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '—'}
                     </td>
 
                     {/* Net P/L */}
@@ -1185,7 +1185,7 @@ export default function FundManagementPage({
 
                     {/* Final Capital */}
                     <td style={{ padding: '12px 20px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                      {row.finalCapital !== null ? (row.finalCapital === 0 ? '₹ 0' : `₹ ${row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '₹ 0'}
+                      {row.finalCapital !== null ? (row.finalCapital === 0 ? '₹ 0' : `₹ ${row.finalCapital.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`) : '—'}
                     </td>
 
                     {/* Trades */}

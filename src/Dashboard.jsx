@@ -127,7 +127,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           if (added > 0) return added;
         }
       }
-      const saved = localStorage.getItem('tradeontip_base_capital');
+      const saved = localStorage.getItem(`tradeontip_base_capital_${activeId}`);
       if (saved && Number(saved) > 0 && saved !== '500000') return Number(saved);
     } catch {}
     return 0;
@@ -196,7 +196,6 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           }
         }
         setPortfolioCapital(newBase);
-        localStorage.setItem('tradeontip_base_capital', String(newBase));
       }
     };
     window.addEventListener('tradeontip_capital_updated', handleCapUpdate);
@@ -600,7 +599,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         if (targetPortfolioId === 'portfolio-default') {
           localStorage.setItem('tradeontip_monthly_capital_2026', JSON.stringify({}));
           localStorage.setItem('tradeontip_ledger_entries_2026', JSON.stringify([]));
-          localStorage.setItem('tradeontip_base_capital', '0');
+          localStorage.removeItem('tradeontip_base_capital');
         }
 
         // Also clean master cache by filtering out target portfolio
@@ -1538,34 +1537,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       0
     );
 
-    // Dynamic base fund capital — reads from Fund Management capital entries.
-    // Finds the first month with added capital in the active portfolio.
-    // This creates a live connection: Fund Management edit → stat cards update instantly.
-    const baseFundCapital = (() => {
-      try {
-        if (capitalChanges && typeof capitalChanges === 'object') {
-          for (let m = 0; m < 12; m++) {
-            const added = Number(capitalChanges[m]?.added || 0);
-            if (added > 0) return added;
-          }
-        }
-      } catch {}
-      if (portfolioCapital > 0) return portfolioCapital;
-      const activeBase = Number(portfolios.find(p => p.id === activePortfolioId)?.baseCapital || 0);
-      if (activeBase > 0) return activeBase;
-      const tradeWithAlloc = portfolioTrades.find(t => Number(t.totalCapitalAllocated) > 0);
-      if (tradeWithAlloc) return Number(tradeWithAlloc.totalCapitalAllocated);
-      return 0;
-    })();
-
-    // Current portfolio capital using shared getCapital formula:
-    // Capital = Base Capital + Deposits - Withdrawals + Realized P&L (up to today)
+    // Dynamic portfolio capital from shared getCapital formula (connecting exact Fund Management live capital)
     const currentPfCapital = getCapital({
-      baseCapital: baseFundCapital,
       trades: portfolioTrades,
       capitalChanges,
-      portfolioId: activePortfolioId
-    });
+      portfolioId: activePortfolioId,
+      year: '2026'
+    }) || portfolioCapital || Number(portfolios.find(p => p.id === activePortfolioId)?.baseCapital || 0) || 0;
 
     // ── Unrealized P/L % of portfolio ─────────────────────────────────────────
     const unrealizedPLPct = currentPfCapital > 0
@@ -2012,13 +1990,12 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       }
     }
     if (!newBase) {
-      const saved = localStorage.getItem(`tradeontip_base_capital_${id}`) || localStorage.getItem('tradeontip_base_capital');
+      const saved = localStorage.getItem(`tradeontip_base_capital_${id}`);
       if (saved && Number(saved) > 0 && saved !== '500000') newBase = Number(saved);
     }
     setPortfolioCapital(newBase);
     try {
       localStorage.setItem(`tradeontip_base_capital_${id}`, String(newBase));
-      localStorage.setItem('tradeontip_base_capital', String(newBase));
     } catch (_) {}
 
     window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
@@ -2736,7 +2713,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
               resolvedDateFilter={resolvedDateFilter}
               onUpdateCapitalBase={(val) => {
                 setPortfolioCapital(val);
-                localStorage.setItem('tradeontip_base_capital', String(val));
+                if (activePortfolioId) {
+                  try { localStorage.setItem(`tradeontip_base_capital_${activePortfolioId}`, String(val)); } catch (_) {}
+                }
               }} 
             />
           </PageErrorBoundary>

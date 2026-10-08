@@ -277,7 +277,6 @@ export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '202
     localStorage.setItem(legacyKey, JSON.stringify(derivedAggregates));
     localStorage.setItem(`tradeontip_monthly_capital_${year}`, JSON.stringify(derivedAggregates));
 
-    // Derive base capital from first deposit
     let initialAdded = 0;
     for (let m = 0; m < 12; m++) {
       const added = Number(derivedAggregates[m]?.added || 0);
@@ -286,7 +285,6 @@ export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '202
         break;
       }
     }
-    localStorage.setItem('tradeontip_base_capital', String(initialAdded));
 
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
@@ -366,7 +364,6 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
         break;
       }
     }
-    localStorage.setItem('tradeontip_base_capital', String(initialAdded));
 
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
@@ -480,34 +477,10 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
     prevYearDecCapital = getPreviousYearEndingCapital(sourceTradesForPrior, selectedYear, portfolioId, options);
   }
 
-  // Resolve base capital fallback from portfolio settings
-  let baseCapital = Number(options?.baseCapital || 0);
-  if (!(baseCapital > 0)) {
-    try {
-      const activePfId = options?.portfolioId || portfolioId || (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default';
-      // 1. Check portfolio-specific base capital first
-      if (typeof localStorage !== 'undefined') {
-        const pfSaved = Number(localStorage.getItem(`tradeontip_base_capital_${activePfId}`) || 0);
-        if (pfSaved > 0) baseCapital = pfSaved;
-      }
-      // 2. Check portfolio entry in tradeontip_portfolios
-      if (!(baseCapital > 0)) {
-        const rawPortfolios = typeof localStorage !== 'undefined' ? localStorage.getItem('tradeontip_portfolios') : null;
-        if (rawPortfolios) {
-          const pfs = JSON.parse(rawPortfolios);
-          const match = Array.isArray(pfs) ? pfs.find(p => p.id === activePfId) : null;
-          if (match && Number(match.baseCapital) > 0) {
-            baseCapital = Number(match.baseCapital);
-          }
-        }
-      }
-      // 3. Fallback to global tradeontip_base_capital ONLY for portfolio-default
-      if (!(baseCapital > 0) && activePfId === 'portfolio-default' && typeof localStorage !== 'undefined') {
-        const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
-        if (saved > 0) baseCapital = saved;
-      }
-    } catch (_) {}
-  }
+  // Base capital only applies if explicitly passed by caller in options.
+  // Never automatically fetch global tradeontip_base_capital from localStorage across years.
+  // In Fund Management, capital starts ONLY when manually entered by user or rolled over from prior year December.
+  const baseCapital = Number(options?.baseCapital || 0);
 
   // Flow basis tracks real money contributions (opening capital + deposits - withdrawals).
   let flowBasis = prevYearDecCapital > 0 ? prevYearDecCapital : (baseCapital > 0 ? baseCapital : 0);
@@ -845,19 +818,32 @@ export function calculateMonthlyPerformance(trades = [], capitalChanges = {}, se
 }
 
 /**
- * Returns the active portfolio capital to use in the Journal StatCards
+ * Returns the active portfolio capital to use in the Journal StatCards.
+ * Pulls exact live month-over-month compounding capital from Fund Management.
  */
-export function getActivePortfolioCapital(trades = [], capitalChanges = {}, selectedYear = '2026', targetMonthIdx = 7) {
-  const monthlyData = calculateMonthlyPerformance(trades, capitalChanges, selectedYear);
+export function getActivePortfolioCapital(trades = [], capitalChanges = {}, selectedYear = '2026', targetMonthIdx = null, options = {}) {
+  const numYear = parseInt(selectedYear, 10) || 2026;
+  const now = new Date();
+  const currentMonthIdx = (targetMonthIdx !== undefined && targetMonthIdx !== null)
+    ? targetMonthIdx
+    : (numYear === now.getFullYear() ? now.getMonth() : 11);
+
+  const monthlyData = calculateMonthlyPerformance(trades, capitalChanges, String(numYear), {
+    ...options,
+    portfolioId: options?.portfolioId || 'portfolio-default',
+    allTrades: (options?.allTrades && options.allTrades.length > 0) ? options.allTrades : trades
+  });
   
-  // Current active month starting capital
-  const currentMonthData = monthlyData[targetMonthIdx] || monthlyData[monthlyData.length - 1];
-  if (currentMonthData && currentMonthData.capitalIsReal && currentMonthData.startingCapital > 0) {
-    return currentMonthData.startingCapital;
+  // Current active month capital
+  const currentMonthData = monthlyData[currentMonthIdx] || monthlyData[monthlyData.length - 1];
+  if (currentMonthData && currentMonthData.capitalIsReal) {
+    if (currentMonthData.finalCapital > 0) return currentMonthData.finalCapital;
+    if (currentMonthData.startingCapital > 0) return currentMonthData.startingCapital;
   }
 
-  for (let i = targetMonthIdx; i >= 0; i--) {
+  for (let i = currentMonthIdx; i >= 0; i--) {
     if (monthlyData[i]?.capitalIsReal && monthlyData[i]?.finalCapital > 0) return monthlyData[i].finalCapital;
+    if (monthlyData[i]?.capitalIsReal && monthlyData[i]?.startingCapital > 0) return monthlyData[i].startingCapital;
   }
 
   return 0;
@@ -1094,7 +1080,23 @@ export function getCapital(optionsOrTrades = {}, maybeBaseCapital = 0, maybeCapi
     capitalChanges = maybeCapitalChanges;
   }
 
-  // 1. Resolve Base Capital fallback if baseCapital is not provided / <= 0
+  // 1. First priority: Check exact live capital from Fund Management monthly performance engine
+  if (!(baseCapital > 0)) {
+    try {
+      const activeYear = String(year || '2026');
+      const activePfId = portfolioId || 'portfolio-default';
+      const capChanges = capitalChanges || (typeof localStorage !== 'undefined' ? getStoredCapitalChanges(activePfId, activeYear) : null);
+      const activeFundCap = getActivePortfolioCapital(trades, capChanges, activeYear, null, {
+        portfolioId: activePfId,
+        allTrades: trades
+      });
+      if (activeFundCap > 0) {
+        return Math.round(activeFundCap * 100) / 100;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Resolve Base Capital fallback if baseCapital is not provided / <= 0
   if (!(baseCapital > 0)) {
     try {
       const activePfId = portfolioId || (typeof localStorage !== 'undefined' && localStorage.getItem('tradeontip_active_portfolio_id')) || 'portfolio-default';
@@ -1114,11 +1116,7 @@ export function getCapital(optionsOrTrades = {}, maybeBaseCapital = 0, maybeCapi
           }
         }
       }
-      // 3. Fallback to global tradeontip_base_capital ONLY for portfolio-default
-      if (!(baseCapital > 0) && activePfId === 'portfolio-default' && typeof localStorage !== 'undefined') {
-        const saved = Number(localStorage.getItem('tradeontip_base_capital') || 0);
-        if (saved > 0) baseCapital = saved;
-      }
+
     } catch (_) {}
   }
 
