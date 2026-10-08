@@ -36,7 +36,7 @@ export default function PortfolioSwitcher({
   const getPortfolioTradeCount = (portfolioId) => {
     // 1. If this is the active portfolio and trades are loaded in state, use live trades
     if (portfolioId === activePortfolioId && Array.isArray(trades)) {
-      return trades.filter(t => Boolean((t.name || t.symbol || '').trim())).length;
+      return trades.filter(t => (t.portfolioId || 'portfolio-default') === activePortfolioId && Boolean((t.name || t.symbol || '').trim())).length;
     }
     // 2. Check portfolio-specific cache in localStorage
     try {
@@ -47,7 +47,7 @@ export default function PortfolioSwitcher({
           if (raw) {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
-              return parsed.filter(t => Boolean((t.name || t.symbol || '').trim())).length;
+              return parsed.filter(t => (t.portfolioId || 'portfolio-default') === portfolioId && Boolean((t.name || t.symbol || '').trim())).length;
             }
           }
         }

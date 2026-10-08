@@ -352,6 +352,11 @@ function _notifyListeners(trades) {
  */
 async function _migrateFromV1Data(uid, portfolioId) {
   if (!uid || uid.startsWith('demo-')) return 0;
+  // CRITICAL: Migration from v1 should ONLY run for the default portfolio ('portfolio-default' or 'default')!
+  // Any secondary user-created portfolio (e.g. 'TEST', 'portfolio-1234') should NEVER ingest legacy v1 trades!
+  if (portfolioId !== 'portfolio-default' && portfolioId !== 'default') {
+    return 0;
+  }
 
   // Try old IndexedDB (foxtrade_db v1)
   try {

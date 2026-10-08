@@ -681,10 +681,15 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     }
   };
 
+  const currentTradesPortfolioRef = useRef(activePortfolioId);
+
   const [trades, setTrades] = useState(() => {
     try {
-      const userTradesKey = user?.uid ? `tradeontip_trades_v5_${user.uid}` : 'tradeontip_trades_v5';
-      const cached = localStorage.getItem(userTradesKey);
+      const initialPfId = getStoredActivePortfolioId() || 'portfolio-default';
+      const portfolioTradesKey = user?.uid 
+        ? `tradeontip_trades_v5_${user.uid}_${initialPfId}` 
+        : `tradeontip_trades_v5_${initialPfId}`;
+      const cached = localStorage.getItem(portfolioTradesKey);
       if (cached !== null) {
         let parsed = JSON.parse(cached);
         if (Array.isArray(parsed)) {
@@ -698,60 +703,44 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           if (emptyIndices.length > 1) {
             parsed = parsed.filter(t => Boolean((t.name || t.symbol || '').trim() || t.entry > 0 || t.qty > 0));
             try {
-              localStorage.setItem(userTradesKey, JSON.stringify(parsed));
+              localStorage.setItem(portfolioTradesKey, JSON.stringify(parsed));
             } catch (_) {}
           }
 
           const seen = new Set();
           let needsRepair = false;
           parsed.forEach(t => {
-            const pId = t.portfolioId || 'portfolio-default';
+            const pId = t.portfolioId || initialPfId;
             const key = `${pId}-${t.tradeNo}`;
             if (!t.tradeNo || seen.has(key)) needsRepair = true;
             seen.add(key);
           });
           if (needsRepair) {
-            const portfolioCounters = {};
-            return parsed.map(t => {
-              const pId = t.portfolioId || 'portfolio-default';
-              if (!portfolioCounters[pId]) portfolioCounters[pId] = 1;
-              const tradeNo = portfolioCounters[pId]++;
-              return { ...t, tradeNo };
-            });
+            let counter = 1;
+            return parsed.map(t => ({ ...t, portfolioId: initialPfId, tradeNo: counter++ }));
           }
-          return parsed;
+          return parsed.map(t => ({ ...t, portfolioId: initialPfId }));
         }
       }
-      // Any new user starts completely fresh with a clean empty journal (0 trades)
       return [];
     } catch {
       return [];
     }
   });
 
-  // Switch trades cleanly when user account changes
-  useEffect(() => {
-    if (!user?.uid) return;
-    const userTradesKey = `tradeontip_trades_v5_${user.uid}`;
-    const cached = localStorage.getItem(userTradesKey) || localStorage.getItem('tradeontip_trades_cache');
-    if (cached !== null) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setTrades(parsed);
-          return;
-        }
-      } catch (_) {}
-    }
-  }, [user?.uid]);
-
   // Persist trades to cache whenever modified, properly scoped to portfolio and master cache
   useEffect(() => {
+    // CRITICAL GUARD: Only save if the current in-memory trades belong to activePortfolioId!
+    if (currentTradesPortfolioRef.current !== activePortfolioId) {
+      return;
+    }
+
     try {
       const portfolioTradesKey = user?.uid 
         ? `tradeontip_trades_v5_${user.uid}_${activePortfolioId}` 
         : `tradeontip_trades_v5_${activePortfolioId}`;
-      localStorage.setItem(portfolioTradesKey, JSON.stringify(trades));
+      const scopedTrades = trades.map(t => ({ ...t, portfolioId: activePortfolioId }));
+      localStorage.setItem(portfolioTradesKey, JSON.stringify(scopedTrades));
 
       // Also maintain master trades cache with portfolio-scoped merging
       const masterKey = user?.uid ? `tradeontip_trades_v5_${user.uid}` : 'tradeontip_trades_v5';
@@ -763,9 +752,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       if (!Array.isArray(masterTrades)) masterTrades = [];
       const targetPid = activePortfolioId || 'portfolio-default';
       const remainingTrades = masterTrades.filter(t => (t.portfolioId || 'portfolio-default') !== targetPid);
-      const combined = [...remainingTrades, ...trades];
+      const combined = [...remainingTrades, ...scopedTrades];
       localStorage.setItem(masterKey, JSON.stringify(combined));
-      localStorage.setItem('tradeontip_trades_cache', JSON.stringify(trades));
+      localStorage.setItem('tradeontip_trades_cache', JSON.stringify(scopedTrades));
     } catch (_) {}
   }, [trades, user?.uid, activePortfolioId]);
 
@@ -872,9 +861,11 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
             hasCachedTrades = true;
-            setTrades(parsed);
+            const scoped = parsed.map(t => ({ ...t, portfolioId: activePortfolioId }));
+            currentTradesPortfolioRef.current = activePortfolioId;
             lastSavedTradesPortfolioRef.current = activePortfolioId;
-            lastSavedTradesJsonRef.current = JSON.stringify(parsed);
+            lastSavedTradesJsonRef.current = JSON.stringify(scoped);
+            setTrades(scoped);
             setLoadingTrades(false);
           }
         } catch (_) {}
@@ -882,10 +873,16 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
       // If no valid cache for this specific portfolio, clear state and show loading
       if (!hasCachedTrades) {
+        currentTradesPortfolioRef.current = activePortfolioId;
+        lastSavedTradesPortfolioRef.current = activePortfolioId;
+        lastSavedTradesJsonRef.current = '[]';
         setTrades([]);
         setLoadingTrades(true);
       }
     } else {
+      currentTradesPortfolioRef.current = activePortfolioId;
+      lastSavedTradesPortfolioRef.current = activePortfolioId;
+      lastSavedTradesJsonRef.current = '[]';
       setTrades([]);
       setLoadingTrades(false);
     }
@@ -895,11 +892,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       .then(async (dbTrades) => {
         if (!isMounted) return;
         if (Array.isArray(dbTrades) && dbTrades.length > 0) {
-          setTrades(dbTrades);
+          const scoped = dbTrades.map(t => ({ ...t, portfolioId: activePortfolioId }));
+          currentTradesPortfolioRef.current = activePortfolioId;
           lastSavedTradesPortfolioRef.current = activePortfolioId;
-          lastSavedTradesJsonRef.current = JSON.stringify(dbTrades);
+          lastSavedTradesJsonRef.current = JSON.stringify(scoped);
+          setTrades(scoped);
           try {
-            localStorage.setItem(portfolioTradesKey, JSON.stringify(dbTrades));
+            localStorage.setItem(portfolioTradesKey, JSON.stringify(scoped));
           } catch (_) {}
         } else {
           // Local IDB has 0 trades for this portfolio
@@ -909,13 +908,15 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
             try {
               const driveTrades = await downloadBackupFromDrive(accessTokenRef.current, activePortfolioId);
               if (isMounted && Array.isArray(driveTrades) && driveTrades.length > 0) {
-                setTrades(driveTrades);
+                const scoped = driveTrades.map(t => ({ ...t, portfolioId: activePortfolioId }));
+                currentTradesPortfolioRef.current = activePortfolioId;
                 lastSavedTradesPortfolioRef.current = activePortfolioId;
-                lastSavedTradesJsonRef.current = JSON.stringify(driveTrades);
+                lastSavedTradesJsonRef.current = JSON.stringify(scoped);
+                setTrades(scoped);
                 try {
-                  localStorage.setItem(portfolioTradesKey, JSON.stringify(driveTrades));
+                  localStorage.setItem(portfolioTradesKey, JSON.stringify(scoped));
                 } catch (_) {}
-                await saveUserTrades(user.uid, driveTrades, activePortfolioId);
+                await saveUserTrades(user.uid, scoped, activePortfolioId);
                 restored = true;
               }
             } catch (err) {
@@ -924,9 +925,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           }
 
           if (!restored && isMounted) {
-            setTrades([]);
+            currentTradesPortfolioRef.current = activePortfolioId;
             lastSavedTradesPortfolioRef.current = activePortfolioId;
             lastSavedTradesJsonRef.current = '[]';
+            setTrades([]);
             try {
               localStorage.setItem(portfolioTradesKey, JSON.stringify([]));
             } catch (_) {}
@@ -943,9 +945,11 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       if (!isMounted) return;
       setTrades(prevTrades => {
         if (JSON.stringify(remoteTrades) !== JSON.stringify(prevTrades)) {
-          lastSavedTradesJsonRef.current = JSON.stringify(remoteTrades);
+          const scoped = (remoteTrades || []).map(t => ({ ...t, portfolioId: activePortfolioId }));
+          lastSavedTradesJsonRef.current = JSON.stringify(scoped);
           lastSavedTradesPortfolioRef.current = activePortfolioId;
-          return remoteTrades;
+          currentTradesPortfolioRef.current = activePortfolioId;
+          return scoped;
         }
         return prevTrades;
       });
@@ -966,8 +970,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     if (loadingTrades || !user?.uid) return;
 
     // Strict portfolio match guard: prevent saving across portfolio boundaries
-    if (lastSavedTradesPortfolioRef.current !== activePortfolioId) {
+    if (lastSavedTradesPortfolioRef.current !== activePortfolioId || currentTradesPortfolioRef.current !== activePortfolioId) {
       lastSavedTradesPortfolioRef.current = activePortfolioId;
+      currentTradesPortfolioRef.current = activePortfolioId;
       lastSavedTradesJsonRef.current = JSON.stringify(trades);
       return;
     }
@@ -986,7 +991,8 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
     lastSavedTradesJsonRef.current = currentJson;
     // Instant save to IndexedDB and Local Cache (also automatically triggers debounced Drive auto-sync)
-    saveUserTrades(user.uid, trades, activePortfolioId);
+    const scopedTrades = trades.map(t => ({ ...t, portfolioId: activePortfolioId }));
+    saveUserTrades(user.uid, scopedTrades, activePortfolioId);
   }, [trades, loadingTrades, user?.uid, activePortfolioId]);
 
   // Listen for restored settings from Cloud backup
@@ -1969,6 +1975,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     } catch (_) {}
 
     // Synchronously latch the auto-save guards to the target portfolio to eliminate cross-saving
+    currentTradesPortfolioRef.current = id;
     lastSavedTradesPortfolioRef.current = id;
     lastSavedTradesJsonRef.current = JSON.stringify(instantTrades);
 
@@ -2024,6 +2031,24 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       title: 'Portfolio Switched',
       description: `Active portfolio switched to "${selected?.name || 'My Portfolio'}".`
     });
+  };
+
+  const handleTradesRestored = (restoredTrades, restoredPid) => {
+    const targetPid = restoredPid || activePortfolioId;
+    const scopedTrades = Array.isArray(restoredTrades)
+      ? restoredTrades.map(t => ({ ...t, portfolioId: targetPid }))
+      : [];
+    currentTradesPortfolioRef.current = targetPid;
+    lastSavedTradesPortfolioRef.current = targetPid;
+    lastSavedTradesJsonRef.current = JSON.stringify(scopedTrades);
+    setTrades(scopedTrades);
+
+    const portfolioTradesKey = user?.uid 
+      ? `tradeontip_trades_v5_${user.uid}_${targetPid}` 
+      : `tradeontip_trades_v5_${targetPid}`;
+    try {
+      localStorage.setItem(portfolioTradesKey, JSON.stringify(scopedTrades));
+    } catch (_) {}
   };
 
   const handleUpdatePortfolios = (updated) => {
@@ -2346,7 +2371,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           tradingMarket={tradingMarket} setTradingMarket={setTradingMarket}
           user={user} onLogout={onLogout}
           activeTab={activeTab}
-          trades={trades}
+          trades={portfolioTrades}
           portfolios={portfolios}
           activePortfolioId={activePortfolioId}
           onSelectPortfolio={handleSelectPortfolio}
@@ -2867,7 +2892,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         onOpenDisplaySettings={() => setIsSettingsOpen(true)}
         onOpenTradeSettings={() => setIsTradeSettingsOpen(true)}
         onClearAllData={() => setIsClearDataModalOpen(true)}
-        onTradesRestored={setTrades}
+        onTradesRestored={handleTradesRestored}
         onShowToast={setToastNotification}
       />
 

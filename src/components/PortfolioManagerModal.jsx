@@ -106,6 +106,15 @@ export default function PortfolioManagerModal({
       createdAt: todayDate
     };
 
+    // Clean local cache for this new portfolio ID before selecting it so it starts completely fresh
+    try {
+      const user = JSON.parse(localStorage.getItem('tradeontip_user') || '{}');
+      if (user?.uid) {
+        localStorage.setItem(`tradeontip_trades_v5_${user.uid}_${newPortfolio.id}`, '[]');
+      }
+      localStorage.setItem(`tradeontip_trades_v5_${newPortfolio.id}`, '[]');
+    } catch (_) {}
+
     const updated = [...portfolios, newPortfolio];
     onUpdatePortfolios(updated);
     onSelectPortfolio(newPortfolio.id);

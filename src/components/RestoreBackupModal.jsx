@@ -575,7 +575,7 @@ export default function RestoreBackupModal({
         remoteTrades = data?.trades || [];
       }
 
-      const targetPortfolio = selectedBackup.portfolioId || activePortfolioId;
+      const targetPortfolio = activePortfolioId;
 
       // 1. NOTES & PLAYBOOK STRATEGY
       if (notesStrategy !== 'skip') {
@@ -747,20 +747,40 @@ export default function RestoreBackupModal({
         throw new Error('No trade entries found in this backup');
       }
 
+      // Re-map remote trades to targetPortfolio to prevent cross-portfolio scoping mismatches
+      const remappedRemoteTrades = remoteTrades.map(t => ({
+        ...t,
+        portfolioId: targetPortfolio,
+      }));
+
       let finalTradesToSave = currentTrades;
       if (journalStrategy === 'merge') {
         const localAll = await getTradesWithDeleted(targetPortfolio);
-        finalTradesToSave = mergeTradeArrays(localAll, remoteTrades);
+        finalTradesToSave = mergeTradeArrays(localAll, remappedRemoteTrades).map(t => ({
+          ...t,
+          portfolioId: targetPortfolio,
+        }));
       } else if (journalStrategy === 'overwrite') {
         await clearTrades(targetPortfolio);
-        finalTradesToSave = remoteTrades;
+        finalTradesToSave = remappedRemoteTrades;
       }
 
       if (journalStrategy !== 'skip') {
         await bulkPutTrades(targetPortfolio, finalTradesToSave, true);
+        const activeTrades = finalTradesToSave.filter(t => !t.deletedAt);
+
+        // Clean local tombstone if previously cleared and sync local cache
+        try {
+          localStorage.removeItem(`tradeontip_cleared_${targetPortfolio}`);
+          const curUser = JSON.parse(localStorage.getItem('tradeontip_user') || '{}');
+          const cacheKey = curUser?.uid 
+            ? `tradeontip_trades_v5_${curUser.uid}_${targetPortfolio}` 
+            : `tradeontip_trades_v5_${targetPortfolio}`;
+          localStorage.setItem(cacheKey, JSON.stringify(activeTrades));
+        } catch (_) {}
+
         if (onTradesRestored) {
-          const activeTrades = finalTradesToSave.filter(t => !t.deletedAt);
-          onTradesRestored(activeTrades);
+          onTradesRestored(activeTrades, targetPortfolio);
         }
       }
 
