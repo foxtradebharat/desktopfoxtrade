@@ -42,15 +42,29 @@
     "files": [
       "dist/**/*",
       "electron-db/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "public/icon.png",
       "main.js",
       "updater.js",
       "preload.js",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "asar": true,
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**/*"
     ],
+    "copyright": "Copyright © 2026 FoxTrade",
     "win": {
       "target": [
         {
@@ -60,7 +74,9 @@
           ]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "executableName": "FoxTrade",
+      "legalTrademarks": "FoxTrade"
     },
     "nsis": {
       "oneClick": true,
@@ -69,6 +85,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "FoxTrade",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "protocols": [

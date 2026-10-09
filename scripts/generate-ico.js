@@ -9,13 +9,20 @@ const rootDir = path.resolve(__dirname, '..');
 
 app.whenReady().then(() => {
   try {
-    const srcPath = path.join(rootDir, 'src', 'assets', 'logo', 'foxtrade-square-icon-safe-transparent-1024.png');
-    if (!fs.existsSync(srcPath)) {
-      console.error('Source icon not found:', srcPath);
+    // White monoline fox head logo on black
+    const candidateLogos = [
+      path.join(rootDir, 'src', 'assets', 'logo', 'foxtrade-square-matte-black-1024.png'),
+      path.join(rootDir, 'src', 'assets', 'logo', 'foxtrade-square-icon-safe-transparent-1024.png')
+    ];
+
+    const srcPath = candidateLogos.find(p => fs.existsSync(p));
+    if (!srcPath) {
+      console.error('Source icon not found in src/assets/logo/');
       app.exit(1);
       return;
     }
 
+    console.log('Using logo source:', srcPath);
     const baseImg = nativeImage.createFromPath(srcPath);
     if (baseImg.isEmpty()) {
       console.error('Failed to load image from', srcPath);
@@ -23,24 +30,23 @@ app.whenReady().then(() => {
       return;
     }
 
-    console.log('Original image size:', baseImg.getSize());
-
-    // Copy high-res 1024x1024 png to public/foxtrade-square.png, public/icon.png, and build/icon.png
-    fs.copyFileSync(srcPath, path.join(rootDir, 'public', 'foxtrade-square.png'));
-    fs.copyFileSync(srcPath, path.join(rootDir, 'public', 'icon.png'));
-
     const buildDir = path.join(rootDir, 'build');
     if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
-    fs.copyFileSync(srcPath, path.join(buildDir, 'icon.png'));
 
-    // Also copy to dist if dist exists
+    // Generate 512x512 icon.png for window icon, notifications, and tray
+    const img512 = baseImg.resize({ width: 512, height: 512, quality: 'best' });
+    const buf512 = img512.toPNG();
+    fs.writeFileSync(path.join(buildDir, 'icon.png'), buf512);
+    fs.writeFileSync(path.join(rootDir, 'public', 'icon.png'), buf512);
+    fs.writeFileSync(path.join(rootDir, 'public', 'foxtrade-square.png'), buf512);
+
     const distDir = path.join(rootDir, 'dist');
     if (fs.existsSync(distDir)) {
-      fs.copyFileSync(srcPath, path.join(distDir, 'foxtrade-square.png'));
-      fs.copyFileSync(srcPath, path.join(distDir, 'icon.png'));
+      fs.writeFileSync(path.join(distDir, 'icon.png'), buf512);
+      fs.writeFileSync(path.join(distDir, 'foxtrade-square.png'), buf512);
     }
 
-    // Build multi-resolution ICO (16, 24, 32, 48, 64, 128, 256)
+    // Build multi-resolution ICO containing 16, 24, 32, 48, 64, 128, and 256 px sizes
     const sizes = [16, 24, 32, 48, 64, 128, 256];
     const images = sizes.map(size => {
       const resized = baseImg.resize({ width: size, height: size, quality: 'best' });
@@ -84,8 +90,8 @@ app.whenReady().then(() => {
     const icoBuffer = Buffer.concat([header, ...dirEntries, ...payloadBuffers]);
 
     const targetIcoPaths = [
+      path.join(buildDir, 'icon.ico'),
       path.join(rootDir, 'public', 'favicon.ico'),
-      path.join(rootDir, 'build', 'icon.ico'),
       path.join(rootDir, 'public', 'icon.ico')
     ];
 
@@ -96,10 +102,10 @@ app.whenReady().then(() => {
 
     for (const p of targetIcoPaths) {
       fs.writeFileSync(p, icoBuffer);
-      console.log('Wrote ICO to:', p, '(', icoBuffer.length, 'bytes)');
+      console.log('Wrote multi-resolution ICO to:', p, '(', icoBuffer.length, 'bytes)');
     }
 
-    console.log('Successfully generated multi-resolution FoxTrade ICO and PNG icons!');
+    console.log('Successfully generated 512x512 icon.png and multi-resolution icon.ico (16-256px)!');
     app.exit(0);
   } catch (err) {
     console.error('Error generating icons:', err);

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 // ── Windows Taskbar & Notification Identity ──────────────────────────────────
 // Must be set as early as possible so Windows groups and identifies the window
 // with FoxTrade's identity and custom icon in the taskbar and notification center.
+app.setName('FoxTrade');
 if (process.platform === 'win32') {
   try {
     app.setAppUserModelId('com.foxtrade.app');
@@ -228,16 +229,26 @@ if (!gotTheLock) {
 
 function resolveAppIcon() {
   const candidates = [
+    // Packaged extraResources
+    path.join(process.resourcesPath || '', 'icon.ico'),
+    path.join(process.resourcesPath || '', 'build', 'icon.ico'),
+    path.join(process.resourcesPath || '', 'icon.png'),
+    // Local / Dev paths
     path.join(__dirname, 'build', 'icon.ico'),
     path.join(__dirname, 'public', 'favicon.ico'),
     path.join(__dirname, 'dist', 'favicon.ico'),
+    path.join(__dirname, 'dist', 'icon.ico'),
+    path.join(__dirname, 'public', 'icon.ico'),
+    path.join(__dirname, 'build', 'icon.png'),
+    path.join(__dirname, 'public', 'icon.png'),
     path.join(__dirname, 'public', 'foxtrade-square.png'),
     path.join(__dirname, 'dist', 'foxtrade-square.png'),
+    path.join(__dirname, 'src', 'assets', 'logo', 'foxtrade-square-matte-black-1024.png'),
     path.join(__dirname, 'src', 'assets', 'logo', 'foxtrade-square-icon-safe-transparent-1024.png'),
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (candidate && fs.existsSync(candidate)) return candidate;
   }
   return undefined;
 }
@@ -254,6 +265,7 @@ function createWindow() {
   }
 
   mainWindow = new BrowserWindow({
+    title: 'FoxTrade',
     width: 1280,
     height: 800,
     minWidth: 960,
