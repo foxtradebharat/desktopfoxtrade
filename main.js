@@ -1,7 +1,16 @@
-import { app, BrowserWindow, shell, Menu, powerMonitor, ipcMain, session, nativeTheme, dialog } from 'electron';
+import { app, BrowserWindow, shell, Menu, powerMonitor, ipcMain, session, nativeTheme, dialog, nativeImage } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+
+// ── Windows Taskbar & Notification Identity ──────────────────────────────────
+// Must be set as early as possible so Windows groups and identifies the window
+// with FoxTrade's identity and custom icon in the taskbar and notification center.
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId('com.foxtrade.app');
+  } catch (_) {}
+}
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { getDatabase, closeDatabase } from './electron-db/database.js';
@@ -218,20 +227,31 @@ if (!gotTheLock) {
 }
 
 function resolveAppIcon() {
-  const icoDev = path.join(__dirname, 'public', 'favicon.ico');
-  const icoProd = path.join(__dirname, 'dist', 'favicon.ico');
-  const pngDev = path.join(__dirname, 'public', 'foxtrade-square.png');
-  const pngProd = path.join(__dirname, 'dist', 'foxtrade-square.png');
+  const candidates = [
+    path.join(__dirname, 'build', 'icon.ico'),
+    path.join(__dirname, 'public', 'favicon.ico'),
+    path.join(__dirname, 'dist', 'favicon.ico'),
+    path.join(__dirname, 'public', 'foxtrade-square.png'),
+    path.join(__dirname, 'dist', 'foxtrade-square.png'),
+    path.join(__dirname, 'src', 'assets', 'logo', 'foxtrade-square-icon-safe-transparent-1024.png'),
+  ];
 
-  if (fs.existsSync(icoDev)) return icoDev;
-  if (fs.existsSync(icoProd)) return icoProd;
-  if (fs.existsSync(pngDev)) return pngDev;
-  if (fs.existsSync(pngProd)) return pngProd;
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
   return undefined;
 }
 
 function createWindow() {
-  const icon = resolveAppIcon();
+  const iconPath = resolveAppIcon();
+  let appIcon = undefined;
+  if (iconPath) {
+    try {
+      appIcon = nativeImage.createFromPath(iconPath);
+    } catch (err) {
+      console.warn('[Main Process] Could not load nativeImage icon:', err);
+    }
+  }
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -242,7 +262,7 @@ function createWindow() {
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#ffffff',
-    icon,
+    icon: (appIcon && !appIcon.isEmpty()) ? appIcon : iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -250,6 +270,12 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  if (appIcon && !appIcon.isEmpty()) {
+    try {
+      mainWindow.setIcon(appIcon);
+    } catch (_) {}
+  }
 
   mainWindow.on('maximize', () => {
     mainWindow?.webContents.send('window:maximized-change', true);
