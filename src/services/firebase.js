@@ -5,6 +5,10 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCredential,
+  setPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
   signOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
@@ -24,9 +28,15 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Google Provider setup
+// Explicit permanent session persistence (keeps user signed in indefinitely until explicit sign-out)
+try {
+  setPersistence(auth, indexedDBLocalPersistence).catch(() => {
+    setPersistence(auth, browserLocalPersistence).catch(() => {});
+  });
+} catch (_) {}
+
+// Google Provider setup (Identity only — zero Drive permissions requested)
 export const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 /**
@@ -54,6 +64,23 @@ export async function loginWithGoogle(emailHint) {
         throw redirectError;
       }
     }
+    throw error;
+  }
+}
+
+/**
+ * Sign in using Google OAuth ID Token (Loopback OAuth Flow for Electron Desktop)
+ */
+export async function signInWithGoogleIdToken(idToken) {
+  if (!idToken) {
+    throw new Error('Google ID token is required.');
+  }
+  try {
+    const credential = GoogleAuthProvider.credential(idToken);
+    const result = await signInWithCredential(auth, credential);
+    return result.user;
+  } catch (error) {
+    console.warn('[Firebase Auth] signInWithCredential error:', error.code, error.message);
     throw error;
   }
 }

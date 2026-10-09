@@ -5,6 +5,7 @@ import NotificationsPopover, { useUnreadNotificationsCount } from './Notificatio
 import NotificationDropBanner from './NotificationDropBanner';
 import PortfolioSwitcher from './PortfolioSwitcher';
 import CommunityPopover from './CommunityPopover';
+import UpdatePill from './UpdatePill';
 
 export default function TopBar({ 
   themeMode, 
@@ -1242,6 +1243,9 @@ export default function TopBar({
             onShowToast={onShowToast}
           />
         </div>
+
+        {/* Desktop Auto-Update Pill */}
+        <UpdatePill onOpenDialog={() => window.dispatchEvent(new CustomEvent('menu:check-updates'))} />
 
         <div style={{ width: '1px', height: '14px', backgroundColor: 'var(--border-color)' }} />
 

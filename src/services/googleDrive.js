@@ -90,7 +90,7 @@ export async function requestAccessToken() {
  * Uses prompt: 'consent' to guarantee Google issues a refresh_token.
  */
 export async function requestOfflineRefreshToken(email, userId) {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '807258489787-72hj5jtidseks5f0bei1eho3egcvspja.apps.googleusercontent.com';
   if (!clientId) return false;
 
   await loadGoogleGsiScript().catch(() => {});

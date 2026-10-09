@@ -141,27 +141,8 @@ export function getLastSyncError() {
   return _lastSyncError;
 }
 
-// Automatically bridge token expiration and drive status into sync error state
-subscribeToTokenExpired(() => {
-  setSyncError('Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.');
-});
+// Drive session listeners disabled: app runs completely offline with local storage
 
-subscribeToDriveStatus((status) => {
-  if (status === 'needs_reconnect') {
-    setSyncError('Google Drive session expired or access was revoked. Please click "Reconnect Google Drive".');
-  } else if (status === 'connected') {
-    if (_lastSyncError && _lastSyncError.includes('Reconnect Google Drive')) {
-      setSyncError(null);
-    }
-  }
-});
-
-// Automatically clear sync error state as soon as a fresh valid token is active
-subscribeToTokenUpdate((tok) => {
-  if (tok && tok !== 'demo-token') {
-    setSyncError(null);
-  }
-});
 
 // ── Compression helpers ───────────────────────────────────────────────────────
 
@@ -511,7 +492,16 @@ export function mergeFoxyCommitments(local = [], remote = []) {
  * @param {string} deviceId
  * @returns {Promise<Uint8Array>}
  */
-export async function buildDrivePayload(portfolioId, trades, deviceId) {
+/**
+ * Build a full uncompressed backup snapshot containing all domains:
+ * trades, notes, foxy AI, settings, fund management, monthly performance, tax analytics, app preferences.
+ *
+ * @param {string} portfolioId
+ * @param {object[]} trades
+ * @param {string} [deviceId]
+ * @returns {Promise<object>} full snapshot object
+ */
+export async function buildFullBackupSnapshot(portfolioId, trades, deviceId) {
   let notes = null;
   let independentNotes = null;
   try {
@@ -524,7 +514,7 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
       independentNotes = rawInd;
     }
   } catch (err) {
-    console.warn('[SyncEngine] Error reading notes for backup:', err);
+    console.warn('[SyncEngine] Error reading notes for snapshot:', err);
   }
 
   let foxyChats = null;
@@ -544,21 +534,21 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
       foxyConfig = { provider, model, apiKey };
     }
   } catch (err) {
-    console.warn('[SyncEngine] Error reading Foxy AI data for backup:', err);
+    console.warn('[SyncEngine] Error reading Foxy AI data for snapshot:', err);
   }
 
-  // 3. Settings & Preferences
+  // Settings & Preferences
   let journalSettings = null;
   try {
     const rawSettings = localStorage.getItem('tradeontip_settings');
     if (rawSettings) journalSettings = JSON.parse(rawSettings);
   } catch (_) {}
 
-  // 4. Fund Management & Capital Base
+  // Fund Management & Capital Base
   let fundManagement = null;
   let baseCapital = null;
   try {
-    const rawCap = localStorage.getItem('tradeontip_base_capital');
+    const rawCap = localStorage.getItem(`tradeontip_base_capital_${portfolioId}`) || localStorage.getItem('tradeontip_base_capital');
     if (rawCap) baseCapital = Number(rawCap);
 
     const capMap = {};
@@ -580,7 +570,7 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     if (Object.keys(capMap).length > 0) fundManagement = capMap;
   } catch (_) {}
 
-  // 5. Monthly Performance Records (from dedicated IDB monthly_perf store)
+  // Monthly Performance Records (from dedicated IDB monthly_perf store)
   let monthlyPerf = null;
   try {
     const db = await getDB();
@@ -590,10 +580,10 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
       if (pfMonthly.length > 0) monthlyPerf = pfMonthly;
     }
   } catch (err) {
-    console.warn('[SyncEngine] Error reading monthlyPerf for backup:', err);
+    console.warn('[SyncEngine] Error reading monthlyPerf for snapshot:', err);
   }
 
-  // 6. Tax Analytics Data (monthly tax records & auto tax settings)
+  // Tax Analytics Data
   let taxAnalytics = null;
   try {
     const taxMap = {};
@@ -611,10 +601,10 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     }
     if (Object.keys(taxMap).length > 0) taxAnalytics = taxMap;
   } catch (err) {
-    console.warn('[SyncEngine] Error reading taxAnalytics for backup:', err);
+    console.warn('[SyncEngine] Error reading taxAnalytics for snapshot:', err);
   }
 
-  // 7. App Preferences & Column Layout
+  // App Preferences & Column Layout
   let appSettings = null;
   try {
     const appSettingsMap = {};
@@ -635,10 +625,10 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     });
     if (Object.keys(appSettingsMap).length > 0) appSettings = appSettingsMap;
   } catch (err) {
-    console.warn('[SyncEngine] Error reading appSettings for backup:', err);
+    console.warn('[SyncEngine] Error reading appSettings for snapshot:', err);
   }
 
-  // 8. Broker Credentials (Encrypted AES-GCM ciphertext)
+  // Broker Credentials
   let brokerTokens = null;
   try {
     const brokerMap = {};
@@ -652,16 +642,16 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     }
     if (Object.keys(brokerMap).length > 0) brokerTokens = brokerMap;
   } catch (err) {
-    console.warn('[SyncEngine] Error reading brokerTokens for backup:', err);
+    console.warn('[SyncEngine] Error reading brokerTokens for snapshot:', err);
   }
 
-  const payload = {
+  return {
     version:       BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
     portfolioId,
-    deviceId,
+    deviceId:      deviceId || 'local-device',
     exportedAt:    new Date().toISOString(),
-    trades,
+    trades:        trades || [],
     ...(notes ? { notes } : {}),
     ...(independentNotes ? { independentNotes } : {}),
     ...(foxyChats ? { foxyChats } : {}),
@@ -675,14 +665,25 @@ export async function buildDrivePayload(portfolioId, trades, deviceId) {
     ...(appSettings ? { appSettings } : {}),
     ...(brokerTokens ? { brokerTokens } : {}),
     metadata: {
-      tradeCount:          trades.filter(t => !t.deletedAt).length,
-      lastTradeUpdatedAt:  Math.max(0, ...trades.map(t => t.clientUpdatedAt || 0)),
+      tradeCount:          (trades || []).filter(t => !t.deletedAt).length,
+      lastTradeUpdatedAt:  Math.max(0, ...(trades || []).map(t => t.clientUpdatedAt || 0)),
       hasFoxyData:         !!(foxyChats?.length || foxyCommitments?.length || foxyConfig?.apiKey),
       hasFundData:         !!(fundManagement || baseCapital || monthlyPerf),
       hasSettingsData:     !!(journalSettings || appSettings),
       hasTaxData:          !!taxAnalytics,
     },
   };
+}
+
+/**
+ * Build a compressed gzip backup payload.
+ * @param {string} portfolioId
+ * @param {object[]} trades  — ALL trades including soft-deleted
+ * @param {string} deviceId
+ * @returns {Promise<Uint8Array>}
+ */
+export async function buildDrivePayload(portfolioId, trades, deviceId) {
+  const payload = await buildFullBackupSnapshot(portfolioId, trades, deviceId);
   return compressJSON(payload);
 }
 
@@ -708,164 +709,54 @@ export async function parseDrivePayload(buffer) {
 // ── Core sync operations ──────────────────────────────────────────────────────
 
 /**
- * Save all trades for a portfolio to Google Drive with CRDT merge.
- *
- * Steps:
- *   1. Get or create FoxTrade Backups folder
- *   2. Check if remote file exists and get its current state
- *   3. If remote changed since last sync → download, merge, then upload merged
- *   4. If no conflict → upload directly
- *   5. Update sync cursor in IDB
+ * Save all trades and application state for a portfolio to local storage.
  *
  * @param {string} portfolioId
  * @param {object[]} trades  — ALL trades including soft-deleted
- * @param {string} accessToken
- * @returns {Promise<{success: boolean, merged: boolean, tradeCount: number, error?: string}>}
+ * @param {string} [accessToken]
+ * @param {boolean} [forceOverwrite]
+ * @returns {Promise<{success: boolean, mode: string, merged: boolean, tradeCount: number, error?: string, snapshot?: object}>}
  */
 export async function saveToDrive(portfolioId, trades, accessToken, forceOverwrite = false) {
-  const validToken = (await getValidAccessToken().catch(() => null)) || accessToken;
-  if (!validToken || validToken === 'demo-token') return { success: true, mode: 'local' };
-
   setSyncingState(true);
   try {
-    const deviceId = await getDeviceId();
-    let currentToken = validToken;
-    const folderId = await getOrCreateFolder(currentToken, FOLDER_NAME);
-    currentToken = (await getValidAccessToken().catch(() => null)) || currentToken;
-    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    let existing = await findBackupFile(currentToken, fileName);
-    if (!existing) {
-      existing = await findBackupFile(currentToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
-    }
-    currentToken = (await getValidAccessToken().catch(() => null)) || currentToken;
+    const pid = portfolioId || 'default';
+    const devId = await getDeviceId().catch(() => 'local-device');
+    const snapshot = await buildFullBackupSnapshot(pid, trades || [], devId);
 
-    // Safety guard: Never overwrite an existing Google Drive backup with an empty array
-    // unless forceOverwrite is explicitly true (e.g. user clicked "Clear All Data" in settings).
-    if (!forceOverwrite && (!trades || trades.length === 0) && existing) {
-      console.warn('[SyncEngine] Guard: Refusing to overwrite existing Google Drive backup with empty trades list without forceOverwrite');
-      setSyncingState(false);
-      return { success: true, mode: 'guarded_empty_skipped' };
-    }
+    try {
+      localStorage.setItem(`foxtrade_local_snapshot_${pid}`, JSON.stringify(snapshot));
+    } catch (_) {}
 
-    // Read sync cursor — tells us what we last synced
-    const cursor   = await idbGet(STORES.SYNC_CURSORS, portfolioId);
-    const lastETag = cursor?.lastDriveETag || null;
-
-    let finalTrades = trades;
-    let merged      = false;
-
-    // ── Conflict check: did another device update Drive since our last sync? ──
-    // Only merge if not forcing overwrite AND local has trades (never resurrect onto empty slate)
-    if (!forceOverwrite && trades && trades.length > 0 && existing && lastETag && existing.modifiedTime !== lastETag) {
-      console.log('[SyncEngine] Remote changed since last sync — merging...');
-      const remoteTrades = await loadFromDrive(portfolioId, validToken);
-      if (remoteTrades.length > 0) {
-        finalTrades = mergeTradeArrays(trades, remoteTrades);
-        merged      = true;
-        console.log(`[SyncEngine] Merged: local=${trades.length} remote=${remoteTrades.length} result=${finalTrades.length}`);
-
-        // ── Write merged result back to IDB + notify UI immediately ───────────
-        // This is the fix for Critical Bug 3: without this, the UI only sees
-        // the remote changes on the next manual reload.
-        try {
-          const { bulkPutTrades } = await import('./tradeStore.js');
-          await bulkPutTrades(portfolioId, finalTrades, true /* skipQueue — already synced */);
-          // Fire merge listeners — dbService.js picks this up and notifies React subscribers
-          _notifyMerge(finalTrades.filter(t => !t.deletedAt), portfolioId);
-        } catch (mergeWriteErr) {
-          console.warn('[SyncEngine] Merge write-back to IDB failed:', mergeWriteErr.message);
-        }
-      }
-    }
-
-    // ── Upload ────────────────────────────────────────────────────────────────
-    const compressed = await buildDrivePayload(portfolioId, finalTrades, deviceId);
-    const blob       = new Blob([compressed], { type: 'application/gzip' });
-    const metadata   = { name: fileName, ...(existing ? {} : { parents: [folderId] }) };
-    const form       = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', blob);
-
-    const uploadUrl = existing
-      ? `${DRIVE_UPLOAD_API}/${existing.id}?uploadType=multipart&fields=id,modifiedTime`
-      : `${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id,modifiedTime`;
-    const method = existing ? 'PATCH' : 'POST';
-
-    const uploadResp = await driveFetch(uploadUrl, {
-      method,
-      body: form,
-    }, currentToken);
-
-    if (!uploadResp.ok) {
-      const errorMsg = await parseDriveResponseError(uploadResp, 'Drive upload');
-      throw new Error(errorMsg);
-    }
-
-    const uploadedFile = await uploadResp.json();
-
-    // ── Update sync cursor ────────────────────────────────────────────────────
-    await idbPut(STORES.SYNC_CURSORS, {
-      portfolioId,
-      lastSyncedAt:    Date.now(),
-      lastDriveETag:   uploadedFile.modifiedTime || new Date().toISOString(),
-      lastDriveFileId: uploadedFile.id || existing?.id,
-    });
-
-    // Clean up done operations from queue
     await clearDoneOps().catch(() => {});
-
-    // Sync pending chart images to Drive charts folder
-    syncPendingImages(validToken, portfolioId).catch((err) => {
-      console.warn('[SyncEngine] Background image sync notice:', err.message);
-    });
-
-    console.log(`[SyncEngine] ✓ Synced ${finalTrades.filter(t => !t.deletedAt).length} trades, notes & charts to Drive`);
     setSyncError(null);
-    return { success: true, merged, tradeCount: finalTrades.filter(t => !t.deletedAt).length };
-
-  } catch (err) {
-    console.error('[SyncEngine] Save to Drive failed:', err.message);
-    setSyncError(err.message);
-    return { success: false, merged: false, tradeCount: 0, error: err.message };
-  } finally {
     setSyncingState(false);
+    return { success: true, mode: 'local', merged: false, tradeCount: (trades || []).length, snapshot };
+  } catch (err) {
+    console.error('[SyncEngine] Save local snapshot failed:', err.message);
+    setSyncError(err.message);
+    setSyncingState(false);
+    return { success: false, merged: false, tradeCount: 0, error: err.message };
   }
 }
 
 /**
- * Download and parse backup from Google Drive.
- * Returns empty array on any error (fail-safe, never throws).
+ * Restore and load state from local storage snapshot.
+ * Restores notes, foxy AI, settings, fund management, taxes, and returns trades.
  *
  * @param {string} portfolioId
- * @param {string} accessToken
+ * @param {string} [accessToken]
  * @returns {Promise<object[]>} trade array
  */
 export async function loadFromDrive(portfolioId, accessToken) {
-  const validToken = (await getValidAccessToken().catch(() => null)) || accessToken;
-  if (!validToken || validToken === 'demo-token') return [];
-
   try {
-    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    const existing = await findBackupFile(validToken, fileName);
-
-    // Determine which Drive file to download: current name or legacy name
-    let fileToDownload = existing;
-    if (!fileToDownload) {
-      // Try legacy filename from old driveService.js
-      const legacy = await findBackupFile(validToken, `foxtrade-journal-backup-${portfolioId}.json.gz`);
-      if (!legacy) return [];
-      fileToDownload = legacy;
-    }
-
-    const resp = await driveFetch(`${DRIVE_API}/${fileToDownload.id}?alt=media`, {}, validToken);
-    if (!resp.ok) return [];
-
-    const buffer  = await resp.arrayBuffer();
-    const payload = await parseDrivePayload(buffer);
+    const pid = portfolioId || 'default';
+    const raw = localStorage.getItem(`foxtrade_local_snapshot_${pid}`);
+    if (!raw) return [];
+    const payload = JSON.parse(raw);
     if (!payload) return [];
 
-    // Restore calendar and independent notes if present in Drive backup
-    // Persists to both IDB and localStorage, and notifies active UI subscribers
+    // 1. Restore calendar and independent notes
     if (payload.notes && typeof payload.notes === 'object') {
       try {
         await saveCalendarNotes(payload.notes);
@@ -881,7 +772,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore Foxy AI chats with smart merge
+    // 2. Restore Foxy AI chats
     if (Array.isArray(payload.foxyChats) && payload.foxyChats.length > 0) {
       try {
         const localChats = await getConfig('foxy_ai_chats', []);
@@ -892,7 +783,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore Foxy trader commitments with deduplication
+    // 3. Restore Foxy trader commitments
     if (Array.isArray(payload.foxyCommitments) && payload.foxyCommitments.length > 0) {
       try {
         const localComms = await getConfig('foxy_trader_commitments', []);
@@ -903,11 +794,10 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore Foxy API key and config if present
+    // 4. Restore Foxy API key and config
     if (payload.foxyConfig && typeof payload.foxyConfig === 'object') {
       try {
         const localKey = await getConfig('foxy_ai_api_key', '');
-        // Restore key if remote has one and local is empty
         if (payload.foxyConfig.apiKey && (!localKey || localKey.trim() === '')) {
           await setConfig('foxy_ai_api_key', payload.foxyConfig.apiKey);
         }
@@ -922,7 +812,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore journal settings if present in Drive backup
+    // 5. Restore journal settings
     if (payload.journalSettings && typeof payload.journalSettings === 'object') {
       try {
         const localSettingsStr = localStorage.getItem('tradeontip_settings');
@@ -936,40 +826,13 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore fund management & base capital if present in Drive backup
+    // 6. Restore fund management & base capital
     if (payload.fundManagement && typeof payload.fundManagement === 'object') {
       try {
         await setConfig(`fund_management_${portfolioId}`, payload.fundManagement).catch(() => {});
-        const sourcePid = payload.portfolioId;
-
-        const remapFundKey = (k) => {
-          if (!k) return k;
-          const monthlyMatch = k.match(/^tradeontip_monthly_capital_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
-          if (monthlyMatch) {
-            return `tradeontip_monthly_capital_${portfolioId}_${monthlyMatch[2]}${monthlyMatch[3] || ''}`;
-          }
-          const ledgerMatch = k.match(/^tradeontip_ledger_entries_(?:(portfolio-[a-zA-Z0-9_-]+)_)?(\d{4})(.*)$/);
-          if (ledgerMatch) {
-            return `tradeontip_ledger_entries_${portfolioId}_${ledgerMatch[2]}${ledgerMatch[3] || ''}`;
-          }
-          if (sourcePid && k.includes(sourcePid)) {
-            return k.replace(sourcePid, portfolioId);
-          }
-          return k;
-        };
-
         Object.entries(payload.fundManagement).forEach(([key, val]) => {
           if (key && val) {
-            const targetKey = remapFundKey(key);
-            let remappedVal = val;
-            if (Array.isArray(val) && targetKey.includes('tradeontip_ledger_entries_')) {
-              remappedVal = val.map((entry, idx) => ({
-                ...entry,
-                id: entry.id ? `${entry.id.replace(/portfolio-[a-zA-Z0-9_-]+/, portfolioId)}` : `entry_${portfolioId}_${idx}`,
-                portfolioId
-              }));
-            }
-            localStorage.setItem(targetKey, JSON.stringify(remappedVal));
+            localStorage.setItem(key, JSON.stringify(val));
           }
         });
 
@@ -981,18 +844,15 @@ export async function loadFromDrive(portfolioId, accessToken) {
           await setConfig(`base_capital_${portfolioId}`, Number(payload.baseCapital)).catch(() => {});
         }
 
-        const currentMonthly = JSON.parse(
-          localStorage.getItem(`tradeontip_monthly_capital_${portfolioId}_2026`) || '{}'
-        );
         window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
-          detail: { portfolioId, year: '2026', data: currentMonthly }
+          detail: { portfolioId, year: '2026' }
         }));
       } catch (e) {
         console.warn('[SyncEngine] Restore fund management failed:', e);
       }
     }
 
-    // Restore monthly performance if present in Drive backup
+    // 7. Restore monthly performance
     if (Array.isArray(payload.monthlyPerf)) {
       try {
         for (const item of payload.monthlyPerf) {
@@ -1005,7 +865,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore tax analytics if present in Drive backup
+    // 8. Restore tax analytics
     if (payload.taxAnalytics && typeof payload.taxAnalytics === 'object') {
       try {
         Object.entries(payload.taxAnalytics).forEach(([k, v]) => {
@@ -1019,7 +879,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
       }
     }
 
-    // Restore app settings & column layout if present in Drive backup
+    // 9. Restore app settings & column layout
     if (payload.appSettings && typeof payload.appSettings === 'object') {
       try {
         Object.entries(payload.appSettings).forEach(([k, v]) => {
@@ -1037,7 +897,7 @@ export async function loadFromDrive(portfolioId, accessToken) {
 
     return Array.isArray(payload.trades) ? payload.trades : [];
   } catch (err) {
-    console.warn('[SyncEngine] Load from Drive failed:', err.message);
+    console.warn('[SyncEngine] Load from local snapshot failed:', err.message);
     return [];
   }
 }
@@ -1050,24 +910,23 @@ export async function loadFromDrive(portfolioId, accessToken) {
 export async function getSyncStatus(portfolioId) {
   const cursor = await idbGet(STORES.SYNC_CURSORS, portfolioId);
   return {
-    lastSyncedAt:    cursor?.lastSyncedAt    || null,
-    lastDriveFileId: cursor?.lastDriveFileId || null,
+    lastSyncedAt:    cursor?.lastSyncedAt    || Date.now(),
+    lastDriveFileId: cursor?.lastDriveFileId || 'local',
   };
 }
 
 // ── Auto-sync (debounced) ─────────────────────────────────────────────────────
 
 /**
- * Trigger a debounced Drive sync.
+ * Trigger a debounced local database sync.
  * Waits 15 seconds after the last call before syncing.
- * On page hide / visibility change → flushes immediately.
  *
  * @param {string} portfolioId
  * @param {string} accessToken
- * @param {object[]} trades  — ALL trades (including soft-deleted) for merge
+ * @param {object[]} trades  — ALL trades (including soft-deleted)
  */
 export function triggerAutoSync(portfolioId, accessToken, trades) {
-  if (!accessToken || !portfolioId) return;
+  if (!portfolioId) return;
   if (_syncTimer) clearTimeout(_syncTimer);
 
   _syncTimer = setTimeout(() => {
@@ -1090,7 +949,7 @@ export function triggerAutoSync(portfolioId, accessToken, trades) {
  */
 export async function flushSync(portfolioId, accessToken, trades) {
   if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
-  if (!accessToken || !portfolioId) return;
+  if (!portfolioId) return;
   try {
     await saveToDrive(portfolioId, trades, accessToken);
   } catch (err) {
@@ -1110,9 +969,7 @@ export async function flushSync(portfolioId, accessToken, trades) {
 export function initPageHideFlush(getPortfolioId, getTrades, getToken) {
   const flush = async () => {
     try {
-      const token = await getToken();
-      if (!token) return;
-      await flushSync(getPortfolioId(), token, getTrades());
+      await flushSync(getPortfolioId(), null, getTrades());
     } catch {}
   };
 
@@ -1131,34 +988,38 @@ export function initPageHideFlush(getPortfolioId, getTrades, getToken) {
 // ── Backup Management for Restore UI ──────────────────────────────────────────
 
 /**
- * List all available backup files from Google Drive.
+ * List all available local database snapshots.
  * @param {string} accessToken
- * @returns {Promise<Array<{id: string, name: string, size: number, modifiedTime: string, portfolioId: string}>>}
+ * @returns {Promise<Array<{id: string, name: string, size: number, modifiedTime: string, portfolioId: string, isLocal: boolean}>>}
  */
 export async function listDriveBackups(accessToken) {
-  if (!accessToken || accessToken === 'demo-token') return [];
-
   try {
-    const q = encodeURIComponent("mimeType != 'application/vnd.google-apps.folder' and (name contains 'foxtrade' or name contains 'tradeontip') and trashed = false");
-    const resp = await driveFetch(`${DRIVE_API}?q=${q}&fields=files(id,name,size,modifiedTime,createdTime,appProperties)&orderBy=modifiedTime desc&pageSize=20`, {}, accessToken);
-
-    if (!resp.ok) return [];
-    const { files } = await resp.json();
-    if (!Array.isArray(files)) return [];
-
-    return files.map(f => {
-      // Extract portfolioId from filename foxtrade-journal-{portfolioId}.json.gz
-      const match = f.name.match(/foxtrade-journal-([a-zA-Z0-9_-]+)\./);
-      const portfolioId = match ? match[1] : (f.appProperties?.foxtradePHash || 'default');
-      return {
-        id: f.id,
-        name: f.name,
-        size: parseInt(f.size || '0', 10),
-        modifiedTime: f.modifiedTime,
-        createdTime: f.createdTime,
-        portfolioId,
-      };
-    });
+    const list = [];
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('foxtrade_local_snapshot_')) {
+          const raw = localStorage.getItem(key);
+          try {
+            const data = JSON.parse(raw);
+            const pid = data.portfolioId || key.replace('foxtrade_local_snapshot_', '');
+            const tradeCount = Array.isArray(data.trades) ? data.trades.filter(t => !t.deletedAt).length : 0;
+            list.push({
+              id: key,
+              name: `Local Snapshot (${pid})`,
+              size: raw ? raw.length : 0,
+              modifiedTime: data.exportedAt || new Date().toISOString(),
+              createdTime: data.exportedAt || new Date().toISOString(),
+              portfolioId: pid,
+              tradeCount,
+              isLocal: true,
+              data
+            });
+          } catch (_) {}
+        }
+      }
+    }
+    return list.sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
   } catch (err) {
     console.warn('[SyncEngine] listDriveBackups error:', err.message);
     return [];
@@ -1166,20 +1027,21 @@ export async function listDriveBackups(accessToken) {
 }
 
 /**
- * Download a specific backup file by its Drive fileId.
+ * Download a specific local backup snapshot by key.
  * @param {string} fileId
  * @param {string} accessToken
  * @returns {Promise<object|null>} parsed backup object { trades, metadata, exportedAt, version }
  */
 export async function downloadBackupFileById(fileId, accessToken) {
-  if (!fileId || !accessToken) return null;
-
+  if (!fileId) return null;
   try {
-    const resp = await driveFetch(`${DRIVE_API}/${fileId}?alt=media&acknowledgeAbuse=true`, {}, accessToken);
-    if (!resp.ok) return null;
+    const raw = localStorage.getItem(fileId);
+    if (raw) return JSON.parse(raw);
 
-    const buffer = await resp.arrayBuffer();
-    return parseDrivePayload(buffer);
+    const byPid = localStorage.getItem(`foxtrade_local_snapshot_${fileId}`);
+    if (byPid) return JSON.parse(byPid);
+
+    return null;
   } catch (err) {
     console.error('[SyncEngine] downloadBackupFileById error:', err.message);
     return null;
@@ -1187,19 +1049,19 @@ export async function downloadBackupFileById(fileId, accessToken) {
 }
 
 /**
- * Delete a backup file by fileId from Google Drive.
+ * Delete a local backup snapshot.
  * @param {string} fileId
  * @param {string} accessToken
  * @returns {Promise<boolean>}
  */
 export async function deleteBackupFileById(fileId, accessToken) {
-  if (!fileId || !accessToken) return false;
-
+  if (!fileId) return false;
   try {
-    const resp = await driveFetch(`${DRIVE_API}/${fileId}`, {
-      method: 'DELETE',
-    }, accessToken);
-    return resp.ok;
+    localStorage.removeItem(fileId);
+    if (!fileId.startsWith('foxtrade_local_snapshot_')) {
+      localStorage.removeItem(`foxtrade_local_snapshot_${fileId}`);
+    }
+    return true;
   } catch (err) {
     console.error('[SyncEngine] deleteBackupFileById error:', err.message);
     return false;
@@ -1207,18 +1069,21 @@ export async function deleteBackupFileById(fileId, accessToken) {
 }
 
 /**
- * Delete all FoxTrade backup files from Google Drive.
- * Used on "Clear All Data" so remote backups don't resurrect deleted trades.
- *
+ * Delete all FoxTrade local backup snapshots.
  * @param {string} accessToken
  * @returns {Promise<boolean>}
  */
 export async function clearAllDriveBackups(accessToken) {
-  if (!accessToken || accessToken === 'demo-token') return false;
   try {
-    const files = await listDriveBackups(accessToken);
-    if (files.length > 0) {
-      await Promise.all(files.map(f => deleteBackupFileById(f.id, accessToken)));
+    if (typeof localStorage !== 'undefined') {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('foxtrade_local_snapshot_')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
     }
     return true;
   } catch (err) {
@@ -1228,35 +1093,20 @@ export async function clearAllDriveBackups(accessToken) {
 }
 
 /**
- * Delete backup files for a specific portfolio from Google Drive.
- * Used when user clears all data for that specific portfolio.
- *
+ * Delete local backup snapshot for a specific portfolio.
  * @param {string} portfolioId
  * @param {string} accessToken
  * @returns {Promise<boolean>}
  */
 export async function deleteBackupForPortfolio(portfolioId, accessToken) {
-  if (!accessToken || accessToken === 'demo-token' || !portfolioId) return false;
+  if (!portfolioId) return false;
   try {
-    const files = await listDriveBackups(accessToken);
-    const matching = files.filter(f => f.portfolioId === portfolioId || f.name.includes(portfolioId));
-    if (matching.length > 0) {
-      await Promise.all(matching.map(f => deleteBackupFileById(f.id, accessToken)));
-    }
-    const fileName = `foxtrade-journal-${portfolioId}.json.gz`;
-    const exact = await findBackupFile(accessToken, fileName);
-    if (exact) {
-      await deleteBackupFileById(exact.id, accessToken);
-    }
-    const legacyFileName = `foxtrade-journal-backup-${portfolioId}.json.gz`;
-    const legacyExact = await findBackupFile(accessToken, legacyFileName);
-    if (legacyExact) {
-      await deleteBackupFileById(legacyExact.id, accessToken);
-    }
+    localStorage.removeItem(`foxtrade_local_snapshot_${portfolioId}`);
     return true;
   } catch (err) {
     console.warn('[SyncEngine] deleteBackupForPortfolio error:', err);
     return false;
   }
 }
+
 

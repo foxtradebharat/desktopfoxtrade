@@ -212,78 +212,7 @@ export async function getUnsyncedImages(portfolioId) {
  * @returns {Promise<{uploaded: number, failed: number}>}
  */
 export async function syncPendingImages(accessToken, portfolioId) {
-  const unsynced = await getUnsyncedImages(portfolioId);
-  if (unsynced.length === 0) return { uploaded: 0, failed: 0 };
-
-  let uploaded = 0;
-  let failed   = 0;
-
-  let folderId;
-  try {
-    folderId = await getDriveChartsFolder(accessToken, portfolioId);
-  } catch (err) {
-    console.error('[ImageStore] Could not get Drive charts folder:', err.message);
-    return { uploaded: 0, failed: unsynced.length };
-  }
-
-  const driveClient = getDriveClient();
-
-  for (const img of unsynced) {
-    try {
-      // Check if file already exists in Drive (prevents duplicate files on retry)
-      const searchQ = encodeURIComponent(
-        `name='${img.filename}' and '${folderId}' in parents and trashed=false`
-      );
-      const searchResp = await driveClient.fetch(`${DRIVE_API}?q=${searchQ}&fields=files(id)&pageSize=1`);
-      const existingFile = searchResp.ok
-        ? (await searchResp.json()).files?.[0] || null
-        : null;
-
-      const form = new FormData();
-      if (existingFile) {
-        // File already exists — PATCH to update it (no duplicate)
-        const metadata = { name: img.filename };
-        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-        form.append('file',     img.blob);
-        const resp = await driveClient.fetch(
-          `${DRIVE_UPLOAD_API}/${existingFile.id}?uploadType=multipart&fields=id`,
-          { method: 'PATCH', body: form }
-        );
-        if (!resp.ok) throw new Error(`Update failed: ${resp.status}`);
-        const { id: driveFileId } = await resp.json();
-        await idbPut(STORES.CHART_IMAGES, {
-          ...img,
-          driveFileId,
-          driveFilePath: `FoxTrade Backups/charts/${portfolioId}/${img.filename}`,
-          syncedToDrive: true,
-        });
-      } else {
-        // New file — POST to create
-        const metadata = { name: img.filename, parents: [folderId] };
-        form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-        form.append('file',     img.blob);
-        const resp = await driveClient.fetch(`${DRIVE_UPLOAD_API}?uploadType=multipart&fields=id`, {
-          method:  'POST',
-          body:    form,
-        });
-        if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
-        const { id: driveFileId } = await resp.json();
-        await idbPut(STORES.CHART_IMAGES, {
-          ...img,
-          driveFileId,
-          driveFilePath: `FoxTrade Backups/charts/${portfolioId}/${img.filename}`,
-          syncedToDrive: true,
-        });
-      }
-
-      uploaded++;
-    } catch (err) {
-      console.warn(`[ImageStore] Failed to upload image ${img.id}:`, err.message);
-      failed++;
-    }
-  }
-
-  return { uploaded, failed };
+  return { uploaded: 0, failed: 0 };
 }
 
 /**

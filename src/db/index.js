@@ -71,6 +71,7 @@ export {
   mergeFoxyChats,
   mergeFoxyCommitments,
   buildDrivePayload,
+  buildFullBackupSnapshot,
   parseDrivePayload,
   saveToDrive,
   loadFromDrive,

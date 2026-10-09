@@ -291,6 +291,19 @@ export function saveLedgerEntries(portfolioId = 'portfolio-default', year = '202
         detail: { portfolioId, year, data: derivedAggregates, entries: cleanEntries, baseCapital: initialAdded }
       }));
     }
+
+    // Persist to IndexedDB config store and trigger real-time auto-sync
+    if (typeof indexedDB !== 'undefined') {
+      try {
+        import('../db/configStore.js').then(({ setConfig }) => {
+          setConfig(key, cleanEntries).catch(() => {});
+          setConfig(legacyKey, derivedAggregates).catch(() => {});
+        }).catch(() => {});
+        import('../db/syncEngine.js').then(({ triggerAutoSync }) => {
+          triggerAutoSync(portfolioId);
+        }).catch(() => {});
+      } catch (_) {}
+    }
   } catch (err) {
     console.error('Error saving ledger entries:', err);
   }
@@ -369,6 +382,18 @@ export function saveCapitalChanges(portfolioId = 'portfolio-default', year = '20
       window.dispatchEvent(new CustomEvent('tradeontip_capital_updated', {
         detail: { portfolioId, year, data, entries, baseCapital: initialAdded }
       }));
+    }
+
+    // Persist to IndexedDB config store and trigger real-time auto-sync
+    if (typeof indexedDB !== 'undefined') {
+      try {
+        import('../db/configStore.js').then(({ setConfig }) => {
+          setConfig(key, data).catch(() => {});
+        }).catch(() => {});
+        import('../db/syncEngine.js').then(({ triggerAutoSync }) => {
+          triggerAutoSync(portfolioId);
+        }).catch(() => {});
+      } catch (_) {}
     }
   } catch (err) {
     console.error('Error saving capital changes:', err);

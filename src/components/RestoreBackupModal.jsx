@@ -44,7 +44,6 @@ import {
   saveToDrive,
   syncPendingImages,
 } from '../db/index.js';
-import { requestAccessToken } from '../services/googleDrive.js';
 
 function formatRelativeTime(isoString) {
   if (!isoString) return 'recently';
@@ -278,8 +277,6 @@ export default function RestoreBackupModal({
   const [isRestoring, setIsRestoring] = useState(false);
   const [selectedBackupData, setSelectedBackupData] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [isConnectingDrive, setIsConnectingDrive] = useState(false);
-
   // 5-Category Restore Scope Configuration
   const [journalStrategy, setJournalStrategy] = useState('merge'); // 'merge' | 'overwrite' | 'skip'
   const [monthlyStrategy, setMonthlyStrategy] = useState('overwrite'); // 'overwrite' | 'merge' | 'skip'
@@ -294,25 +291,20 @@ export default function RestoreBackupModal({
   // File Upload Ref
   const fileInputRef = useRef(null);
 
-  // Fetch Available Backups from Google Drive on open
+  // Fetch Available Backups from Local Database on open
   useEffect(() => {
     if (!isOpen) return;
     loadBackups();
-  }, [isOpen, accessToken]);
+  }, [isOpen]);
 
   const loadBackups = async () => {
     setIsLoading(true);
     try {
-      const token = await getValidAccessToken().catch(() => accessToken);
-      let driveList = [];
-      if (token && token !== 'demo-token') {
-        driveList = await listDriveBackups(token);
-      }
-
-      setBackups(driveList);
-      if (driveList.length > 0) {
-        if (!selectedBackup || !driveList.some(b => b.id === selectedBackup.id)) {
-          handleSelectBackup(driveList[0]);
+      const localList = await listDriveBackups();
+      setBackups(localList);
+      if (localList.length > 0) {
+        if (!selectedBackup || !localList.some(b => b.id === selectedBackup.id)) {
+          handleSelectBackup(localList[0]);
         }
       } else {
         setSelectedBackup(null);
@@ -330,57 +322,20 @@ export default function RestoreBackupModal({
     setLoadingDetails(true);
 
     try {
-      if (backup.isLocal) {
-        setSelectedBackupData({
-          trades: currentTrades,
-          version: '3.0',
-          exportedAt: backup.modifiedTime,
-          metadata: { tradeCount: currentTrades.length }
-        });
+      if (backup.data) {
+        setSelectedBackupData(backup.data);
       } else if (backup.isLocalUpload) {
         setSelectedBackupData(backup.data);
       } else {
-        const token = await getValidAccessToken().catch(() => accessToken);
-        if (token) {
-          const data = await downloadBackupFileById(backup.id, token);
-          if (data) {
-            setSelectedBackupData(data);
-          }
+        const data = await downloadBackupFileById(backup.id);
+        if (data) {
+          setSelectedBackupData(data);
         }
       }
     } catch (err) {
       console.warn('[RestoreBackupModal] Error fetching backup details:', err);
     } finally {
       setLoadingDetails(false);
-    }
-  };
-
-  // Connect Google Drive directly from modal empty state
-  const handleConnectDrive = async () => {
-    setIsConnectingDrive(true);
-    try {
-      const token = await requestAccessToken();
-      if (token) {
-        if (onShowToast) {
-          onShowToast({
-            title: 'Google Drive Connected',
-            message: 'Loading cloud backups from your Drive...',
-            type: 'success'
-          });
-        }
-        await loadBackups();
-      }
-    } catch (err) {
-      console.error('[RestoreBackupModal] Drive connect error:', err);
-      if (onShowToast) {
-        onShowToast({
-          title: 'Connection Error',
-          message: err.message || 'Could not connect to Google Drive',
-          type: 'error'
-        });
-      }
-    } finally {
-      setIsConnectingDrive(false);
     }
   };
 
@@ -533,13 +488,12 @@ export default function RestoreBackupModal({
     }
 
     const displayName = getPortfolioDisplayName(backup, portfolios);
-    if (!window.confirm(`Are you sure you want to delete backup "${displayName}" (${backup.name}) from Google Drive?`)) {
+    if (!window.confirm(`Are you sure you want to delete backup snapshot "${displayName}" (${backup.name})?`)) {
       return;
     }
 
     try {
-      const token = await getValidAccessToken().catch(() => accessToken);
-      const ok = await deleteBackupFileById(backup.id, token);
+      const ok = await deleteBackupFileById(backup.id);
       if (ok) {
         setBackups(prev => prev.filter(b => b.id !== backup.id));
         if (selectedBackup?.id === backup.id) {
@@ -549,7 +503,7 @@ export default function RestoreBackupModal({
         if (onShowToast) {
           onShowToast({
             title: 'Backup Deleted',
-            message: 'Backup file removed from Google Drive',
+            message: 'Backup snapshot removed from local storage',
             type: 'info'
           });
         }
@@ -878,12 +832,9 @@ export default function RestoreBackupModal({
       }
 
       // 9. IMMEDIATELY FLUSH RESTORED STATE TO GOOGLE DRIVE
-      const token = await getValidAccessToken().catch(() => accessToken);
-      if (token && token !== 'demo-token') {
-        saveToDrive(targetPortfolio, finalTradesToSave, token, true).catch(err => {
-          console.warn('[RestoreBackupModal] Post-restore Drive sync notification:', err?.message || err);
-        });
-      }
+      saveToDrive(targetPortfolio, finalTradesToSave, null, true).catch(err => {
+        console.warn('[RestoreBackupModal] Post-restore snapshot error:', err?.message || err);
+      });
 
       if (onShowToast) {
         onShowToast({
@@ -1124,16 +1075,15 @@ export default function RestoreBackupModal({
                     justifyContent: 'center',
                     color: '#3b82f6'
                   }}>
-                    <Cloud size={20} />
+                    <Download size={20} />
                   </div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>No Cloud Backups Found</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>No Local Snapshots Found</div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted, #9ca3af)', maxWidth: '200px', lineHeight: 1.4 }}>
-                    Connect Google Drive to load your cloud snapshots or upload a file.
+                    Snapshots are automatically saved to local storage, or you can import a JSON backup file.
                   </div>
 
                   <button
-                    onClick={handleConnectDrive}
-                    disabled={isConnectingDrive}
+                    onClick={() => fileInputRef.current?.click()}
                     style={{
                       marginTop: '8px',
                       padding: '8px 14px',
@@ -1149,8 +1099,8 @@ export default function RestoreBackupModal({
                       gap: '6px'
                     }}
                   >
-                    <Cloud size={13} />
-                    <span>{isConnectingDrive ? 'Connecting...' : 'Connect Google Drive'}</span>
+                    <Upload size={13} />
+                    <span>Upload Backup File</span>
                   </button>
                 </div>
               ) : (

@@ -1,12 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { db } from './services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getBaseCapital } from './services/dbAdapter';
 import { saveUserTrades, getUserTrades, subscribeToUserTrades, setDriveContext, clearUserTrades, clearOldV1IDB } from './services/dbService';
 import { fetchStockPrice } from './services/yahooService';
 import { fetchLiveCMPForSymbol, getCachedCMP } from './services/strikePriceService';
 import { liveMarketFeed } from './services/liveMarketFeed';
-import { loadGoogleGsiScript, requestAccessToken, downloadBackupFromDrive, uploadBackupToDrive, clearAllDriveBackups, deleteBackupForPortfolio, subscribeToDriveStatus, requestOfflineRefreshToken } from './services/googleDrive';
-import { subscribeToTokenUpdate, getValidAccessToken, clearOpsForPortfolio, getDB, STORES, idbDelete, setActivePortfolioId as setConfigActivePortfolioId, setPortfolios as setPortfoliosConfig } from './db/index';
+import { subscribeToTokenUpdate, getValidAccessToken, clearOpsForPortfolio, getDB, STORES, idbDelete, setActivePortfolioId as setConfigActivePortfolioId, setPortfolios as setPortfoliosConfig, buildFullBackupSnapshot, setConfig, triggerAutoSync } from './db/index';
 import TopBar from './components/TopBar';
 import Toolbar from './components/Toolbar';
 import StatCards from './components/StatCards';
@@ -138,30 +136,6 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     loadBrokerCharges().then(map => setChargesMap(map)).catch(() => setChargesMap({}));
   }, []);
 
-  // Google Drive connection status & reconnect handler
-  const [driveStatus, setDriveStatusState] = useState('connected');
-
-  useEffect(() => {
-    const unsub = subscribeToDriveStatus((status) => {
-      setDriveStatusState(status);
-    });
-    return unsub;
-  }, []);
-
-  const handleReconnectDrive = async () => {
-    if (onGoogleLogin) {
-      try {
-        const res = await onGoogleLogin();
-        if (res?.accessToken) {
-          await requestOfflineRefreshToken(res.user?.email || user?.email, res.user?.uid || user?.uid);
-        }
-      } catch (e) {
-        console.warn('[Dashboard] Reconnect Drive error:', e);
-      }
-    } else {
-      await requestOfflineRefreshToken(user?.email, user?.uid);
-    }
-  };
 
   // Activate Google Drive auto-backup context when user is authenticated
   useEffect(() => {
@@ -242,7 +216,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const [hideValues, setHideValues]     = useState(false);
   const [activeTab, setActiveTab]       = useState(() => {
     try {
-      const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+      const raw = window.location.protocol === 'file:'
+        ? (window.location.hash || '').replace(/^#\/?/, '').toLowerCase()
+        : window.location.pathname.replace(/^\//, '').toLowerCase();
+      const path = raw;
       if (path === 'analytics') return 'analytics';
       if (path === 'playbook') return 'playbook';
       if (path === 'stock-charts' || path === 'charts') return 'stock-charts';
@@ -262,9 +239,20 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // Sync activeTab with URL and document.title
   useEffect(() => {
-    const newPath = activeTab === 'journal' ? '/' : `/${activeTab}`;
-    if (window.location.pathname !== newPath) {
-      window.history.pushState(null, '', newPath);
+    try {
+      if (window.location.protocol === 'file:') {
+        const newHash = activeTab === 'journal' ? '#/' : `#/${activeTab}`;
+        if (window.location.hash !== newHash) {
+          window.history.replaceState(null, '', newHash);
+        }
+      } else {
+        const newPath = activeTab === 'journal' ? '/' : `/${activeTab}`;
+        if (window.location.pathname !== newPath) {
+          window.history.pushState(null, '', newPath);
+        }
+      }
+    } catch (e) {
+      console.warn('[Dashboard] URL sync warning:', e);
     }
     const tabTitles = {
       'journal': 'Journal',
@@ -367,11 +355,20 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
 
   // Persist visible columns & column order
   useEffect(() => {
-    localStorage.setItem('tradeontip_visible_cols_v5', JSON.stringify(Array.from(visibleCols)));
+    const colsArr = Array.from(visibleCols);
+    localStorage.setItem('tradeontip_visible_cols_v5', JSON.stringify(colsArr));
+    try {
+      setConfig('visible_cols_v5', colsArr).catch(() => {});
+      triggerAutoSync(activePortfolioId, null, trades);
+    } catch (_) {}
   }, [visibleCols]);
 
   useEffect(() => {
     localStorage.setItem('tradeontip_col_order_v5', JSON.stringify(columnOrder));
+    try {
+      setConfig('col_order_v5', columnOrder).catch(() => {});
+      triggerAutoSync(activePortfolioId, null, trades);
+    } catch (_) {}
   }, [columnOrder]);
 
   const handleToggleCol = (colId) => {
@@ -446,16 +443,35 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     } catch {}
   }, [themeMode]);
 
-  // Load initialBaseCapital from Firestore
+  // Load initialBaseCapital from local database / settings
   useEffect(() => {
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      getDoc(doc(db, 'journals', user.uid)).then(d => {
-        if (d.exists() && d.data().initialBaseCapital) {
-          setPortfolioCapital(d.data().initialBaseCapital);
-        }
-      }).catch(() => {});
-    }
-  }, [user]);
+    getBaseCapital(activePortfolioId).then(cap => {
+      if (cap && typeof cap === 'number' && cap > 0) {
+        setPortfolioCapital(cap);
+      }
+    }).catch(() => {});
+  }, [user, activePortfolioId]);
+
+  // Native Windows power & sleep resilience (pause feeds on sleep, refresh on wake)
+  useEffect(() => {
+    if (!window.electronAPI?.system?.onPowerSuspend) return;
+
+    const unsubSuspend = window.electronAPI.system.onPowerSuspend(() => {
+      console.log('[System Power] PC is sleeping. Pausing live market feeds & polling.');
+      liveMarketFeed.stop();
+    });
+
+    const unsubResume = window.electronAPI.system.onPowerResume(() => {
+      console.log('[System Power] PC resumed from sleep. Reconnecting live feeds & refreshing CMP.');
+      liveMarketFeed.start();
+      liveMarketFeed.fetchFastInitialPrices();
+    });
+
+    return () => {
+      if (unsubSuspend) unsubSuspend();
+      if (unsubResume) unsubResume();
+    };
+  }, []);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -468,6 +484,53 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const [isBrokerImportOpen, setIsBrokerImportOpen] = useState(false);
   const [isBrokerConnectivityOpen, setIsBrokerConnectivityOpen] = useState(false);
   const [isChartGalleryOpen, setIsChartGalleryOpen] = useState(false);
+
+  // ── Native Menu & Keyboard Accelerators Integration ─────────
+  useEffect(() => {
+    const handleNewTrade = () => {
+      setEditingTrade(null);
+      setIsAddModalOpen(true);
+    };
+    const handleImportTrades = () => setIsBrokerImportOpen(true);
+    const handleOpenSettings = () => setIsSettingsOpen(true);
+    const handleToggleTheme = () => {
+      setThemeMode(prev => (prev === 'light' ? 'dark' : (prev === 'dark' ? 'pitch-black' : 'light')));
+    };
+
+    window.addEventListener('menu:new-trade', handleNewTrade);
+    window.addEventListener('menu:import-trades', handleImportTrades);
+    window.addEventListener('menu:open-settings', handleOpenSettings);
+    window.addEventListener('menu:toggle-theme', handleToggleTheme);
+
+    return () => {
+      window.removeEventListener('menu:new-trade', handleNewTrade);
+      window.removeEventListener('menu:import-trades', handleImportTrades);
+      window.removeEventListener('menu:open-settings', handleOpenSettings);
+      window.removeEventListener('menu:toggle-theme', handleToggleTheme);
+    };
+  }, []);
+
+  // ── OS-Aware System Theme Integration ─────────
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.theme) {
+      window.electronAPI.theme.getSystemTheme().then(res => {
+        const savedTheme = localStorage.getItem('tradeontip_theme');
+        if (!savedTheme) {
+          setThemeMode(res?.isDark ? 'dark' : 'light');
+        }
+      }).catch(() => {});
+
+      const unsub = window.electronAPI.theme.onSystemThemeChange(res => {
+        const savedTheme = localStorage.getItem('tradeontip_theme');
+        if (!savedTheme) {
+          setThemeMode(res?.isDark ? 'dark' : 'light');
+        }
+      });
+      return () => {
+        if (unsub) unsub();
+      };
+    }
+  }, []);
   const [journalViewMode, setJournalViewMode] = useState('stats'); // 'stats' | 'portfolio' | 'grid' | 'notes'
   const [holdingsSortBy, setHoldingsSortBy]   = useState('pl'); // 'pl' | 'name' | 'allocation'
   const [journalSettings, setJournalSettings] = useState(() => {
@@ -487,6 +550,10 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     setJournalSettings(prev => {
       const updated = { ...prev, [key]: value };
       localStorage.setItem('tradeontip_settings', JSON.stringify(updated));
+      try {
+        setConfig('journal_settings', updated).catch(() => {});
+        triggerAutoSync(activePortfolioId, null, trades);
+      } catch (_) {}
       return updated;
     });
     if (key === 'tradingMarket') {
@@ -632,29 +699,13 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
       // 4. Hard-clear old foxtrade_db v1 so migration never brings deleted trades back
       await clearOldV1IDB(user?.uid).catch(() => {});
 
-      // 5. Clear Google Drive backup for this specific portfolio
-      const validDriveToken = accessToken || (await getValidAccessToken().catch(() => null));
-      if (validDriveToken && validDriveToken !== 'demo-token') {
-        await deleteBackupForPortfolio(validDriveToken, targetPortfolioId).catch(err => console.warn('[Drive Clear Error]:', err));
-        await uploadBackupToDrive(validDriveToken, [], targetPortfolioId, true).catch(err => console.warn('[Drive Overwrite Error]:', err));
-      }
+      // 5. Clear local snapshot backup for this specific portfolio
+      try {
+        localStorage.removeItem(`foxtrade_local_snapshot_${targetPortfolioId}`);
+      } catch (_) {}
 
-      // 6. Clear Firestore if user is authenticated (preserving trades from other portfolios)
-      if (user?.uid && !user.uid.startsWith('demo-')) {
-        try {
-          const userDocRef = doc(db, 'journals', user.uid);
-          const snap = await getDoc(userDocRef).catch(() => null);
-          if (snap && snap.exists()) {
-            const data = snap.data();
-            const currentFirestoreTrades = Array.isArray(data.trades) ? data.trades : [];
-            const remainingFirestoreTrades = currentFirestoreTrades.filter(t => (t.portfolioId || 'portfolio-default') !== targetPortfolioId);
-            await setDoc(userDocRef, {
-              trades: remainingFirestoreTrades,
-              lastUpdated: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
-          }
-        } catch (_) {}
-      }
+
+      // 6. Data cleared from local storage and SQLite via clearUserTrades
 
       // 7. Update active React states immediately
       lastSavedTradesJsonRef.current = '[]';
@@ -902,24 +953,27 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         } else {
           // Local IDB has 0 trades for this portfolio
           let restored = false;
-          if (!wasCleared && accessTokenRef.current) {
-            // Only restore from Google Drive if NOT explicitly cleared!
+          if (!wasCleared) {
             try {
-              const driveTrades = await downloadBackupFromDrive(accessTokenRef.current, activePortfolioId);
-              if (isMounted && Array.isArray(driveTrades) && driveTrades.length > 0) {
-                const scoped = driveTrades.map(t => ({ ...t, portfolioId: activePortfolioId }));
-                currentTradesPortfolioRef.current = activePortfolioId;
-                lastSavedTradesPortfolioRef.current = activePortfolioId;
-                lastSavedTradesJsonRef.current = JSON.stringify(scoped);
-                setTrades(scoped);
-                try {
-                  localStorage.setItem(portfolioTradesKey, JSON.stringify(scoped));
-                } catch (_) {}
-                await saveUserTrades(user.uid, scoped, activePortfolioId);
-                restored = true;
+              const snapshotRaw = localStorage.getItem(`foxtrade_local_snapshot_${activePortfolioId}`);
+              if (snapshotRaw) {
+                const snapshot = JSON.parse(snapshotRaw);
+                const localTrades = snapshot?.trades || [];
+                if (isMounted && Array.isArray(localTrades) && localTrades.length > 0) {
+                  const scoped = localTrades.map(t => ({ ...t, portfolioId: activePortfolioId }));
+                  currentTradesPortfolioRef.current = activePortfolioId;
+                  lastSavedTradesPortfolioRef.current = activePortfolioId;
+                  lastSavedTradesJsonRef.current = JSON.stringify(scoped);
+                  setTrades(scoped);
+                  try {
+                    localStorage.setItem(portfolioTradesKey, JSON.stringify(scoped));
+                  } catch (_) {}
+                  await saveUserTrades(user.uid, scoped, activePortfolioId);
+                  restored = true;
+                }
               }
             } catch (err) {
-              console.warn('[Google Drive Mount Load Error]:', err);
+              console.warn('[Local Snapshot Mount Load Error]:', err);
             }
           }
 
@@ -965,8 +1019,9 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
   const lastSavedTradesPortfolioRef = useRef(activePortfolioId);
 
   useEffect(() => {
-    // CRITICAL GUARD: Never save while initial loading is in progress or user not logged in!
-    if (loadingTrades || !user?.uid) return;
+    // CRITICAL GUARD: Never save while initial loading is in progress!
+    const effectiveUserId = user?.uid || 'local-user';
+    if (loadingTrades || !effectiveUserId) return;
 
     // Strict portfolio match guard: prevent saving across portfolio boundaries
     if (lastSavedTradesPortfolioRef.current !== activePortfolioId || currentTradesPortfolioRef.current !== activePortfolioId) {
@@ -984,14 +1039,14 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     }
 
     if (currentJson === lastSavedTradesJsonRef.current) {
-      // Data hasn't actually changed — skip redundant writes and Drive sync
+      // Data hasn't actually changed — skip redundant writes and local auto-sync
       return;
     }
 
     lastSavedTradesJsonRef.current = currentJson;
-    // Instant save to IndexedDB and Local Cache (also automatically triggers debounced Drive auto-sync)
+    // Instant save to IndexedDB and Local Cache (also automatically triggers debounced local auto-sync)
     const scopedTrades = trades.map(t => ({ ...t, portfolioId: activePortfolioId }));
-    saveUserTrades(user.uid, scopedTrades, activePortfolioId);
+    saveUserTrades(effectiveUserId, scopedTrades, activePortfolioId);
   }, [trades, loadingTrades, user?.uid, activePortfolioId]);
 
   // Listen for restored settings from Cloud backup
@@ -1838,33 +1893,25 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
     }));
   };
 
-  const handleGoogleDriveSync = async () => {
+  const handleExportBackup = async () => {
     try {
-      await loadGoogleGsiScript();
-      const token = await requestAccessToken();
-      if (!token) return;
-
-      const driveTrades = await downloadBackupFromDrive(token);
-      let mergedTrades = [...trades];
-      let hasChanges = false;
-
-      if (Array.isArray(driveTrades) && driveTrades.length > 0) {
-        driveTrades.forEach(dt => {
-          if (!mergedTrades.some(t => t.id === dt.id)) {
-            mergedTrades.push(dt);
-            hasChanges = true;
-          }
-        });
+      if (!trades || trades.length === 0) {
+        alert('No trades available to export.');
+        return;
       }
-
-      await uploadBackupToDrive(token, mergedTrades);
-      if (hasChanges) {
-        setTrades(mergedTrades);
-      }
-      alert('Google Drive Sync completed successfully! Trades synchronized.');
+      const snapshot = await buildFullBackupSnapshot(activePortfolioId, trades);
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `foxtrade-backup-${activePortfolioId}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('[Google Drive Sync error]:', err);
-      alert('Google Drive Sync failed. Please configure your Client ID.');
+      console.error('[Export backup error]:', err);
+      alert('Failed to export backup file.');
     }
   };
 
@@ -2346,66 +2393,6 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         />
       )}
 
-      {/* Reconnect Google Drive Banner (Displayed ONLY when invalid_grant or revoked) */}
-      {driveStatus === 'needs_reconnect' && (
-        <div style={{
-          margin: '8px 24px 0 24px',
-          padding: '12px 18px',
-          backgroundColor: 'rgba(239, 68, 68, 0.08)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
-          borderRadius: '10px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          fontSize: '13px',
-          color: 'var(--text-primary, #09090b)',
-          boxShadow: '0 2px 6px rgba(239, 68, 68, 0.08)',
-          animation: 'fadeIn 0.2s ease',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              backgroundColor: 'rgba(239, 68, 68, 0.15)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}>
-              <AlertTriangle size={15} color="#ef4444" />
-            </div>
-            <div>
-              <strong style={{ fontWeight: 600, color: '#ef4444' }}>Google Drive Connection Expired or Revoked</strong>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary, #71717a)', marginTop: '2px' }}>
-                Your Google session was revoked or password changed. Reconnect once to resume persistent cloud sync.
-              </div>
-            </div>
-          </div>
-          <button
-            onClick={handleReconnectDrive}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '6px',
-              backgroundColor: '#ef4444',
-              color: '#ffffff',
-              border: 'none',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'opacity 0.15s ease',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-          >
-            <RefreshCw size={13} />
-            <span>Reconnect Google Drive</span>
-          </button>
-        </div>
-      )}
 
       {/* Date Issues Notification Banner (Below TopBar/Notification Area, White/Black Theme, Red/Green Numbers, Lucide Icon) */}
       {flaggedDateTrades.length > 0 && (
@@ -2493,7 +2480,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
           onElectricityBillClick={() => setIsElectricityBillOpen(true)}
           onImportClick={() => setIsBrokerImportOpen(true)}
           onExportClick={handleExportCSV}
-          onGoogleDriveSyncClick={handleGoogleDriveSync}
+          onGoogleDriveSyncClick={handleExportBackup}
           onColumnsClick={() => setIsSettingsOpen(true)}
           onViewChartClick={() => setActiveTab('stock-charts')}
           onBrowseImagesClick={() => setIsChartGalleryOpen(true)}
@@ -2843,7 +2830,7 @@ export default function Dashboard({ user, accessToken, onLogout, onGoogleLogin }
         backupWarning={backupWarning}
         accessToken={accessToken}
         trades={trades}
-        onGoogleDriveSyncClick={handleGoogleDriveSync}
+        onGoogleDriveSyncClick={handleExportBackup}
         onGoogleLogin={onGoogleLogin}
         user={user}
         portfolios={portfolios}

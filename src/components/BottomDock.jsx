@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   BookOpenCheck, BarChart2, Activity, Calculator, Wallet, 
-  BrainCircuit, Pencil, Cloud, Settings, Compass, Sparkles, Target
+  BrainCircuit, Pencil, Database, Settings, Compass, Sparkles, Target
 } from 'lucide-react';
 import CloudSyncPopover from './CloudSyncPopover';
 import AccountSettingsPopover from './AccountSettingsPopover';
@@ -12,14 +12,10 @@ import FoxyAiIcon from './FoxyAiIcon';
 import { 
   subscribeToSyncStatus, 
   subscribeToSyncError, 
-  subscribeToTokenExpired,
-  subscribeToTokenUpdate,
   setSyncError 
 } from '../db/index.js';
 import { saveTradesToDrive } from '../services/driveService.js';
-import { getValidAccessToken } from '../db/tokenManager.js';
 import { bulkPutTrades } from '../db/tradeStore.js';
-import { requestOfflineRefreshToken } from '../services/googleDrive.js';
 
 export default function BottomDock({ 
   activeTab, 
@@ -43,7 +39,8 @@ export default function BottomDock({
   onClearAllData,
   onTradesRestored,
   onShowToast,
-  onGoogleLogin
+  onGoogleLogin,
+  isDemo = false
 }) {
   const [isCloudOpen, setIsCloudOpen] = useState(false);
   const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
@@ -53,85 +50,20 @@ export default function BottomDock({
   const [hasValidDriveToken, setHasValidDriveToken] = useState(false);
   const settingsAnchorRef = useRef(null);
 
-  const isDemo = Boolean(!user || user.uid?.startsWith('demo-') || user.email?.includes('demo@'));
-
-  // Detect genuine Google Drive token state
-  useEffect(() => {
-    if (isDemo) {
-      setHasValidDriveToken(false);
-      return;
-    }
-    if (accessToken && accessToken !== 'demo-token') {
-      setHasValidDriveToken(true);
-      return;
-    }
-    getValidAccessToken()
-      .then(tok => setHasValidDriveToken(Boolean(tok && tok !== 'demo-token')))
-      .catch(() => setHasValidDriveToken(false));
-  }, [accessToken, user?.uid, isDemo]);
-
-  // Subscribe to real-time token updates across tabs and background silent refreshes
-  useEffect(() => {
-    if (isDemo) return;
-    const unsub = subscribeToTokenUpdate((newTok) => {
-      if (newTok && newTok !== 'demo-token') {
-        setHasValidDriveToken(true);
-        setSyncErrorState(null);
-      }
-    });
-    return unsub;
-  }, [isDemo]);
-
-  const isDriveConnected = !isDemo && (Boolean(accessToken && accessToken !== 'demo-token') || hasValidDriveToken);
+  // Local database is always available and active
+  const isLocalDbReady = true;
 
   // Subscribe to real-time syncing status from DB syncEngine
   useEffect(() => {
     return subscribeToSyncStatus(setIsSyncing);
   }, []);
 
-  const lastToastErrRef = useRef(null);
-
-  const notifyUserOfSyncError = useCallback((errText) => {
-    if (!errText || !onShowToast) return;
-    if (lastToastErrRef.current === errText) return; // avoid duplicate toast spam
-    lastToastErrRef.current = errText;
-
-    const isAuth = errText.toLowerCase().includes('expired') || 
-                   errText.toLowerCase().includes('401') || 
-                   errText.toLowerCase().includes('token') ||
-                   errText.toLowerCase().includes('reconnect');
-
-    onShowToast({
-      id: Date.now(),
-      type: 'error',
-      title: isAuth ? 'Google Drive Disconnected' : 'Google Drive Sync Issue',
-      description: isAuth
-        ? 'Your session expired. Click the red cloud icon to reconnect your Google Drive.'
-        : errText.slice(0, 160)
-    });
-  }, [onShowToast]);
-
-  // Subscribe to Google Drive sync errors
+  // Subscribe to DB sync errors
   useEffect(() => {
     return subscribeToSyncError((err) => {
       setSyncErrorState(err);
-      if (err) {
-        notifyUserOfSyncError(err);
-      } else {
-        lastToastErrRef.current = null;
-      }
     });
-  }, [notifyUserOfSyncError]);
-
-  // Subscribe to Google Drive token expiration events
-  useEffect(() => {
-    return subscribeToTokenExpired(() => {
-      const msg = 'Google Drive session expired. Please click "Reconnect Google Drive" to refresh your session.';
-      setSyncErrorState(msg);
-      setSyncError(msg);
-      notifyUserOfSyncError(msg);
-    });
-  }, [notifyUserOfSyncError]);
+  }, []);
 
   // Navigation tabs with dedicated Playbook engine
   const navTabs = [
@@ -235,17 +167,15 @@ export default function BottomDock({
         {/* ── Right: Cloud Status, Settings & Broker Badge ──────────────────── */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', paddingRight: '8px' }}>
           
-          {/* Cloud Sync Status with Live Syncing Animation */}
+          {/* Local Database Status */}
           <div style={{ position: 'relative' }}>
             <button 
               title={
                 syncError 
-                  ? `Drive Backup Error: ${syncError}` 
+                  ? `Database Error: ${syncError}` 
                   : isSyncing 
-                    ? "Syncing to Google Drive..." 
-                    : isDriveConnected 
-                      ? "Cloud Sync Active (Google Drive)" 
-                      : "Google Drive Disconnected"
+                    ? "Saving to Local Database..." 
+                    : "Local Database Active (All data saved locally)"
               }
               onClick={() => setIsCloudOpen(!isCloudOpen)}
               style={{
@@ -265,22 +195,17 @@ export default function BottomDock({
                   ? '#ef4444' 
                   : isSyncing 
                     ? '#3b82f6' 
-                    : isCloudOpen 
-                      ? '#10b981' 
-                      : isDriveConnected 
-                        ? '#10b981' 
-                        : 'var(--text-muted, #71717a)',
+                    : '#10b981',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
                 position: 'relative'
               }}>
-              <Cloud 
+              <Database 
                 size={16} 
-                strokeWidth={syncError ? 2.2 : 1.5} 
+                strokeWidth={1.8} 
                 className={isSyncing ? 'animate-pulse' : ''}
                 style={{
-                  color: syncError ? '#ef4444' : undefined,
-                  filter: syncError ? 'drop-shadow(0 0 5px rgba(239, 68, 68, 0.7))' : undefined
+                  color: syncError ? '#ef4444' : '#10b981',
                 }}
               />
               {isSyncing && (
@@ -295,32 +220,6 @@ export default function BottomDock({
                   boxShadow: '0 0 6px #3b82f6'
                 }} />
               )}
-              {syncError && !isSyncing && (
-                <>
-                  <span style={{
-                    position: 'absolute',
-                    top: '3px',
-                    right: '3px',
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    backgroundColor: '#ef4444',
-                    boxShadow: '0 0 8px #ef4444',
-                    zIndex: 2
-                  }} />
-                  <span className="animate-ping" style={{
-                    position: 'absolute',
-                    top: '3px',
-                    right: '3px',
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    backgroundColor: '#ef4444',
-                    opacity: 0.75,
-                    zIndex: 1
-                  }} />
-                </>
-              )}
             </button>
 
             <CloudSyncPopover
@@ -328,100 +227,41 @@ export default function BottomDock({
               onClose={() => setIsCloudOpen(false)}
               autoBackup={autoBackup}
               setAutoBackup={setAutoBackup}
-              isConnected={isDriveConnected && !syncError}
+              isConnected={!syncError}
               isSyncing={isSyncing}
               syncError={syncError}
               onLogout={onLogout}
               onShowToast={onShowToast}
-              onReconnectDrive={async () => {
-                if (onGoogleLogin) {
-                  try {
-                    const res = await onGoogleLogin();
-                    if (res?.accessToken) {
-                      setSyncError(null);
-                      const backupRes = await saveTradesToDrive(trades, res.accessToken, activePortfolioId);
-                      if (backupRes?.success) {
-                        setSyncError(null);
-                        if (onShowToast) {
-                          onShowToast({
-                            title: 'Google Drive Connected',
-                            description: 'Session refreshed and backup synced successfully.',
-                            type: 'success'
-                          });
-                        }
-                      }
-                      // Asynchronously acquire persistent refresh token via CF Worker
-                      requestOfflineRefreshToken(res.user?.email, res.user?.uid).catch(() => {});
-                    }
-                  } catch (e) {
-                    console.warn('[BottomDock] Reconnect Google Drive error:', e);
-                  }
-                }
-              }}
               onBackupNow={async () => {
                 try {
-                  let token = await getValidAccessToken().catch(() => accessToken);
-                  if (!token || token === 'demo-token') {
-                    if (onGoogleLogin) {
-                      const res = await onGoogleLogin();
-                      token = res?.accessToken;
-                    }
-                  }
-                  if (!token || token === 'demo-token') {
-                    const msg = 'Google Drive session expired. Please click Reconnect Google Drive.';
-                    setSyncError(msg);
-                    if (onShowToast) {
-                      onShowToast({
-                        title: 'Google Sign-In Required',
-                        message: msg,
-                        type: 'error'
-                      });
-                    }
-                    return;
-                  }
-
                   if (!trades || trades.length === 0) {
                     if (onShowToast) {
                       onShowToast({
                         title: 'No Trades Found',
-                        message: 'No trades available to backup.',
+                        description: 'No trades available to snapshot.',
                         type: 'info'
                       });
                     }
                     return;
                   }
 
-                  const res = await saveTradesToDrive(trades, token, activePortfolioId);
-                  if (res && res.success && res.mode === 'drive') {
+                  const res = await saveTradesToDrive(trades, null, activePortfolioId);
+                  if (res && res.success) {
                     setSyncError(null);
                     if (onShowToast) {
                       onShowToast({
-                        title: 'Backup Created',
-                        message: `Saved ${trades.length} trades to Google Drive`,
+                        title: 'Snapshot Saved',
+                        description: `Saved ${trades.length} trades to local database storage.`,
                         type: 'success'
                       });
                     }
                   } else {
-                    const errMsg = res?.error || 'Failed to upload backup to Google Drive.';
+                    const errMsg = res?.error || 'Failed to save local database snapshot.';
                     setSyncError(errMsg);
-                    if (onShowToast) {
-                      onShowToast({
-                        title: 'Drive Backup Error',
-                        message: errMsg,
-                        type: 'error'
-                      });
-                    }
                   }
                 } catch (err) {
-                  console.error('[BottomDock] Drive Backup Error:', err);
+                  console.error('[BottomDock] Local Backup Error:', err);
                   setSyncError(err.message);
-                  if (onShowToast) {
-                    onShowToast({
-                      title: 'Drive Backup Error',
-                      message: err.message || 'Failed to save to Google Drive.',
-                      type: 'error'
-                    });
-                  }
                 }
               }}
               onOpenRestoreModal={() => {

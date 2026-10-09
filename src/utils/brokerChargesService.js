@@ -64,7 +64,8 @@ export async function loadBrokerCharges() {
 
   try {
     // Vite serves files from /src/data/ via public or raw import
-    const response = await fetch('/broker_charges.csv');
+    const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || './';
+    const response = await fetch(`${baseUrl}broker_charges.csv`);
     if (!response.ok) throw new Error('CSV fetch failed');
     const text = await response.text();
     _chargesMap = parseChargesCSV(text);

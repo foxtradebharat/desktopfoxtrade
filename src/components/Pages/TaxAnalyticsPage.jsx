@@ -29,8 +29,7 @@ import {
 import * as XLSX from 'xlsx';
 import ModernDropdown from '../ModernDropdown';
 import TaxInputDialog from './TaxInputDialog';
-import { db } from '../../services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getMonthlyTaxRecords, saveMonthlyTaxRecord } from '../../services/dbAdapter';
 import { formatIndianRupee, formatIndianNumber } from '../../utils/indianCurrencyFormatter';
 import { calculateCharges, getChargesMap, loadBrokerCharges } from '../../utils/brokerChargesService';
 import { getStoredCapitalChanges, getPreviousYearEndingCapital } from '../../utils/fundManagementCalculations';
@@ -328,7 +327,7 @@ export default function TaxAnalyticsPage({
     }
   }, [activeTooltipKey, isDownloadOpen]);
 
-  // 1. Fetch saved monthly taxes & itemized breakdown from localStorage & Firebase
+  // 1. Fetch saved monthly taxes & itemized breakdown from localStorage & local database
   useEffect(() => {
     try {
       const cached = localStorage.getItem(`foxtrade_monthly_taxes_${selectedYear}`);
@@ -337,18 +336,22 @@ export default function TaxAnalyticsPage({
       if (cachedDetailed) setDetailedTaxesData(JSON.parse(cachedDetailed));
     } catch {}
 
-    if (!user?.uid || user.uid.startsWith('demo-')) return;
-
-    getDoc(doc(db, 'journals', user.uid))
-      .then((d) => {
-        if (d.exists()) {
-          const data = d.data();
-          if (data.monthlyTaxes && data.monthlyTaxes[selectedYear]) {
-            setTaxesData(data.monthlyTaxes[selectedYear] || {});
-          }
-          if (data.monthlyTaxesDetailed && data.monthlyTaxesDetailed[selectedYear]) {
-            setDetailedTaxesData(data.monthlyTaxesDetailed[selectedYear] || {});
-          }
+    getMonthlyTaxRecords('default', selectedYear)
+      .then((records) => {
+        if (records && typeof records === 'object' && Object.keys(records).length > 0) {
+          const simple = {};
+          const detailed = {};
+          Object.entries(records).forEach(([mIdx, rec]) => {
+            simple[mIdx] = rec.totalTaxes || rec.total || 0;
+            detailed[mIdx] = {
+              total: rec.totalTaxes || rec.total || 0,
+              tradeBased: rec.tradeBased || {},
+              ledgerBased: rec.ledgerBased || {},
+              unknownCharges: rec.unknownCharges || 0
+            };
+          });
+          setTaxesData((prev) => ({ ...prev, ...simple }));
+          setDetailedTaxesData((prev) => ({ ...prev, ...detailed }));
         }
       })
       .catch((err) => console.warn('Taxes fetch error:', err));
@@ -387,16 +390,12 @@ export default function TaxAnalyticsPage({
       window.dispatchEvent(new CustomEvent('tradeontip_taxes_updated', { detail: { year: selectedYear } }));
     } catch {}
 
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      getDoc(doc(db, 'journals', user.uid)).then((d) => {
-        const existing = d.exists() ? d.data() : {};
-        const monthlyTaxes = existing.monthlyTaxes || {};
-        const monthlyTaxesDetailed = existing.monthlyTaxesDetailed || {};
-        monthlyTaxes[selectedYear] = updatedTaxes;
-        monthlyTaxesDetailed[selectedYear] = updatedDetailed;
-        setDoc(doc(db, 'journals', user.uid), { monthlyTaxes, monthlyTaxesDetailed }, { merge: true });
-      });
-    }
+    saveMonthlyTaxRecord('default', selectedYear, monthIndex, {
+      total,
+      tradeBased,
+      ledgerBased,
+      unknownCharges
+    }).catch(() => {});
   };
 
   // Month definition based on period mode

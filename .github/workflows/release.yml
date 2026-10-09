@@ -1,0 +1,57 @@
+name: Release FoxTrade Desktop
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTANT REPOSITORY PERMISSIONS:
+# In your GitHub repository:
+#   Go to: Settings > Actions > General > Workflow permissions
+#   Select: "Read and write permissions"
+# This allows GITHUB_TOKEN to upload releases, installers, latest.yml and blockmaps.
+#
+# NOTE ON PRIVATE REPOSITORIES:
+# If this repository is private, users cannot download updates via electron-updater
+# without credentials. The recommended production pattern for private repos is:
+#   1. Keep source code in this private repo.
+#   2. Create a separate public repository (e.g. YOUR_GH_USERNAME/foxtrade-releases)
+#      dedicated solely to hosting release installers and latest.yml.
+#   3. Point package.json "publish" to that public releases repo.
+#   4. Never embed a Personal Access Token (PAT) inside the client application!
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Quality Verification Tests
+        run: |
+          npm run test:unit
+          npm run test:foxy
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Build and Publish Electron Release to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish always

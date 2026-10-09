@@ -4,14 +4,12 @@ import {
   Upload, 
   History, 
   Sliders, 
-  Unlink, 
   CheckCircle2, 
   RefreshCw,
-  CloudOff,
+  Database,
   AlertCircle
 } from 'lucide-react';
 import { subscribeToSyncStatus } from '../db/index.js';
-import { subscribeToDriveStatus } from '../services/driveClient.js';
 
 function getRelativeTimeString(timestampMs) {
   if (!timestampMs) return 'recently';
@@ -34,35 +32,15 @@ export default function CloudSyncPopover({
   setAutoBackup,
   onBackupNow,
   onOpenRestoreModal,
-  isConnected = false,
+  isConnected = true,
   isSyncing: propIsSyncing,
   syncError = null,
-  onShowToast,
-  onReconnectDrive
+  onShowToast
 }) {
   const [internalSyncing, setInternalSyncing] = useState(false);
   const isSyncing = propIsSyncing !== undefined ? propIsSyncing : internalSyncing;
-  const [lastSyncTs, setLastSyncTs] = useState(initialSyncTs || (Date.now() - 15 * 60 * 1000));
+  const [lastSyncTs, setLastSyncTs] = useState(initialSyncTs || Date.now());
   const [relativeText, setRelativeText] = useState(() => getRelativeTimeString(lastSyncTs));
-
-  const [driveStatus, setDriveStatusLocal] = useState('connected');
-
-  useEffect(() => {
-    const unsub = subscribeToDriveStatus((st) => setDriveStatusLocal(st));
-    return unsub;
-  }, []);
-
-  const isAuthError = Boolean(
-    driveStatus === 'needs_reconnect' ||
-    (syncError && (
-      syncError.toLowerCase().includes('expired') ||
-      syncError.toLowerCase().includes('authentication') ||
-      syncError.toLowerCase().includes('oauth') ||
-      syncError.toLowerCase().includes('401') ||
-      syncError.toLowerCase().includes('token') ||
-      syncError.toLowerCase().includes('revoked')
-    ))
-  );
 
   // Subscribe to real background sync events from syncEngine
   useEffect(() => {
@@ -90,10 +68,6 @@ export default function CloudSyncPopover({
 
   const handleBackupClick = async () => {
     if (isSyncing) return;
-    if (isAuthError && onReconnectDrive) {
-      await onReconnectDrive();
-      return;
-    }
     try {
       if (onBackupNow) {
         await onBackupNow();
@@ -101,7 +75,7 @@ export default function CloudSyncPopover({
       setLastSyncTs(Date.now());
       setRelativeText('just now');
     } catch (err) {
-      console.warn('[CloudSyncPopover] Manual backup error:', err);
+      console.warn('[CloudSyncPopover] Manual snapshot error:', err);
     }
   };
 
@@ -148,17 +122,13 @@ export default function CloudSyncPopover({
               ? 'rgba(239, 68, 68, 0.1)'
               : isSyncing 
                 ? 'rgba(59, 130, 246, 0.1)' 
-                : isConnected 
-                  ? 'rgba(16, 185, 129, 0.1)' 
-                  : 'rgba(156, 163, 175, 0.1)',
+                : 'rgba(16, 185, 129, 0.1)',
             border: `1px solid ${
               syncError
                 ? 'rgba(239, 68, 68, 0.3)'
                 : isSyncing 
                   ? 'rgba(59, 130, 246, 0.2)' 
-                  : isConnected 
-                    ? 'rgba(16, 185, 129, 0.2)' 
-                    : 'rgba(156, 163, 175, 0.2)'
+                  : 'rgba(16, 185, 129, 0.2)'
             }`,
             display: 'flex',
             alignItems: 'center',
@@ -166,13 +136,11 @@ export default function CloudSyncPopover({
             flexShrink: 0
           }}>
             {syncError ? (
-              isAuthError ? <RefreshCw size={13} color="#ef4444" /> : <AlertCircle size={14} color="#ef4444" />
+              <AlertCircle size={14} color="#ef4444" />
             ) : isSyncing ? (
               <RefreshCw size={13} className="animate-spin" color="#3b82f6" />
-            ) : isConnected ? (
-              <CheckCircle2 size={14} color="#10b981" />
             ) : (
-              <CloudOff size={14} color="#9ca3af" />
+              <CheckCircle2 size={14} color="#10b981" />
             )}
           </div>
           
@@ -186,12 +154,10 @@ export default function CloudSyncPopover({
               textOverflow: 'ellipsis' 
             }}>
               {syncError 
-                ? (isAuthError ? 'Drive Session Expired' : 'Drive Backup Error') 
+                ? 'Database Storage Error' 
                 : isSyncing 
-                  ? 'Syncing to Drive...' 
-                  : isConnected 
-                    ? 'Cloud Sync Active' 
-                    : 'Drive Disconnected'}
+                  ? 'Saving Changes...' 
+                  : 'Local Database Active'}
             </div>
             <div 
               style={{ 
@@ -205,54 +171,18 @@ export default function CloudSyncPopover({
               title={syncError || ''}
             >
               {syncError 
-                ? (isAuthError ? 'Your Google Drive token expired. Click Reconnect to resume backups.' : syncError)
+                ? syncError
                 : isSyncing 
-                  ? 'Saving changes...' 
-                  : isConnected 
-                    ? `Last synced ${relativeText}` 
-                    : 'Google Drive disconnected'}
+                  ? 'Writing to local storage...' 
+                  : `Saved ${relativeText} (IndexedDB)`}
             </div>
           </div>
         </div>
 
         {/* Action List */}
         <div style={{ padding: '4px 0', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          
-          {/* Reconnect Google Drive if auth session expired */}
-          {isAuthError && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (onReconnectDrive) {
-                  await onReconnectDrive();
-                }
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                width: '100%',
-                padding: '8px 10px',
-                borderRadius: '8px',
-                border: '1px solid rgba(239, 68, 68, 0.25)',
-                backgroundColor: 'rgba(239, 68, 68, 0.07)',
-                fontSize: '12px',
-                fontWeight: 600,
-                color: '#ef4444',
-                cursor: 'pointer',
-                textAlign: 'left',
-                transition: 'background-color 0.15s ease',
-                marginBottom: '2px'
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.14)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.07)'; }}
-            >
-              <RefreshCw size={13} color="#ef4444" />
-              <span style={{ flex: 1 }}>Reconnect Google Drive</span>
-            </button>
-          )}
 
-          {/* Backup Now */}
+          {/* Snapshot Now */}
           <button
             onClick={handleBackupClick}
             disabled={isSyncing}
@@ -276,7 +206,7 @@ export default function CloudSyncPopover({
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
           >
             <Upload size={14} color={isSyncing ? '#3b82f6' : 'var(--text-muted, #6b7280)'} className={isSyncing ? 'animate-bounce' : ''} />
-            <span style={{ flex: 1 }}>{isSyncing ? 'Backing Up...' : 'Backup Now'}</span>
+            <span style={{ flex: 1 }}>{isSyncing ? 'Saving...' : 'Save Snapshot Now'}</span>
           </button>
 
           {/* Backup & Restore History */}
@@ -305,7 +235,7 @@ export default function CloudSyncPopover({
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
           >
             <History size={14} color="var(--text-muted, #6b7280)" />
-            <span style={{ flex: 1 }}>Backup & Restore History</span>
+            <span style={{ flex: 1 }}>Backup & Restore Snapshots</span>
           </button>
 
           {/* Auto Backup Toggle */}
@@ -328,7 +258,7 @@ export default function CloudSyncPopover({
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Sliders size={14} color="var(--text-muted, #6b7280)" />
-              <span>Auto Backup</span>
+              <span>Auto Save Snapshots</span>
             </div>
 
             <label 
@@ -361,43 +291,6 @@ export default function CloudSyncPopover({
               </span>
             </label>
           </div>
-
-          <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f3f4f6)', margin: '3px 0' }} />
-
-          {/* Logout / Disconnect Drive */}
-          <button
-            onClick={() => {
-              onClose();
-              if (onLogout) onLogout();
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              width: '100%',
-              padding: '8px 10px',
-              borderRadius: '8px',
-              border: 'none',
-              backgroundColor: 'transparent',
-              fontSize: '12px',
-              fontWeight: 500,
-              color: 'var(--text-muted, #6b7280)',
-              cursor: 'pointer',
-              textAlign: 'left',
-              transition: 'all 0.15s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#fef2f2';
-              e.currentTarget.style.color = '#ef4444';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--text-muted, #6b7280)';
-            }}
-          >
-            <Unlink size={14} color="currentColor" />
-            <span style={{ flex: 1 }}>Disconnect Google Drive</span>
-          </button>
         </div>
       </div>
     </>,

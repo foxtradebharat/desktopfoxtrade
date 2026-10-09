@@ -32,3 +32,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+release/
+.foxtrade_data/

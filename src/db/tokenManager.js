@@ -872,7 +872,12 @@ async function _silentGisRefresh() {
         return;
       }
 
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+      if (typeof window !== 'undefined' && window.electronAPI?.isElectron) {
+        resolve(null);
+        return;
+      }
+
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '807258489787-72hj5jtidseks5f0bei1eho3egcvspja.apps.googleusercontent.com';
       if (!clientId) {
         resolve(null);
         return;

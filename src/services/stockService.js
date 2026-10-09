@@ -88,7 +88,8 @@ function parseEquityCSV(csvText) {
 async function loadSymbolMappings() {
   if (_cachedMappings) return _cachedMappings;
   try {
-    const res = await fetch('/data/symbol-mappings.json');
+    const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || './';
+    const res = await fetch(`${baseUrl}data/symbol-mappings.json`);
     if (res.ok) {
       const data = await res.json();
       _cachedMappings = Array.isArray(data) ? data : (data.specificMappings || []);
@@ -124,8 +125,9 @@ export async function getStockList(market = 'india') {
   } catch {}
 
   // Try loading from local /data/EQUITY_L.csv first, then fallback to proxy
+  const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || './';
   const urlsToTry = [
-    '/data/EQUITY_L.csv',
+    `${baseUrl}data/EQUITY_L.csv`,
     '/nse-api/content/equities/EQUITY_L.csv'
   ];
 

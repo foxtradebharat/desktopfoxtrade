@@ -32,11 +32,9 @@ function scheduleFoxyDriveSync() {
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer);
   _syncDebounceTimer = setTimeout(async () => {
     try {
-      const token = await getValidAccessToken().catch(() => null);
-      if (!token || token === 'demo-token') return;
       const portfolioId = await getActivePortfolioId().catch(() => 'default');
       const trades = await getTradesWithDeleted(portfolioId).catch(() => []);
-      triggerAutoSync(portfolioId, token, trades);
+      triggerAutoSync(portfolioId, null, trades);
     } catch (err) {
       console.warn('[FoxyStore] Background sync trigger notice:', err.message);
     }

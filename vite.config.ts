@@ -13,6 +13,7 @@ const NSE_HEADERS = {
 }
 
 export default defineConfig({
+  base: './',
   plugins: [
     react(),
     tailwindcss(),
@@ -41,10 +42,11 @@ export default defineConfig({
     }
   },
   server: {
+    host: 'localhost',
     port: 3000,
     open: false,
     watch: {
-      ignored: ['**/public/data/**', '**/*.csv', '**/*.log']
+      ignored: ['**/public/data/**', '**/*.csv', '**/*.log', '**/release/**', '**/dist/**', '**/*.tmp/**', '**/*.pak', '**/*.asar']
     },
     proxy: {
       // NSE archives (EQUITY_L.csv for stock list)

@@ -17,23 +17,17 @@ export { saveToDrive, loadFromDrive };
  * @param {string}   [portfolioId]
  */
 export async function saveTradesToDrive(trades, accessToken, portfolioId = 'default') {
-  const token = await getValidAccessToken().catch(() => accessToken);
-  if (!token || token === 'demo-token') {
-    return { success: true, mode: 'local' };
-  }
-  const result = await saveToDrive(portfolioId, trades, token);
-  return { success: result.success, mode: 'drive', merged: result.merged, error: result.error };
+  const result = await saveToDrive(portfolioId, trades, accessToken);
+  return { success: result.success, mode: 'local', merged: result.merged, error: result.error };
 }
 
 /**
- * Load trades from Google Drive.
+ * Load trades from local database snapshot.
  * @param {string} accessToken
  * @param {string} [portfolioId]
  */
 export async function loadTradesFromDrive(accessToken, portfolioId = 'default') {
-  const token = await getValidAccessToken().catch(() => accessToken);
-  if (!token || token === 'demo-token') return [];
-  return loadFromDrive(portfolioId, token);
+  return loadFromDrive(portfolioId, accessToken);
 }
 
 /**
@@ -43,8 +37,5 @@ export async function loadTradesFromDrive(accessToken, portfolioId = 'default') 
  * @param {string}   [portfolioId]
  */
 export async function triggerAutoBackup(trades, accessToken, portfolioId = 'default') {
-  if (!accessToken || accessToken === 'demo-token') return;
-  const token = await getValidAccessToken().catch(() => accessToken);
-  if (!token) return;
-  triggerAutoSync(portfolioId, token, trades);
+  triggerAutoSync(portfolioId, accessToken, trades);
 }

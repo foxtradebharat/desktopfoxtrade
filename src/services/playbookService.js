@@ -1,5 +1,4 @@
-import { db } from './firebase.js';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { isElectron } from './dbAdapter.js';
 
 export const LS_PLAYBOOKS_KEY = 'foxtrade_playbooks_v2';
 export const LS_AUDITS_KEY = 'foxtrade_trade_audits_v2';
@@ -179,8 +178,10 @@ export function savePlaybooks(playbooks, user = null) {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(LS_PLAYBOOKS_KEY, JSON.stringify(playbooks));
     }
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { playbooks }, { merge: true }).catch(() => {});
+    if (isElectron() && Array.isArray(playbooks)) {
+      playbooks.forEach(pb => {
+        window.electronAPI.db.savePlaybook('default', pb).catch(() => {});
+      });
     }
   } catch (e) {
     console.error('Failed to save playbooks:', e);
@@ -227,8 +228,10 @@ export function saveTradeAudits(audits, user = null) {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(LS_AUDITS_KEY, JSON.stringify(audits));
     }
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { playbookTradeAudits: audits }, { merge: true }).catch(() => {});
+    if (isElectron() && audits && typeof audits === 'object') {
+      Object.entries(audits).forEach(([tradeId, auditData]) => {
+        window.electronAPI.db.saveTradeAudit(tradeId, auditData).catch(() => {});
+      });
     }
   } catch (e) {}
 }
@@ -251,9 +254,6 @@ export function saveMissedTrades(missedTrades, user = null) {
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(LS_MISSED_KEY, JSON.stringify(missedTrades));
-    }
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { missedTrades }, { merge: true }).catch(() => {});
     }
   } catch (e) {}
 }
@@ -294,9 +294,6 @@ export function savePlaybookSettings(settings, user = null) {
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(LS_PLAYBOOK_SETTINGS_KEY, JSON.stringify(settings));
-    }
-    if (user?.uid && !user.uid.startsWith('demo-')) {
-      setDoc(doc(db, 'journals', user.uid), { playbookSettings: settings }, { merge: true }).catch(() => {});
     }
   } catch (e) {
     console.error('Failed to save playbook settings:', e);

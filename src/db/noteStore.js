@@ -57,11 +57,9 @@ function scheduleDriveSync() {
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer);
   _syncDebounceTimer = setTimeout(async () => {
     try {
-      const token = await getValidAccessToken().catch(() => null);
-      if (!token || token === 'demo-token') return;
       const portfolioId = await getActivePortfolioId().catch(() => 'default');
       const trades = await getTradesWithDeleted(portfolioId).catch(() => []);
-      triggerAutoSync(portfolioId, token, trades);
+      triggerAutoSync(portfolioId, null, trades);
     } catch (err) {
       console.warn('[NoteStore] Background sync trigger notice:', err.message);
     }
@@ -194,6 +192,15 @@ export async function saveCalendarNotes(notesMap) {
   // 3. Persistent asynchronous write to IndexedDB
   await setConfig(KEY_CALENDAR_NOTES, safeNotes);
 
+  // 3b. Sync to local SQLite in Electron
+  if (typeof window !== 'undefined' && window.electronAPI?.isElectron && window.electronAPI?.db) {
+    try {
+      Object.entries(safeNotes).forEach(([dateStr, noteData]) => {
+        window.electronAPI.db.saveDayNote('default', dateStr, noteData).catch(() => {});
+      });
+    } catch (_) {}
+  }
+
   // 4. Trigger debounced Drive auto-sync
   scheduleDriveSync();
 }
@@ -291,6 +298,15 @@ export async function saveIndependentNotes(notesList) {
 
   // 3. Persistent asynchronous write to IndexedDB
   await setConfig(KEY_INDEPENDENT_NOTES, safeList);
+
+  // 3b. Sync to local SQLite in Electron
+  if (typeof window !== 'undefined' && window.electronAPI?.isElectron && window.electronAPI?.db) {
+    try {
+      safeList.forEach(note => {
+        window.electronAPI.db.saveIndependentNote('default', note).catch(() => {});
+      });
+    } catch (_) {}
+  }
 
   // 4. Trigger debounced Drive auto-sync
   scheduleDriveSync();

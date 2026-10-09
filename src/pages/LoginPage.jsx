@@ -288,7 +288,6 @@ export default function LoginPage({ onGoogleLogin, isLoading, authError, user, o
             <strong>Sign-in Error:</strong> {authError}
           </div>
         )}
-
         {/* Email Input Field Form */}
         <div style={{ width: '100%' }}>
           <label 

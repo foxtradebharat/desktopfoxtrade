@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FoxTrade - Google Authentication</title>
+  <link rel="icon" href="./favicon.ico" />
+  <!-- Google Identity Services (GSI) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <!-- Firebase App & Auth SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f9fafb;
+      color: #111827;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .auth-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 40px 32px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }
+    .logo-img {
+      height: 48px;
+      width: auto;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+    p.subtitle {
+      font-size: 13.5px;
+      color: #6b7280;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .btn-container {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 16px;
+      min-height: 44px;
+    }
+    .success-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background-color: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .open-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 8px;
+      border: none;
+      background-color: #111827;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 0.15s ease;
+      margin-top: 16px;
+    }
+    .open-btn:hover {
+      background-color: #1f2937;
+    }
+    .secondary-btn {
+      width: 100%;
+      height: 42px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      background-color: #ffffff;
+      color: #374151;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 0.15s ease;
+    }
+    .secondary-btn:hover {
+      background-color: #f3f4f6;
+    }
+    .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 2.5px solid rgba(0, 0, 0, 0.1);
+      border-top-color: #111827;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 14px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <img src="./foxtrade-square.png" alt="FoxTrade" class="logo-img" onerror="this.style.display='none'" />
+
+    <!-- State 1: Choose Account -->
+    <div id="state-select">
+      <h1>Sign in to FoxTrade</h1>
+      <p class="subtitle">Choose your Google account to connect to your FoxTrade Desktop Journal.</p>
+      
+      <!-- Google Identity Services Button Container -->
+      <div id="google-btn-container" class="btn-container"></div>
+
+      <!-- Fallback Direct Popup Button -->
+      <button id="fallback-popup-btn" class="secondary-btn hidden" type="button">
+        <svg width="18" height="18" viewBox="0 0 24 24">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+        </svg>
+        Sign in with Google
+      </button>
+    </div>
+
+    <!-- State 2: Processing -->
+    <div id="state-processing" class="hidden">
+      <div class="spinner"></div>
+      <h1>Connecting to FoxTrade…</h1>
+      <p class="subtitle">Verifying your account and preparing the application.</p>
+    </div>
+
+    <!-- State 3: Success & Deep Link Trigger -->
+    <div id="state-success" class="hidden">
+      <div class="success-badge">
+        <svg width="15" height="15" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414 0z" clip-rule="evenodd"/>
+        </svg>
+        Authentication Successful
+      </div>
+      <h1 id="user-greeting">Welcome to FoxTrade!</h1>
+      <p id="user-email-text" class="subtitle">Click below to open FoxTrade if your browser didn't prompt you automatically.</p>
+      <button id="open-app-btn" class="open-btn" type="button">
+        <span>Open FoxTrade App</span>
+        <span>→</span>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    if (window.location.search.includes('state=') || window.location.search.includes('port=')) {
+      window.location.replace('./desktop-login.html' + window.location.search);
+    }
+    const GOOGLE_CLIENT_ID = "807258489787-72hj5jtidseks5f0bei1eho3egcvspja.apps.googleusercontent.com";
+    const port = window.location.port || '39281';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyC26VMHA7Mw_v8b5sTx3c-XpCDRF28RTgQ",
+      authDomain: "foxtradebharat2026.firebaseapp.com",
+      projectId: "foxtradebharat2026",
+      storageBucket: "foxtradebharat2026.firebasestorage.app",
+      messagingSenderId: "807258489787",
+      appId: "1:807258489787:web:3b3ac973927a5558dfba9e"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    const stateSelect = document.getElementById('state-select');
+    const stateProcessing = document.getElementById('state-processing');
+    const stateSuccess = document.getElementById('state-success');
+    const userGreeting = document.getElementById('user-greeting');
+    const userEmailText = document.getElementById('user-email-text');
+    const openAppBtn = document.getElementById('open-app-btn');
+    const fallbackBtn = document.getElementById('fallback-popup-btn');
+
+    let activeUser = null;
+    let deepLinkDispatched = false;
+
+    function parseJwt(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function triggerDeepLink(userPayload) {
+      const url = `foxtrade://auth-success?user=${encodeURIComponent(JSON.stringify(userPayload))}`;
+      
+      // Method 1: Invisible iframe trigger (avoids unloading the page)
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        setTimeout(() => {
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        }, 3000);
+      } catch (_) {}
+
+      // Method 2: Direct window.location trigger
+      setTimeout(() => {
+        window.location.href = url;
+      }, 50);
+    }
+
+    async function onUserAuthenticated(userPayload) {
+      if (deepLinkDispatched) return;
+      deepLinkDispatched = true;
+
+      activeUser = userPayload;
+
+      stateSelect.classList.add('hidden');
+      stateProcessing.classList.add('hidden');
+      stateSuccess.classList.remove('hidden');
+
+      userGreeting.textContent = `Welcome, ${userPayload.displayName || 'Trader'}!`;
+      userEmailText.textContent = `Signed in as ${userPayload.email || ''}. If prompted, click "Open FoxTrade".`;
+
+      // 1. Post to local server for instant IPC delivery
+      try {
+        await fetch(`http://127.0.0.1:${port}/api/auth-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: userPayload })
+        });
+      } catch (err) {
+        console.warn('Local server notification completed or fallback to protocol:', err);
+      }
+
+      // 2. Trigger browser popup: "Open FoxTrade?"
+      triggerDeepLink(userPayload);
+    }
+
+    // Google Identity Services Credential Handler
+    async function handleCredentialResponse(response) {
+      stateSelect.classList.add('hidden');
+      stateProcessing.classList.remove('hidden');
+
+      const token = response.credential;
+      const jwt = parseJwt(token);
+
+      let userPayload = {
+        uid: jwt?.sub || 'google-user',
+        email: jwt?.email || '',
+        displayName: jwt?.name || 'Trader',
+        photoURL: jwt?.picture || null
+      };
+
+      // Optional Firebase sign-in with Google credential
+      try {
+        const credential = firebase.auth.GoogleAuthProvider.credential(token);
+        const result = await auth.signInWithCredential(credential);
+        if (result && result.user) {
+          userPayload = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: result.user.displayName || userPayload.displayName,
+            photoURL: result.user.photoURL || userPayload.photoURL
+          };
+        }
+      } catch (err) {
+        console.warn('Firebase sign-in note:', err);
+      }
+
+      onUserAuthenticated(userPayload);
+    }
+
+    // Fallback user-initiated popup sign-in
+    fallbackBtn.addEventListener('click', async () => {
+      stateSelect.classList.add('hidden');
+      stateProcessing.classList.remove('hidden');
+      try {
+        const result = await auth.signInWithPopup(provider);
+        if (result && result.user) {
+          const userPayload = {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: result.user.displayName || 'Trader',
+            photoURL: result.user.photoURL || null
+          };
+          onUserAuthenticated(userPayload);
+        }
+      } catch (err) {
+        console.error('Popup error:', err);
+        stateProcessing.classList.add('hidden');
+        stateSelect.classList.remove('hidden');
+      }
+    });
+
+    openAppBtn.addEventListener('click', () => {
+      if (activeUser) {
+        triggerDeepLink(activeUser);
+      }
+    });
+
+    // Initialize Google Identity Services
+    function initGsi() {
+      if (window.google?.accounts?.id) {
+        google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: false
+        });
+
+        // Render standard official Google button
+        const container = document.getElementById('google-btn-container');
+        if (container) {
+          google.accounts.id.renderButton(container, {
+            type: 'standard',
+            theme: 'outline',
+            size: 'large',
+            text: 'continue_with',
+            shape: 'rectangular',
+            logo_alignment: 'left',
+            width: 320
+          });
+        }
+
+        // Auto-display Google One Tap prompt
+        google.accounts.id.prompt();
+      } else {
+        // If GSI script is blocked or delayed, reveal fallback popup button
+        setTimeout(() => {
+          if (!document.getElementById('google-btn-container').hasChildNodes()) {
+            fallbackBtn.classList.remove('hidden');
+          }
+        }, 1200);
+      }
+    }
+
+    window.addEventListener('load', () => {
+      initGsi();
+    });
+  </script>
+</body>
+</html>

@@ -143,11 +143,9 @@ export async function getFoxyConfig() {
  */
 async function scheduleFoxyDriveSync() {
   try {
-    const token = await getValidAccessToken().catch(() => null);
-    if (!token || token === 'demo-token') return;
     const portfolioId = await getActivePortfolioId().catch(() => 'default');
     const trades = await getTradesWithDeleted(portfolioId).catch(() => []);
-    triggerAutoSync(portfolioId, token, trades);
+    triggerAutoSync(portfolioId, null, trades);
   } catch (_) {
     // Non-blocking background sync notice
   }

@@ -45,6 +45,13 @@ import {
   deleteConfig,
 } from '../db/index.js';
 
+import {
+  isElectron,
+  checkAndMigrateLegacyDataToSqlite,
+  getTrades as getSqliteTrades,
+  saveTradesBatch as saveSqliteTradesBatch,
+} from './dbAdapter.js';
+
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let _accessToken      = null;
@@ -151,32 +158,31 @@ export async function saveUserTrades(uid, trades, portfolioId) {
     localStorage.removeItem(`tradeontip_cleared_${pid}`);
   } catch (_) {}
 
-  // 1. Write to IndexedDB
-  await bulkPutTrades(pid, trades, false);
-
-  // 2. Update in-memory cache
-  _currentTrades = await getTradesWithDeleted(pid);
-
-  // 3. Notify local subscribers
-  _notifyListeners(trades);
-
-  // 4. Drive sync (skip for demo users or if autoBackup disabled)
-  if (!uid.startsWith('demo-')) {
-    const token = _accessToken || await getValidAccessToken().catch(() => null);
-    if (token) {
-      let isAutoBackupEnabled = true;
-      try {
-        const saved = localStorage.getItem('tradeontip_auto_backup');
-        if (saved !== null) isAutoBackupEnabled = (saved !== 'false');
-      } catch (_) {}
-
-      if (isAutoBackupEnabled) {
-        triggerAutoSync(pid, token, _currentTrades);
-        // Also sync any pending images
-        syncPendingImages(token, pid).catch(() => {});
-      }
+  // 1. Write to SQLite if running in Electron
+  if (isElectron()) {
+    try {
+      await saveSqliteTradesBatch(pid, trades);
+    } catch (err) {
+      console.warn('[dbService] Electron SQLite save error:', err);
     }
   }
+
+  // 2. Write to IndexedDB (local browser database / offline redundancy)
+  await bulkPutTrades(pid, trades, false);
+
+  // 2. Also mirror to localStorage for instant synchronous redundancy
+  try {
+    const scoped = trades.map(t => ({ ...t, portfolioId: pid }));
+    localStorage.setItem(`tradeontip_trades_v5_${uid}_${pid}`, JSON.stringify(scoped));
+    localStorage.setItem(`tradeontip_trades_v5_${pid}`, JSON.stringify(scoped));
+    localStorage.setItem('tradeontip_trades_cache', JSON.stringify(scoped));
+  } catch (_) {}
+
+  // 3. Update in-memory cache
+  _currentTrades = await getTradesWithDeleted(pid);
+
+  // 4. Notify local subscribers
+  _notifyListeners(trades);
 
   return true;
 }
@@ -184,12 +190,12 @@ export async function saveUserTrades(uid, trades, portfolioId) {
 // ── Load trades ───────────────────────────────────────────────────────────────
 
 /**
- * Load all trades for a user.
+ * Load all trades for a user from Local Storage (IndexedDB + LocalStorage fallback).
  *
  * Flow:
- *   1. Load from IndexedDB immediately (instant — this is the local cache)
- *   2. If IDB is empty → try to migrate from v1 format
- *   3. If still empty + Drive connected → load from Drive (first time on new device)
+ *   1. Load from IndexedDB immediately (instant — local database)
+ *   2. If IDB is empty → check localStorage mirror
+ *   3. If still empty → try to migrate from legacy v1 format
  *   4. Return trades to UI
  *
  * @param {string} uid
@@ -200,6 +206,20 @@ export async function getUserTrades(uid, portfolioId) {
   if (!uid) return [];
   const pid = portfolioId || _activePortfolio || 'default';
 
+  // 0. In Electron desktop, load directly from SQLite
+  if (isElectron()) {
+    try {
+      await checkAndMigrateLegacyDataToSqlite();
+      const sqliteTrades = await getSqliteTrades(pid);
+      if (Array.isArray(sqliteTrades) && sqliteTrades.length > 0) {
+        _currentTrades = sqliteTrades;
+        return sqliteTrades;
+      }
+    } catch (e) {
+      console.warn('[dbService] Electron SQLite load error, falling back to IDB:', e);
+    }
+  }
+
   // 1. Load from IDB (primary — always fast)
   let trades = await getTrades(pid);
 
@@ -208,7 +228,7 @@ export async function getUserTrades(uid, portfolioId) {
     return trades;
   }
 
-  // If this portfolio was explicitly cleared, never resurrect trades via migration or cloud
+  // If this portfolio was explicitly cleared, never resurrect trades via migration
   let wasCleared = false;
   try {
     wasCleared = localStorage.getItem(`tradeontip_cleared_${pid}`) === 'true';
@@ -218,7 +238,23 @@ export async function getUserTrades(uid, portfolioId) {
     return [];
   }
 
-  // 2. Migration: check if we have v1 data in old IndexedDB or localStorage
+  // 2. Check localStorage cache if IDB returned empty
+  try {
+    const cached = localStorage.getItem(`tradeontip_trades_v5_${uid}_${pid}`) ||
+                   localStorage.getItem(`tradeontip_trades_v5_${pid}`) ||
+                   localStorage.getItem('tradeontip_trades_cache');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        await bulkPutTrades(pid, parsed, true);
+        trades = await getTrades(pid);
+        _currentTrades = await getTradesWithDeleted(pid);
+        return trades;
+      }
+    }
+  } catch (_) {}
+
+  // 3. Migration: check if we have v1 data in old IndexedDB or localStorage
   if (!_migrationDone.has(uid)) {
     _migrationDone.add(uid);
     const migrated = await _migrateFromV1Data(uid, pid);
@@ -226,25 +262,6 @@ export async function getUserTrades(uid, portfolioId) {
       trades = await getTrades(pid);
       _currentTrades = await getTradesWithDeleted(pid);
       return trades;
-    }
-  }
-
-  // 3. First time on this device — try loading from Drive
-  if (!uid.startsWith('demo-')) {
-    const token = _accessToken || await getValidAccessToken().catch(() => null);
-    if (token) {
-      try {
-        const driveTrades = await loadFromDrive(pid, token);
-        if (driveTrades.length > 0) {
-          await bulkPutTrades(pid, driveTrades, true); // skipQueue=true on restore
-          trades = await getTrades(pid);
-          _currentTrades = await getTradesWithDeleted(pid);
-          console.log(`[dbService] Loaded ${trades.length} trades from Drive`);
-          return trades;
-        }
-      } catch (err) {
-        console.warn('[dbService] Drive load failed:', err.message);
-      }
     }
   }
 
@@ -279,6 +296,16 @@ export function subscribeToUserTrades(uid, onTradesUpdated) {
 export async function clearUserTrades(portfolioId) {
   const pid = portfolioId || _activePortfolio || 'default';
   _currentTrades = [];
+  if (isElectron()) {
+    try {
+      const all = await getSqliteTrades(pid);
+      for (const t of all) {
+        await window.electronAPI.db.deleteTrade(t.id);
+      }
+    } catch (e) {
+      console.warn('[dbService] Electron SQLite clear error:', e);
+    }
+  }
   return clearTrades(pid);
 }
 

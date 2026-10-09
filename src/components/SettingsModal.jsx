@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, RotateCcw } from 'lucide-react';
 
 const FONT_OPTIONS = [
@@ -43,6 +43,80 @@ export default function SettingsModal({
   const currentFont = settings.fontFamily || 'default';
   const currentWeight = settings.fontWeight || 'regular';
   const currentScale = settings.scale || settings.fontSize || 100;
+
+  const [autoLaunch, setAutoLaunch] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [appVersion, setAppVersion] = useState('1.0.0');
+  const [updaterState, setUpdaterState] = useState({ status: 'idle', lastChecked: null, version: null });
+  const [autoDownload, setAutoDownload] = useState(true);
+  const isDesktop = typeof window !== 'undefined' && Boolean(window.electronAPI?.isElectron);
+
+  useEffect(() => {
+    if (isDesktop && window.electronAPI?.system?.getAutoLaunch) {
+      window.electronAPI.system.getAutoLaunch().then(enabled => {
+        setAutoLaunch(Boolean(enabled));
+      }).catch(() => {});
+    }
+    if (isDesktop && window.electronAPI?.notifications?.getStatus) {
+      window.electronAPI.notifications.getStatus().then(status => {
+        if (status && typeof status.enabled === 'boolean') {
+          setNotificationsEnabled(status.enabled);
+        }
+      }).catch(() => {});
+    }
+    if (isDesktop) {
+      const updater = window.updater || window.electronAPI?.updater;
+      if (updater) {
+        updater.getVersion?.().then(v => { if (v) setAppVersion(v); }).catch(() => {});
+        updater.getState?.().then(st => {
+          if (st) {
+            setUpdaterState(st);
+            if (typeof st.autoDownload === 'boolean') setAutoDownload(st.autoDownload);
+          }
+        }).catch(() => {});
+        const unsub = updater.onState?.(st => {
+          if (st) {
+            setUpdaterState(st);
+            if (typeof st.autoDownload === 'boolean') setAutoDownload(st.autoDownload);
+          }
+        });
+        return () => {
+          if (typeof unsub === 'function') unsub();
+        };
+      }
+    }
+  }, [isOpen, isDesktop]);
+
+  const handleToggleAutoLaunch = async () => {
+    if (!isDesktop || !window.electronAPI?.system?.setAutoLaunch) return;
+    try {
+      const next = !autoLaunch;
+      const res = await window.electronAPI.system.setAutoLaunch(next);
+      setAutoLaunch(Boolean(res));
+    } catch (err) {
+      console.error('Failed to toggle auto launch:', err);
+    }
+  };
+
+  const handleToggleNotifications = async () => {
+    if (!isDesktop || !window.electronAPI?.notifications?.setEnabled) return;
+    try {
+      const next = !notificationsEnabled;
+      const res = await window.electronAPI.notifications.setEnabled(next);
+      setNotificationsEnabled(Boolean(res));
+    } catch (err) {
+      console.error('Failed to toggle notifications:', err);
+    }
+  };
+
+  const handleSendTestNotification = () => {
+    if (isDesktop && window.electronAPI?.notifications?.show) {
+      window.electronAPI.notifications.show({
+        title: 'FoxTrade — Notification Test',
+        body: 'Windows native notifications are working perfectly!'
+      });
+    }
+  };
 
   // Close on Escape key
   useEffect(() => {
@@ -489,6 +563,315 @@ export default function SettingsModal({
             </div>
           </div>
         </div>
+
+        {/* ── Windows Desktop Settings (Visible only in Electron) ────────── */}
+        {isDesktop && (
+          <div style={{
+            marginTop: '16px',
+            border: '1px solid var(--border-color, #e5e7eb)',
+            borderRadius: '16px',
+            padding: '20px',
+            backgroundColor: 'var(--bg-surface, #ffffff)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
+            {/* Row 1: Auto-Launch */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px'
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '13.5px',
+                  fontWeight: 700,
+                  color: 'var(--text-primary, #111827)'
+                }}>
+                  Launch on Windows startup
+                </div>
+                <div style={{
+                  fontSize: '11.5px',
+                  color: 'var(--text-secondary, #6b7280)',
+                  marginTop: '2px',
+                  lineHeight: 1.4
+                }}>
+                  Automatically start FoxTrade when your computer boots up.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoLaunch}
+                onClick={handleToggleAutoLaunch}
+                style={{
+                  width: '42px',
+                  height: '24px',
+                  borderRadius: '9999px',
+                  backgroundColor: autoLaunch ? '#2563eb' : 'var(--border-color, #d1d5db)',
+                  border: 'none',
+                  position: 'relative',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s ease',
+                  flexShrink: 0,
+                  padding: 0
+                }}
+              >
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  backgroundColor: '#ffffff',
+                  position: 'absolute',
+                  top: '3px',
+                  left: autoLaunch ? '21px' : '3px',
+                  transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                }} />
+              </button>
+            </div>
+
+            <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f3f4f6)' }} />
+
+            {/* Row 2: Market & Journaling Notifications */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px'
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '13.5px',
+                  fontWeight: 700,
+                  color: 'var(--text-primary, #111827)'
+                }}>
+                  Market & Journaling Reminders
+                </div>
+                <div style={{
+                  fontSize: '11.5px',
+                  color: 'var(--text-secondary, #6b7280)',
+                  marginTop: '2px',
+                  lineHeight: 1.4
+                }}>
+                  Pre-market checklist at 09:00 AM & post-market review prompt at 03:45 PM IST.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationsEnabled}
+                onClick={handleToggleNotifications}
+                style={{
+                  width: '42px',
+                  height: '24px',
+                  borderRadius: '9999px',
+                  backgroundColor: notificationsEnabled ? '#2563eb' : 'var(--border-color, #d1d5db)',
+                  border: 'none',
+                  position: 'relative',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s ease',
+                  flexShrink: 0,
+                  padding: 0
+                }}
+              >
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  backgroundColor: '#ffffff',
+                  position: 'absolute',
+                  top: '3px',
+                  left: notificationsEnabled ? '21px' : '3px',
+                  transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                }} />
+              </button>
+            </div>
+
+            {/* Row 3: Send Test Notification Button */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+              <button
+                type="button"
+                onClick={handleSendTestNotification}
+                style={{
+                  background: 'none',
+                  border: '1px solid var(--border-color, #e5e7eb)',
+                  borderRadius: '8px',
+                  padding: '5px 12px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary, #4b5563)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--text-primary, #111827)';
+                  e.currentTarget.style.color = 'var(--text-primary, #111827)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-color, #e5e7eb)';
+                  e.currentTarget.style.color = 'var(--text-secondary, #4b5563)';
+                }}
+              >
+                Send Test Notification
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── 5. About FoxTrade & Auto-Updates (Desktop Only) ── */}
+        {isDesktop && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px',
+            padding: '16px',
+            borderRadius: '12px',
+            backgroundColor: 'var(--bg-primary, #f9fafb)',
+            border: '1px solid var(--border-color, #e5e7eb)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: 'var(--text-primary, #111827)'
+                }}>
+                  About FoxTrade & Updates
+                </div>
+                <div style={{
+                  fontSize: '11.5px',
+                  color: 'var(--text-secondary, #6b7280)',
+                  marginTop: '2px'
+                }}>
+                  Current Version: <strong>v{appVersion}</strong>
+                  {updaterState.lastChecked && (
+                    <span> · Last checked: {new Date(updaterState.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const updater = window.updater || window.electronAPI?.updater;
+                  updater?.check?.();
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  backgroundColor: '#2563eb',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 14px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.15s ease'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+              >
+                Check for Updates
+              </button>
+            </div>
+
+            <div style={{ height: '1px', backgroundColor: 'var(--border-color, #f3f4f6)' }} />
+
+            {/* Toggle: Download updates automatically */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px'
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--text-primary, #111827)'
+                }}>
+                  Download updates automatically
+                </div>
+                <div style={{
+                  fontSize: '11.5px',
+                  color: 'var(--text-secondary, #6b7280)',
+                  marginTop: '1px'
+                }}>
+                  Automatically downloads signed releases in background and notifies you when ready.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoDownload}
+                onClick={() => {
+                  const updater = window.updater || window.electronAPI?.updater;
+                  const next = !autoDownload;
+                  setAutoDownload(next);
+                  updater?.setAutoDownload?.(next);
+                }}
+                style={{
+                  width: '42px',
+                  height: '24px',
+                  borderRadius: '9999px',
+                  backgroundColor: autoDownload ? '#2563eb' : 'var(--border-color, #d1d5db)',
+                  border: 'none',
+                  position: 'relative',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.2s ease',
+                  flexShrink: 0,
+                  padding: 0
+                }}
+              >
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  backgroundColor: '#ffffff',
+                  position: 'absolute',
+                  top: '3px',
+                  left: autoDownload ? '21px' : '3px',
+                  transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                }} />
+              </button>
+            </div>
+
+            {/* Open logs action */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const updater = window.updater || window.electronAPI?.updater;
+                  updater?.openLogs?.();
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  fontSize: '11.5px',
+                  color: 'var(--text-secondary, #6b7280)',
+                  textDecoration: 'underline',
+                  cursor: 'pointer'
+                }}
+              >
+                Open Updater Logs Folder
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
