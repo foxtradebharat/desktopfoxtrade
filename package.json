@@ -14,7 +14,9 @@
     "test:foxy": "node scripts/foxyGoldenTest.js",
     "test:unit": "vitest run",
     "test": "node scripts/foxyGoldenTest.js",
-    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:3000 && electron .\"",
+    "postinstall": "node scripts/brandDev.js",
+    "brand:dev": "node scripts/brandDev.js",
+    "electron:dev": "node scripts/brandDev.js && concurrently -k \"vite\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "vite build && electron-builder --win",
     "release:patch": "npm version patch && git push --follow-tags",
     "release:minor": "npm version minor && git push --follow-tags",
@@ -58,7 +60,7 @@
           ]
         }
       ],
-      "icon": "public/favicon.ico"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": true,
