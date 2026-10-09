@@ -283,10 +283,14 @@ function createWindow() {
     },
   });
 
-  if (appIcon && !appIcon.isEmpty()) {
+  if (iconPath) {
     try {
-      mainWindow.setIcon(appIcon);
-    } catch (_) {}
+      mainWindow.setIcon(iconPath);
+    } catch (_) {
+      if (appIcon && !appIcon.isEmpty()) {
+        try { mainWindow.setIcon(appIcon); } catch (_) {}
+      }
+    }
   }
 
   mainWindow.on('maximize', () => {

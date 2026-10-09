@@ -119,12 +119,13 @@ export async function checkForUpdates(isManual = false) {
     const result = await autoUpdater.checkForUpdates();
     return { status: 'checking', updateInfo: result?.updateInfo };
   } catch (err) {
-    // Network issues / offline should be handled silently without popup alarms
+    // Network issues, offline, or initial state before first GitHub release should be silent
     const isOffline = err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.message?.includes('net::ERR_INTERNET_DISCONNECTED');
-    if (isOffline) {
-      log.warn('[Updater] Network offline or unreachable. Will retry on next schedule.');
+    const isNoReleasesYet = err.message?.includes('No published versions on GitHub') || err.message?.includes('404');
+    if (isOffline || isNoReleasesYet) {
+      log.info('[Updater] Silent status: ' + (isOffline ? 'Offline' : 'No releases published yet on GitHub.'));
       updateState.status = 'idle';
-      updateState.error = 'Unable to reach update server (offline).';
+      updateState.error = null;
     } else {
       log.error('[Updater] Check failed:', err.message);
       updateState.status = 'error';
